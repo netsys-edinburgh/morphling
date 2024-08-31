@@ -19,18 +19,8 @@ import json
 from tqdm import tqdm
 
 from moe_infinity.ops.op_builder.prefetch import PrefetchBuilder
-from moe_infinity.models import (
-    SyncSwitchTransformersSparseMLP,
-    SyncNllbMoeSparseMLP,
-    SyncMixtralSparseMoeBlock,
-    SyncGrokMoeBlock,
-    SyncArcticMoeBlock,
-)
-from moe_infinity.utils import ArcherConfig
-from moe_infinity.utils.arguments import copy_args_to_device, copy_kwargs_to_device
 
-from moe_infinity.memory import ExpertPrefetcher
-import moe_infinity
+
 from moe_infinity.utils import (
     parse_moe_param,
     parse_expert_id,
@@ -40,9 +30,6 @@ from moe_infinity.common import parse_expert_type
 from moe_infinity.memory import ExpertTracer, ExpertPredictor, ExpertCache
 
 from typing import Dict, Type, Union
-from transformers import (
-    AutoConfig,
-)
 from transformers.modeling_utils import PreTrainedModel, PretrainedConfig
 import transformers
 from typing import Callable
@@ -57,6 +44,7 @@ try:
 except ImportError:
     print(f"Do not detect pre-installed ops, use JIT mode")
     use_jit = True
+
 
 class OffloadEngine(object):
     param_id = 0
@@ -73,10 +61,6 @@ class OffloadEngine(object):
 
         self.ckpt_files = []
 
-        self.expert_tracer = ExpertTracer(capacity, config)
-        self.expert_predictor = ExpertPredictor(config)
-        self.expert_predictor.add_tracer(self.expert_tracer)
-
         # self.expert_cache = ExpertCache(config)
         self.config = config
 
@@ -85,7 +69,7 @@ class OffloadEngine(object):
     # def init_trace(self, trace_path: str):
 
     def init(
-        self, cls: Type[PreTrainedModel], ar_config: Union[str, Dict, ArcherConfig]
+        self, cls: Type[PreTrainedModel], ar_config: Union[str, Dict]
     ):
 
         self.cls = cls
@@ -173,20 +157,6 @@ class OffloadEngine(object):
 
             return archer_apply_to_model
 
-        # def load_state_dict(checkpoint_file: Union[str, os.PathLike]):
-        #     self.ckpt_files.append(checkpoint_file)
-        #     raise ArcherException("Well correct with single!")
-
-        # def load_pretrained_model_decorator(
-        #         orig_load_pm: Callable) -> Callable:
-
-        #     @functools.wraps(orig_load_pm)
-        #     def archer_load_pretrained_model(cls, *args, **kwargs):
-        #         self.ckpt_files.extend(args[-2])  # TODO: check this
-        #         raise ArcherException("Well correct with shards!")
-
-        #     return archer_load_pretrained_model
-
         def init_decorator(orig_init: Callable) -> Callable:
 
             @functools.wraps(orig_init)
@@ -195,16 +165,6 @@ class OffloadEngine(object):
                 pass
 
             return archer_init
-
-        # def config_decorator(orig_config: Callable) -> Callable:
-
-        #     @functools.wraps(orig_config)
-        #     def archer_config(cls, *args, **kwargs):
-        #         config, model_kwargs = orig_config(*args, **kwargs)
-        #         self.config = config
-        #         return config, model_kwargs
-
-        #     return archer_config
 
         def param_init_decorator(orig_param_init: Callable) -> Callable:
 
@@ -241,7 +201,6 @@ class OffloadEngine(object):
                     self.offload_set.add(cls.classifier.weight.data.data_ptr())
 
             return archer_cast_classifier
-
 
         # GPTQ Override
         QuantLinear._old_init = QuantLinear.__init__
@@ -300,33 +259,6 @@ class OffloadEngine(object):
             if hasattr(module, "reset_parameters"):
                 module._old_reset_parameters = module.reset_parameters
                 module.reset_parameters = do_nothing_decorator(module.reset_parameters)
-
-        transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersTop1Router._old_cast_classifier =  transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersTop1Router._cast_classifier
-        transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersTop1Router._cast_classifier =  cast_classifier_decorator(transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersTop1Router._cast_classifier)
-
-        transformers.models.switch_transformers.modeling_switch_transformers._old_sparse_mlp = (
-            transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersSparseMLP
-        )
-        transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersSparseMLP = (
-            SyncSwitchTransformersSparseMLP
-        )
-        transformers.models.nllb_moe.modeling_nllb_moe._old_sparse_mlp = (
-            transformers.models.nllb_moe.modeling_nllb_moe.NllbMoeSparseMLP
-        )
-        transformers.models.nllb_moe.modeling_nllb_moe.NllbMoeSparseMLP = (
-            SyncNllbMoeSparseMLP
-        )
-        transformers.models.mixtral.modeling_mixtral._old_sparse_mlp = (
-            transformers.models.mixtral.modeling_mixtral.MixtralSparseMoeBlock
-        )
-        transformers.models.mixtral.modeling_mixtral.MixtralSparseMoeBlock = (
-            SyncMixtralSparseMoeBlock
-        )
-        moe_infinity.models.modeling_grok.modeling_grok1._old_sparse_mlp = moe_infinity.models.modeling_grok.MoeBlock
-        moe_infinity.models.modeling_grok.modeling_grok1.MoeBlock = SyncGrokMoeBlock
-
-        moe_infinity.models.modeling_arctic._old_sparse_mlp = moe_infinity.models.modeling_arctic.ArcticMoE
-        moe_infinity.models.modeling_arctic.modeling_arctic.ArcticMoE = SyncArcticMoeBlock
 
 
         def from_pretrained_decorator(orig_from_pretrained: Callable) -> Callable:
@@ -428,6 +360,7 @@ class OffloadEngine(object):
                     # print("Quantizing model ...", self.quant_method, flush=True)
                     if self.quant_method == "gptq":
                         from optimum.gptq import GPTQQuantizer
+
                         # print("Quantizing model with GPTQ ...", self.config.quantization_config, flush=True)
                         optimum_quantizer = GPTQQuantizer.from_dict(
                             self.config.quantization_config
@@ -788,7 +721,9 @@ class OffloadEngine(object):
                 for expert_idx, expert_tensors in enumerate(tensors):
                     expert_key = (
                         f"{key}.expert_{expert_idx}"
-                        if self.config.model_type != "mixtral" and self.config.model_type != "grok-1" and self.config.model_type != "arctic"
+                        if self.config.model_type != "mixtral"
+                        and self.config.model_type != "grok-1"
+                        and self.config.model_type != "arctic"
                         else f"{key}.{expert_idx}"
                     )
                     input_device_index = self.archer_engine.get_node_default_device(
@@ -942,7 +877,9 @@ class OffloadEngine(object):
 
     # clean runtime hooks
     def clean_up(self):
-        transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersTop1Router._cast_classifier = transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersTop1Router._old_cast_classifier
+        transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersTop1Router._cast_classifier = (
+            transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersTop1Router._old_cast_classifier
+        )
         transformers.models.switch_transformers.modeling_switch_transformers.SwitchTransformersSparseMLP = (
             transformers.models.switch_transformers.modeling_switch_transformers._old_sparse_mlp
         )
@@ -962,4 +899,3 @@ class OffloadEngine(object):
         moe_infinity.models.modeling_arctic.modeling_arctic.ArcticMoE = (
             moe_infinity.models.modeling_arctic._old_sparse_mlp
         )
-

@@ -18,7 +18,7 @@ find_package(Torch REQUIRED)
 
 # find all files in the directory match with "test_*"
 file(GLOB TEST_SOURCES "test_*.cpp")
-file(GLOB PROJECT_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../csrc/memory/*.cpp")
+file(GLOB PROJECT_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../csrc/memory/*.cpp")
 
 # print CMAKE_ROOT_DIR, CMAKE_CURRENT_SOURCE_DIR
 message(STATUS "CMAKE_ROOT_DIR: ${CMAKE_ROOT_DIR}")
@@ -31,7 +31,7 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
     get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
     add_executable(${TEST_NAME} ${TEST_SOURCE} ${PROJECT_SOURCES})
     # target_compile_options(${TEST_NAME} PRIVATE /arch:AVX2)
-    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CUDA_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS})
+    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../.. ${CUDA_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS})
     target_link_libraries(${TEST_NAME} pthread gtest gtest_main ${CUDA_LIBRARIES} ${TORCH_LIBRARIES})
     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 endforeach(TEST_SOURCE)
