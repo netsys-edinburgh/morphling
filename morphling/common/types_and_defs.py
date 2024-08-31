@@ -1,0 +1,1 @@
+SHM_NAME="/emulator_shm"
