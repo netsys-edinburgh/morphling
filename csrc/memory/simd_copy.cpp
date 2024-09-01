@@ -77,7 +77,7 @@ static void helper_memcpy_4(float* dest, float* src, size_t param_size) {
                     (param_size - rounded_size));
 }
 
-static void helper_mempcy_8(float* dest, float* src, size_t param_size) {
+static void helper_memcpy_8(float* dest, float* src, size_t param_size) {
   size_t rounded_size = 0;
 
 #if defined(__AVX512__) or defined(__AVX256__)
