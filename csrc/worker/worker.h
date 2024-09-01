@@ -1,22 +1,23 @@
 #ifndef GPU_PROCESS_H
 #define GPU_PROCESS_H
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <string.h>
 #include <cublas_v2.h>
-#include <sys/sysinfo.h>
-#include <stdint.h>
+#include <cuda_runtime.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/sysinfo.h>
+#include <sys/types.h>
 #include <time.h>
-#include <cuda_runtime.h>
-#include "../memory/initialize_memory.h"
+#include <unistd.h>
+
+#include "memory/initialize_memory.h"
 
 #define SHM_NAME "/sgemm_shm"
 #define POLLING_INTERVAL 100000
@@ -31,75 +32,74 @@
 #define COMPLETE 5
 
 #define CHECK_CUBLAS_ERROR(call)                                      \
-    {                                                                 \
-        cublasStatus_t err = (call);                                  \
-        if (err != CUBLAS_STATUS_SUCCESS) {                           \
-            char log_buffer[256];                                     \
-            snprintf(log_buffer, sizeof(log_buffer),                  \
-                     "CUBLAS error in file '%s' in line %i: %s.",     \
-                     __FILE__, __LINE__, cublasGetErrorString(err));  \
-            log_message(log_buffer);                                  \
-            exit(EXIT_FAILURE);                                       \
-        }                                                             \
-    }
+  {                                                                   \
+    cublasStatus_t err = (call);                                      \
+    if (err != CUBLAS_STATUS_SUCCESS) {                               \
+      char log_buffer[256];                                           \
+      snprintf(log_buffer, sizeof(log_buffer),                        \
+               "CUBLAS error in file '%s' in line %i: %s.", __FILE__, \
+               __LINE__, cublasGetErrorString(err));                  \
+      log_message(log_buffer);                                        \
+      exit(EXIT_FAILURE);                                             \
+    }                                                                 \
+  }
 
-#define CHECK_CUDA_ERROR(call)                                        \
-    {                                                                 \
-        cudaError_t err = (call);                                     \
-        if (err != cudaSuccess) {                                     \
-            char log_buffer[256];                                     \
-            snprintf(log_buffer, sizeof(log_buffer),                  \
-                     "CUDA error in file '%s' in line %i: %s.",       \
-                     __FILE__, __LINE__, cudaGetErrorString(err));    \
-            log_message(log_buffer);                                  \
-            exit(EXIT_FAILURE);                                       \
-        }                                                             \
-    }
-
+#define CHECK_CUDA_ERROR(call)                                                \
+  {                                                                           \
+    cudaError_t err = (call);                                                 \
+    if (err != cudaSuccess) {                                                 \
+      char log_buffer[256];                                                   \
+      snprintf(log_buffer, sizeof(log_buffer),                                \
+               "CUDA error in file '%s' in line %i: %s.", __FILE__, __LINE__, \
+               cudaGetErrorString(err));                                      \
+      log_message(log_buffer);                                                \
+      exit(EXIT_FAILURE);                                                     \
+    }                                                                         \
+  }
 
 const char* cublasGetErrorString(cublasStatus_t error);
 
 typedef struct {
-    char transa;
-    char transb;
-    int m;
-    int n;
-    int k;
-    float alpha;
-    const float *a;
-    int lda;
-    const float *b;
-    int ldb;
-    float beta;
-    float *c;
-    int ldc;
+  char transa;
+  char transb;
+  int m;
+  int n;
+  int k;
+  float alpha;
+  const float* a;
+  int lda;
+  const float* b;
+  int ldb;
+  float beta;
+  float* c;
+  int ldc;
 } sgemm_args_t;
 #define MAX_GROUP_SIZE 1024
 
 typedef struct {
-    int group_count;
-    int group_size;
-    char transa_array[MAX_GROUP_SIZE];
-    char transb_array[MAX_GROUP_SIZE];
-    int m_array[MAX_GROUP_SIZE];
-    int n_array[MAX_GROUP_SIZE];
-    int k_array[MAX_GROUP_SIZE];
-    float alpha_array[MAX_GROUP_SIZE];
-    float *a_array[MAX_GROUP_SIZE];
-    int lda_array[MAX_GROUP_SIZE];
-    float *b_array[MAX_GROUP_SIZE];
-    int ldb_array[MAX_GROUP_SIZE];
-    float beta_array[MAX_GROUP_SIZE];
-    float *c_array[MAX_GROUP_SIZE];
-    int ldc_array[MAX_GROUP_SIZE];
+  int group_count;
+  int group_size;
+  char transa_array[MAX_GROUP_SIZE];
+  char transb_array[MAX_GROUP_SIZE];
+  int m_array[MAX_GROUP_SIZE];
+  int n_array[MAX_GROUP_SIZE];
+  int k_array[MAX_GROUP_SIZE];
+  float alpha_array[MAX_GROUP_SIZE];
+  float* a_array[MAX_GROUP_SIZE];
+  int lda_array[MAX_GROUP_SIZE];
+  float* b_array[MAX_GROUP_SIZE];
+  int ldb_array[MAX_GROUP_SIZE];
+  float beta_array[MAX_GROUP_SIZE];
+  float* c_array[MAX_GROUP_SIZE];
+  int ldc_array[MAX_GROUP_SIZE];
 } sgemm_batch_args_t;
 
 char* get_timestamp();
-int dequeue_task(task_queue_t *task_queue);
-void log_message(const char *message);
+int dequeue_task(task_queue_t* task_queue);
+void log_message(const char* message);
 size_t get_shared_memory_size();
-void dummy_execute(sgemm_args_t *task, size_t offset, int task_index);
-void real_execute(sgemm_args_t *task, size_t offset, int task_index) ;
-void *gpu_process(void *arg);
+void dummy_execute(sgemm_args_t* task, size_t offset, int task_index);
+void real_execute(sgemm_args_t* task, size_t offset, int task_index);
+void* gpu_process(void* arg);
 
-#endif 
+#endif
