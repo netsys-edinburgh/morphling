@@ -66,8 +66,8 @@ for f in functions:
         continue
     func = getattr(jaxlib.xla_extension.ArrayImpl, f)
     setattr(jaxlib.xla_extension.ArrayImpl, f, jax_decorator(func, f))
-  
-    
+
+
 a = jax.numpy.ones((1, 3))
 b = jax.numpy.ones((1, 3))
 

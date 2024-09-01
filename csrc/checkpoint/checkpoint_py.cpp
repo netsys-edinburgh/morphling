@@ -24,5 +24,5 @@ namespace py = pybind11;
 // define pybind11 module
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("save_tensors", &SaveTensors, "Save a state dict")
-  .def("restore_tensors", &RestoreTensors, "Restore a state dict")
+      .def("restore_tensors", &RestoreTensors, "Restore a state dict")
 }

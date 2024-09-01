@@ -4,7 +4,6 @@
 #define SHM_NAME "/emulator_shm"
 #define ALIGNMENT 512
 
-
 #define SHM_SIZE (100L * 1024L * 1024L * 1024L)
 #define MAX_TASKS 100
 
@@ -38,8 +37,7 @@ typedef struct {
   uint64_t size;
 } meta_struct_t;
 
-
 template <typename T>
 struct DoNothingDeleter {
-    void operator()(T* ptr) const {}
+  void operator()(T* ptr) const {}
 };
