@@ -127,7 +127,8 @@ std::unordered_map<std::string, torch::Tensor> RestoreTensors(
       auto [sizes, strides, type_str] = meta_state_dict.at(name);
       at::ScalarType dtype = stringToScalarType(type_str);
       torch::Tensor real_tensor = torch::from_blob(
-          reinterpret_cast<void*>(offset), sizes, strides, DoNothingDeleter<void>(),
+          reinterpret_cast<void*>(offset), sizes, strides,
+          DoNothingDeleter<void>(),
           torch::TensorOptions().device(tensor_device).dtype(dtype));
       state_dict[name] = real_tensor;
     }

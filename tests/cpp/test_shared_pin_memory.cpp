@@ -3,11 +3,11 @@
 #include <cuda_runtime_api.h>
 #include <sys/shm.h>
 
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
-#include <chrono>
 
 #define MEM_SIZE 1024ULL * 1024 * 1024 * 4
 
@@ -26,7 +26,8 @@ int main() {
   }
 
   // use cudaHostRegister to pin memory
-  cudaError_t err = cudaHostRegister(shm_ptr, MEM_SIZE, cudaHostRegisterDefault);
+  cudaError_t err =
+      cudaHostRegister(shm_ptr, MEM_SIZE, cudaHostRegisterDefault);
   if (err != cudaSuccess) {
     std::cerr << "cudaHostRegister failed: " << cudaGetErrorString(err)
               << std::endl;
@@ -36,7 +37,8 @@ int main() {
   void* pin_ptr;
   err = cudaHostAlloc(&pin_ptr, MEM_SIZE, cudaHostAllocDefault);
   if (err != cudaSuccess) {
-    std::cerr << "cudaHostAlloc failed: " << cudaGetErrorString(err) << std::endl;
+    std::cerr << "cudaHostAlloc failed: " << cudaGetErrorString(err)
+              << std::endl;
     return 1;
   }
 
@@ -82,7 +84,6 @@ int main() {
   // convert to GB/s
   std::cout << "Bandwidth: " << MEM_SIZE / 1024 / 1024 / 1024 / elapsed.count()
             << " GB/s\n";
-  
 
   // free cuda memory
   err = cudaFree(cuda_ptr);
