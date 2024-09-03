@@ -1,6 +1,7 @@
+import torch
 from transformers import AutoConfig
 from transformers.models.opt.modeling_opt import OPTDecoderLayer
-import torch
+
 from morphling.hooks import *
 
 model_name = "facebook/opt-125m"

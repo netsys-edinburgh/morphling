@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
 # Set the project name
-project(morphling)
+project(emulator)
 
+# Adapted from https://github.com/vllm-project/vllm/blob/a1242324c99ff8b1e29981006dfb504da198c7c3/CMakeLists.txt
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 
 # Set c++ 17
@@ -53,21 +54,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glog)
 
-if(DEFINED ENV{CONDA_PREFIX})
-  set(CONDA_PREFIX_PATH $ENV{CONDA_PREFIX})
-  message(STATUS "Conda environment path: ${CONDA_PREFIX_PATH}")
-else()
-  message(WARNING "CONDA_PREFIX is not set. Make sure your Conda environment is activated.")
-endif()
+# if(DEFINED ENV{CONDA_PREFIX})
+#   set(CONDA_PREFIX_PATH $ENV{CONDA_PREFIX})
+#   message(STATUS "Conda environment path: ${CONDA_PREFIX_PATH}")
+# else()
+#   message(WARNING "CONDA_PREFIX is not set. Make sure your Conda environment is activated.")
+# endif()
 
-set(PYTHON_EXECUTABLE ${CONDA_PREFIX_PATH}/bin/python)
+# set(PYTHON_EXECUTABLE ${CONDA_PREFIX_PATH}/bin/python)
 
 # Supported python versions.  These versions will be searched in order, the
 # first match will be selected.  These should be kept in sync with setup.py.
 set(PYTHON_SUPPORTED_VERSIONS "3.8" "3.9" "3.10" "3.11")
 
-if(PYTHON_EXECUTABLE)
-  find_python_from_executable(${PYTHON_EXECUTABLE} "${PYTHON_SUPPORTED_VERSIONS}")
+if(MORPHLING_PYTHON_EXECUTABLE)
+  find_python_from_executable(${MORPHLING_PYTHON_EXECUTABLE} "${PYTHON_SUPPORTED_VERSIONS}")
 else()
   message(FATAL_ERROR
     "Please set PYTHON_EXECUTABLE to the path of the desired python version"
@@ -77,7 +78,7 @@ endif()
 find_package(PythonInterp REQUIRED)
 
 # Retrieve the Python version
-message(STATUS "Python version: ${PYTHON_VERSION_STRING}")
+# message(STATUS "Python version: ${PYTHON_VERSION_STRING}")
 
 # Retrieve the Python major and minor version
 string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\..*" _ ${PYTHON_VERSION_STRING})
@@ -93,17 +94,14 @@ find_package(CUDAToolkit REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Torch REQUIRED)
 
-# file(GLOB SOURCES "csrc/morphling/*.cpp")
+# file(GLOB_RECURSE SOURCES "csrc/*.cpp")
 # add_library(morphling SHARED ${SOURCES})
 # target_link_libraries(morphling PUBLIC CUDA::cudart Threads::Threads glog::glog)
-# target_include_directories(morphling PUBLIC "csrc/morphling" ${CUDA_INCLUDE_DIRS})
+# target_include_directories(morphling PUBLIC "csrc" ${CUDA_INCLUDE_DIRS})
 
 # add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs})
 # target_link_libraries(morphling_server PRIVATE morphling grpc++ grpc++_reflection libprotobuf gflags::gflags glog::glog)
 # target_include_directories(morphling_server PRIVATE "csrc/morphling")
-
-# # Adapted from https://github.com/vllm-project/vllm/blob/a1242324c99ff8b1e29981006dfb504da198c7c3/CMakeLists.txt
-# include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 
 # Supported NVIDIA architectures.
 set(CUDA_SUPPORTED_ARCHS "7.0;7.5;8.0;8.6;8.9;9.0")
@@ -138,7 +136,6 @@ ${MORPHLING_GPU_LANG}
 # The final set of arches is stored in `MORPHLING_GPU_FLAGS`.
 #
 get_torch_gpu_compiler_flags(MORPHLING_GPU_FLAGS ${MORPHLING_GPU_LANG})
-
 
 #
 # _C extension

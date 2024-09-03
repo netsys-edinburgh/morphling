@@ -1,21 +1,18 @@
 # example for torch DDP + DPP
 
+import argparse
 import os
+
 import torch
 import torch.distributed as dist
-
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.optim import DistributedOptimizer
-
+from torch.distributed.pipelining import (PipelineStage, ScheduleGPipe,
+                                          SplitPoint, pipeline)
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import SGD
-
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-from torch.distributed.pipelining import pipeline, SplitPoint, PipelineStage, ScheduleGPipe
-
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
-import argparse
 
 rank = int(os.environ["RANK"])
 world_size = int(os.environ["WORLD_SIZE"])

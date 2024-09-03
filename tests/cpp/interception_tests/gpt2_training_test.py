@@ -1,7 +1,8 @@
-import torch
 import random
+
 import numpy as np
-from transformers import GPT2LMHeadModel, GPT2Tokenizer, AdamW, set_seed
+import torch
+from transformers import AdamW, GPT2LMHeadModel, GPT2Tokenizer, set_seed
 
 # Set the seed for reproducibility
 seed = 42

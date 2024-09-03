@@ -1,10 +1,11 @@
+import logging
 from dataclasses import dataclass, field
 from typing import Union
-import torch
+
 import psutil
+import torch
 from transformers import HfArgumentParser
 
-import logging
 
 @dataclass
 class DeviceConfig:
@@ -62,10 +63,12 @@ class EmulatorConfig:
 # from morphling.common.logger import logger
 # logger.info("hello world")
 import os
+
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 LOG_LEVEL = getattr(logging, LOG_LEVEL.upper())
 
-from logging import getLogger, StreamHandler, Formatter
+from logging import Formatter, StreamHandler, getLogger
+
 
 def get_logger():
     logger = getLogger("morphling")
