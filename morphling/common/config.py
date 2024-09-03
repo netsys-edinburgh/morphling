@@ -3,6 +3,7 @@ from typing import Union
 import torch
 import psutil
 
+import logging
 
 @dataclass
 class DeviceConfig:
@@ -17,7 +18,6 @@ class EmulatorConfig:
     cpu_memory: Union[int, float] = field(
         default=0.5, metadata={"help": "Can be a float in the range [0, 1] or an integer in GB"}
     )
-    log_dir: str = field(default="logs", metadata={"help": "Directory to save logs"})
 
     def __post_init__(self):
         if self.gpu_memory < 0 or self.gpu_memory > 1:
@@ -38,3 +38,30 @@ class EmulatorConfig:
             raise ValueError(f"gpu_memory should not exceed {total_gpu_memory} GB")
         if self.cpu_memory > total_cpu_memory:
             raise ValueError(f"cpu_memory should not exceed {total_cpu_memory} GB")
+
+
+
+# a universal logger for all modules
+# Usage:
+# from morphling.common.logger import logger
+# logger.info("hello world")
+import os
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+LOG_LEVEL = getattr(logging, LOG_LEVEL.upper())
+
+from logging import getLogger, StreamHandler, Formatter
+
+def get_logger():
+    logger = getLogger("morphling")
+    logger.setLevel(LOG_LEVEL)
+    handler = StreamHandler()
+    handler.setLevel(LOG_LEVEL)
+    formatter = Formatter("%(asctime)s - %(className)s.%(funcName)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    return logger
+
+
+
+

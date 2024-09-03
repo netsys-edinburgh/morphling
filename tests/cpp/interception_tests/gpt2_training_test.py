@@ -34,7 +34,7 @@ if tokenizer.pad_token is None:
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
     model.resize_token_embeddings(len(tokenizer))
 
-input_text = "Hello, how are you? " * 100  
+input_text = "Hello, how are you? " * 100
 inputs = tokenizer(input_text, return_tensors="pt", truncation=True).to(device)
 
 inputs["input_ids"] = inputs["input_ids"].repeat(16, 1)
@@ -47,11 +47,11 @@ print("Sequence length:", sequence_length)
 optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
 
 num_epochs = 1
-steps_per_epoch = 10 
+steps_per_epoch = 10
 
 for epoch in range(num_epochs):
     print(f"Starting epoch {epoch + 1}/{num_epochs}")
-    
+
     for step in range(steps_per_epoch):
         optimizer.zero_grad()
 
