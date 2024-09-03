@@ -5,8 +5,6 @@
 
 #pragma once
 
-#include <mutex>
-
 class noncopyable {
  public:
   noncopyable(const noncopyable&) = delete;
@@ -33,8 +31,3 @@ class noncopyable {
     std::call_once(flag, []() { instance = new classname(); }); \
     return instance;                                            \
   }
-
-template <typename T>
-struct DoNothingDeleter {
-  void operator()(T* ptr) const {}
-};

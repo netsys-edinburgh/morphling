@@ -93,14 +93,14 @@ find_package(CUDAToolkit REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Torch REQUIRED)
 
-# file(GLOB SOURCES "csrc/sllm_store/*.cpp")
-# add_library(sllm_store SHARED ${SOURCES})
-# target_link_libraries(sllm_store PUBLIC CUDA::cudart Threads::Threads glog::glog)
-# target_include_directories(sllm_store PUBLIC "csrc/sllm_store" ${CUDA_INCLUDE_DIRS})
+# file(GLOB SOURCES "csrc/morphling/*.cpp")
+# add_library(morphling SHARED ${SOURCES})
+# target_link_libraries(morphling PUBLIC CUDA::cudart Threads::Threads glog::glog)
+# target_include_directories(morphling PUBLIC "csrc/morphling" ${CUDA_INCLUDE_DIRS})
 
-# add_executable(sllm_store_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs})
-# target_link_libraries(sllm_store_server PRIVATE sllm_store grpc++ grpc++_reflection libprotobuf gflags::gflags glog::glog)
-# target_include_directories(sllm_store_server PRIVATE "csrc/sllm_store")
+# add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs})
+# target_link_libraries(morphling_server PRIVATE morphling grpc++ grpc++_reflection libprotobuf gflags::gflags glog::glog)
+# target_include_directories(morphling_server PRIVATE "csrc/morphling")
 
 # # Adapted from https://github.com/vllm-project/vllm/blob/a1242324c99ff8b1e29981006dfb504da198c7c3/CMakeLists.txt
 # include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
@@ -109,71 +109,56 @@ find_package(Torch REQUIRED)
 set(CUDA_SUPPORTED_ARCHS "7.0;7.5;8.0;8.6;8.9;9.0")
 
 #
-# Try to find python package with an executable that exactly matches
-# `PYTHON_EXECUTABLE` and is one of the supported versions.
+# Normally `torch.utils.cpp_extension.CUDAExtension` would add
+# `libtorch_python.so` for linking against an extension. Torch's cmake
+# configuration does not include this library (presumably since the cmake
+# config is used for standalone C++ binaries that link against torch).
+# The `libtorch_python.so` library defines some of the glue code between
+# torch/python via pybind and is required by MORPHLING extensions for this
+# reason. So, add it by manually with `find_library` using torch's
+# installed library path.
 #
+find_library(torch_python_LIBRARY torch_python PATHS
+"${TORCH_INSTALL_PREFIX}/lib")
 
-# #
-# # Import torch cmake configuration.
-# # Torch also imports CUDA (and partially HIP) languages with some customizations,
-# # so there is no need to do this explicitly with check_language/enable_language,
-# # etc.
-# #
-# find_package(Torch REQUIRED)
+set(MORPHLING_GPU_LANG "cuda")
 
-# #
-# # Normally `torch.utils.cpp_extension.CUDAExtension` would add
-# # `libtorch_python.so` for linking against an extension. Torch's cmake
-# # configuration does not include this library (presumably since the cmake
-# # config is used for standalone C++ binaries that link against torch).
-# # The `libtorch_python.so` library defines some of the glue code between
-# # torch/python via pybind and is required by SLLM_STORE extensions for this
-# # reason. So, add it by manually with `find_library` using torch's
-# # installed library path.
-# #
-# find_library(torch_python_LIBRARY torch_python PATHS
-# "${TORCH_INSTALL_PREFIX}/lib")
+#
+# Override the GPU architectures detected by cmake/torch and filter them by
+# the supported versions for the current language.
+# The final set of arches is stored in `MORPHLING_GPU_ARCHES`.
+#
+override_gpu_arches(MORPHLING_GPU_ARCHES
+${MORPHLING_GPU_LANG}
+"${${MORPHLING_GPU_LANG}_SUPPORTED_ARCHS}")
 
-# set(SLLM_STORE_GPU_LANG "cuda")
+#
+# Query torch for additional GPU compilation flags for the given
+# `MORPHLING_GPU_LANG`.
+# The final set of arches is stored in `MORPHLING_GPU_FLAGS`.
+#
+get_torch_gpu_compiler_flags(MORPHLING_GPU_FLAGS ${MORPHLING_GPU_LANG})
 
-# #
-# # Override the GPU architectures detected by cmake/torch and filter them by
-# # the supported versions for the current language.
-# # The final set of arches is stored in `SLLM_STORE_GPU_ARCHES`.
-# #
-# override_gpu_arches(SLLM_STORE_GPU_ARCHES
-# ${SLLM_STORE_GPU_LANG}
-# "${${SLLM_STORE_GPU_LANG}_SUPPORTED_ARCHS}")
 
-# #
-# # Query torch for additional GPU compilation flags for the given
-# # `SLLM_STORE_GPU_LANG`.
-# # The final set of arches is stored in `SLLM_STORE_GPU_FLAGS`.
-# #
-# get_torch_gpu_compiler_flags(SLLM_STORE_GPU_FLAGS ${SLLM_STORE_GPU_LANG})
+#
+# _C extension
+#
+file(GLOB CKPT_SOURCES "csrc/checkpoint/*.cpp")
+set(MORPHLING_EXT_SRC
+  ${CKPT_SOURCES}
+  "csrc/utils/logger.cpp"
+  "csrc/utils/cuda_utils.cpp"
+)
 
-# #
-# # Define extension targets
-# #
-
-# #
-# # _C extension
-# #
-# set(SLLM_STORE_EXT_SRC
-# "csrc/checkpoint/aligned_buffer.cpp"
-# "csrc/checkpoint/checkpoint.cpp"
-# "csrc/checkpoint/checkpoint_py.cpp"
-# "csrc/checkpoint/tensor_writer.cpp"
-# )
-
-# define_gpu_extension_target(
-# _C
-# DESTINATION sllm_store
-# LANGUAGE ${SLLM_STORE_GPU_LANG}
-# SOURCES ${SLLM_STORE_EXT_SRC}
-# COMPILE_FLAGS ${SLLM_STORE_GPU_FLAGS}
-# ARCHITECTURES ${SLLM_STORE_GPU_ARCHES}
-# WITH_SOABI)
+define_gpu_extension_target(
+  _C
+  DESTINATION morphling
+  LANGUAGE ${MORPHLING_GPU_LANG}
+  SOURCES ${MORPHLING_EXT_SRC}
+  COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+  ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+  WITH_SOABI
+)
 
 # Enable testing if the option is ON
 if(BUILD_TESTS)
