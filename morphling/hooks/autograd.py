@@ -1,6 +1,8 @@
-import torch
-import numpy as np
 import functools
+
+import numpy as np
+import torch
+
 from morphling.common import get_logger
 
 logger = get_logger()

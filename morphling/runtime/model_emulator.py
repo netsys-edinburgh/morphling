@@ -1,22 +1,18 @@
-import gc
-import os
-import numpy as np
-import math
-
-import torch
 import functools
+import gc
 import json
+import math
+import os
+from typing import Callable, Dict, Type, Union
 
-from tqdm import tqdm
-
-from typing import Dict, Type, Union
-from transformers.modeling_utils import PreTrainedModel, PretrainedConfig
+import numpy as np
+import torch
 import transformers
-from typing import Callable
+from safetensors import safe_open
+from tqdm import tqdm
+from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
 from morphling.common import EmulatorConfig
-
-from safetensors import safe_open
 
 
 class EmulationEngine(object):

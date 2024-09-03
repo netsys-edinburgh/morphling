@@ -1,11 +1,11 @@
-import os
-import torch.nn as nn
 import json
-from morphling._C import (
-    save_tensors,
-    restore_tensors,
-)
+import os
+
 import torch
+import torch.nn as nn
+
+from morphling._C import restore_tensors, save_tensors
+
 
 def load_model(model: nn.Module, load_path: str):
     """

@@ -1,11 +1,12 @@
-from transformers import AutoModelForCausalLM
-import torch
-
 import sys
+
+import torch
+from transformers import AutoModelForCausalLM
+
 sys.path.append("../../")
 
-from morphling.common.keywords import *
 from morphling.common.decorators import func_access_decorator
+from morphling.common.keywords import *
 
 model_name = "facebook/opt-125m"
 model = AutoModelForCausalLM.from_pretrained(model_name)
