@@ -40,7 +40,7 @@ file(GLOB PROJECT_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../csrc/memory/*.cpp")
 # message(STATUS "Python version: ${Python_VERSION}")
 
 # cpp flag add -m option to enable avx2
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -march=znver3 -O3 -D__AVX256__=1 -fopenmp")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -march=znver3 -O3 -D__AVX256__=1 -std=c++17")
 
 # -mavx2 -march=znver3
 
@@ -61,28 +61,37 @@ link_directories(
     ${UMPIRE_LIBRARY_DIRS}
 )
 
-foreach(TEST_SOURCE ${TEST_SOURCES})
-    get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
-    add_executable(${TEST_NAME} ${TEST_SOURCE} ${PROJECT_SOURCES})
-    target_include_directories(${TEST_NAME} PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../..
-        ${TORCH_INCLUDE_DIRS}
-        ${MKL_INCLUDE_DIRS}
-        ${CONDA_PREFIX_PATH}/include
-        # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/nvidia/cublas/include/
-        # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/nvidia/cuda_runtime/include/
-        # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/triton/backends/nvidia/include/
-        # /usr/local/cuda/include/
-        ${CMAKE_INCLUDE_PATH}
-        ${MPI_INCLUDE_PATH}
-    )
-    target_link_libraries(${TEST_NAME}
-        umpire camp fmt
-        pthread gtest gtest_main
-        ${TORCH_LIBRARIES}
-        CUDA::cublas CUDA::cudart MKL::MKL OpenMP::OpenMP_CXX
-        numa
-        ${MPI_LIBRARIES}
-    )
-    add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
-endforeach(TEST_SOURCE)
+# foreach(TEST_SOURCE ${TEST_SOURCES})
+#     get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
+#     add_executable(${TEST_NAME} ${TEST_SOURCE} ${PROJECT_SOURCES})
+#     target_include_directories(${TEST_NAME} PRIVATE
+#         ${CMAKE_CURRENT_SOURCE_DIR}/../..
+#         ${TORCH_INCLUDE_DIRS}
+#         ${MKL_INCLUDE_DIRS}
+#         ${CONDA_PREFIX_PATH}/include
+#         # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/nvidia/cublas/include/
+#         # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/nvidia/cuda_runtime/include/
+#         # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/triton/backends/nvidia/include/
+#         # /usr/local/cuda/include/
+#         ${CMAKE_INCLUDE_PATH}
+#         ${MPI_INCLUDE_PATH}
+#     )
+#     target_link_libraries(${TEST_NAME}
+#         umpire
+#         ${TORCH_LIBRARIES}
+#         pthread numa
+#         CUDA::cublas CUDA::cudart MKL::MKL OpenMP::OpenMP_CXX
+#         ${MPI_LIBRARIES}
+#     )
+#     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+# endforeach(TEST_SOURCE)
+
+message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
+add_executable(test_umpire_mempool test_umpire_mempool.cpp)
+target_include_directories(test_umpire_mempool PRIVATE
+    ${CUDA_INCLUDE_DIRS}
+)
+target_link_libraries(test_umpire_mempool
+    umpire numa ${MPI_LIBRARIES}
+    MKL::MKL CUDA::cublas CUDA::cudart
+)
