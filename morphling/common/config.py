@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Union
 import torch
 import psutil
+from transformers import HfArgumentParser
 
 import logging
 
@@ -17,6 +18,9 @@ class EmulatorConfig:
     )
     cpu_memory: Union[int, float] = field(
         default=0.5, metadata={"help": "Can be a float in the range [0, 1] or an integer in GB"}
+    )
+    ckpt_path: str = field(
+        default="checkpoints", metadata={"help": "The path to save the emulator model checkpoints"}
     )
 
     def __post_init__(self):
@@ -39,6 +43,18 @@ class EmulatorConfig:
         if self.cpu_memory > total_cpu_memory:
             raise ValueError(f"cpu_memory should not exceed {total_cpu_memory} GB")
 
+
+    @classmethod
+    def load_from_file(self, config_path):
+        parser = HfArgumentParser(self)
+        self = parser.parse_json_file(json_file=config_path)[0]
+        return self
+
+    @classmethod
+    def load_from_json(self, config_json):
+        parser = HfArgumentParser(self)
+        self = parser.parse_dict(config_json)[0]
+        return self
 
 
 # a universal logger for all modules
