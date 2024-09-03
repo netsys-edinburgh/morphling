@@ -13,19 +13,21 @@ macro(clone_and_build_external_project EXTERNAL_DIR REPO REPO_URL REPO_TAG)
     DEPENDS ${EXTERNAL_DIR}/${REPO}/CMakeLists.txt
     COMMAND ${CMAKE_COMMAND} -S ${EXTERNAL_DIR}/${REPO} -B ${EXTERNAL_DIR}/${REPO}/build ${ARGN}
     COMMAND ${CMAKE_COMMAND} --build ${EXTERNAL_DIR}/${REPO}/build -j8
+    COMMAND ${CMAKE_COMMAND} -E touch ${EXTERNAL_DIR}/${REPO}/built_library
     COMMENT "Building external project..."
     VERBATIM
   )
 
-  add_custom_command(
-    OUTPUT ${CMAKE_BINARY_DIR}/${REPO}_stamp
-    COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_BINARY_DIR}/${REPO}_stamp
-    COMMENT "Running ${REPO} only once"
-    VERBATIM
-  )
+  # add_custom_command(
+  #   OUTPUT ${CMAKE_BINARY_DIR}/${REPO}_stamp
+  #   DEPENDS ${EXTERNAL_DIR}/${REPO}/built_library
+  #   COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_BINARY_DIR}/${REPO}_stamp
+  #   COMMENT "Running ${REPO} only once"
+  #   VERBATIM
+  # )
 
   add_custom_target(run_once_${REPO} ALL
-    DEPENDS ${CMAKE_BINARY_DIR}/${REPO}_stamp
+    DEPENDS ${EXTERNAL_DIR}/${REPO}/built_library
   )
 endmacro()
 
