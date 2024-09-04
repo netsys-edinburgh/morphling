@@ -1,2 +1,5 @@
 clang-format
 pre-commit
+torch
+torchaudio
+torchvision
