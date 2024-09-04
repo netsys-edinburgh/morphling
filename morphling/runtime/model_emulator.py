@@ -8,11 +8,14 @@ from typing import Callable, Dict, Type, Union
 import numpy as np
 import torch
 import transformers
+from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from tqdm import tqdm
 from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
+from morphling._C import tensor_handle
 from morphling.common import EmulatorConfig
+from morphling.utils import get_checkpoint_paths
 
 
 class EmulationEngine(object):
@@ -24,9 +27,27 @@ class EmulationEngine(object):
     def __init__(self, config: PretrainedConfig):
 
         self.offload_exemption = set()
-        self.ckpt_files = []
 
         self.config = config
+
+        model_name_or_path = config._name_or_path
+        if os.path.exists(model_name_or_path):
+            checkpoint_paths = get_checkpoint_paths(model_name_or_path)
+        else:
+            checkpoint_paths = None
+            # get the checkpoint download path from huggingface hub
+            model_path = snapshot_download(
+                model_name_or_path,
+                cache_dir=os.environ.get("TRANSFORMERS_CACHE", None),
+                ignore_patterns=["flax*", "tf*"],
+            )
+            if model_path is None:
+                raise RuntimeError(
+                    f"The `snapshot_download` function could not find the checkpoint {model_name_or_path}. "
+                    f"Please provide a valid checkpoint."
+                )
+            checkpoint_paths = get_checkpoint_paths(model_path)
+        self.ckpt_files = checkpoint_paths
 
     def init(
         self, cls: Type[PreTrainedModel], config: Union[str, Dict, EmulatorConfig]
@@ -50,6 +71,7 @@ class EmulationEngine(object):
         os.makedirs(self.checkpoint, exist_ok=True)
 
         self.emulator_config = config
+        self.tensor_handle = tensor_handle(config.ckpt_path)
 
         return self
 
@@ -183,10 +205,10 @@ class EmulationEngine(object):
                 self.dtype_cls = self.config.torch_dtype
 
                 if (
-                    not self.archer_engine.is_tensor_index_initialized()
+                    not self.tensor_handle.is_tensor_index_initialized()
                     or not os.path.exists(name_id_map_file)
                 ):
-                    print("Creating model from scratch ...", flush=True)
+                    print("Creating model from scratch ...", self.ckpt_files, flush=True)
 
                     self.cls.__init__ = self.cls._old_init
 
@@ -307,8 +329,8 @@ class EmulationEngine(object):
 
         for param_name in param_names:
             self.name_id_map[param_name] = self._generate_param_id()
-            if not self.archer_engine.is_tensor_offloaded(self.name_id_map[param_name]):
-                self.archer_engine.offload(
+            if not self.tensor_handle.is_tensor_offloaded(self.name_id_map[param_name]):
+                self.tensor_handle.offload_tensor(
                     state_dict[param_name], self.name_id_map[param_name]
                 )
 
