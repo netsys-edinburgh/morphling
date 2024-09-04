@@ -17,7 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "memory/initialize_memory.h"
+#include "../memory/initialize_memory.h"
 
 #define SHM_NAME "/sgemm_shm"
 #define POLLING_INTERVAL 100000
