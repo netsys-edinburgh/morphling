@@ -5,12 +5,11 @@
 
 #include "archer_aio_utils.h"
 
+#include <glog/logging.h>
 #include <string.h>
 
 #include <cmath>
 #include <future>
-
-#include "utils/logger.h"
 
 const size_t kBlockSize = 1 * 1024 * 1024;
 const size_t kQueueDepth = std::thread::hardware_concurrency() /
@@ -21,7 +20,8 @@ int ArcherOpenFile(const char* filename) {
   const int mode = 0660;
   const auto fd = open(filename, flags, mode);
   if (fd < 0) {
-    LOG_FATAL("Failed to open file: ", filename);
+    LOG(FATAL) << "Failed to open file: " << filename << ", errno: " << errno
+               << ", msg: " << strerror(errno);
     return -1;
   }
   return fd;
@@ -30,7 +30,8 @@ int ArcherOpenFile(const char* filename) {
 int ArcherCloseFile(const int fd) {
   const auto ret = close(fd);
   if (ret < 0) {
-    LOG_FATAL("Failed to close file: ", fd);
+    LOG(FATAL) << "Failed to close file: " << fd << ", errno: " << errno
+               << ", msg: " << strerror(errno);
     return -1;
   }
   return 0;
@@ -59,7 +60,8 @@ int ArcherReadFileBatch(const int fd, void* buffer, const size_t num_bytes,
   for (auto& future : futures) {
     const auto ret = future.get();
     if (ret < 0) {
-      LOG_FATAL("Failed to read file: ", fd);
+      LOG(FATAL) << "Failed to read file: " << fd << ", errno: " << errno
+                 << ", msg: " << strerror(errno);
       return -1;
     }
   }
@@ -89,8 +91,8 @@ int ArcherWriteFileBatch(const int fd, const void* buffer,
   for (auto& future : futures) {
     const auto ret = future.get();
     if (ret < 0) {
-      LOG_FATAL("Failed to write file: ", fd, ", errno: ", errno,
-                ", msg: ", strerror(errno));
+      LOG(FATAL) << "Failed to write file: " << fd << ", errno: " << errno
+                 << ", msg: " << strerror(errno);
       return -1;
     }
   }
@@ -102,8 +104,8 @@ int ArcherReadFile(int fd, void* buffer, const size_t num_bytes,
                    const size_t offset) {
   const auto ret = pread(fd, buffer, num_bytes, offset);
   if (ret < 0) {
-    LOG_FATAL("Failed to read file: ", fd, ", errno: ", errno,
-              ", msg: ", strerror(errno));
+    LOG(FATAL) << "Failed to read file: " << fd << ", errno: " << errno
+               << ", msg: " << strerror(errno);
     return -1;
   }
 
@@ -114,8 +116,8 @@ int ArcherWriteFile(int fd, const void* buffer, size_t num_bytes,
                     size_t offset) {
   const auto ret = pwrite(fd, buffer, num_bytes, offset);
   if (ret < 0) {
-    LOG_FATAL("Failed to write file: ", fd, ", errno: ", errno,
-              ", msg: ", strerror(errno));
+    LOG(FATAL) << "Failed to write file: " << fd << ", errno: " << errno
+               << ", msg: " << strerror(errno);
     return -1;
   }
 

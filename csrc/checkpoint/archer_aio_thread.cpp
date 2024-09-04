@@ -5,12 +5,8 @@
 
 #include "archer_aio_thread.h"
 
-#include "utils/logger.h"
-
 ArcherAioThread::ArcherAioThread(int thread_id)
-    : thread_id_(thread_id), is_running_(false) {
-  LOG_INFO("Create ArcherAioThread for thread: ", thread_id_);
-}
+    : thread_id_(thread_id), is_running_(false) {}
 
 ArcherAioThread::~ArcherAioThread() { Stop(); }
 

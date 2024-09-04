@@ -9,14 +9,12 @@
 
 #include "archer_aio_utils.h"
 #include "utils/cuda_utils.h"
-#include "utils/logger.h"
 
 const int kBlockSize = 1024 * 1024;
 const int kQueueDepth = 32;
 
 ArcherPrioAioHandle::ArcherPrioAioHandle(const std::string& prefix)
     : aio_context_(kBlockSize), time_to_exit_(false) {
-  InitLogger();
   thread_ = std::thread(&ArcherPrioAioHandle::Run, this);
 }
 

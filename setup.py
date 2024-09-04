@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Dict
 
-from setuptools import Extension, find_packages, setup
+from setuptools import Command, Extension, find_packages, setup
 from setuptools.command.bdist_wheel import bdist_wheel
 from setuptools.command.build_ext import build_ext
 from setuptools.command.install import install
@@ -177,17 +177,50 @@ class cmake_build_ext(build_ext):
             print(self.build_temp, ext_target_name)
 
 
+class BuildPackageProtos(Command):
+    """Command to generate project *_pb2.py modules from proto files."""
+
+    description = "build grpc protobuf modules"
+    user_options = []
+
+    def initialize_options(self):
+        self.strict_mode = False
+
+    def finalize_options(self):
+        pass
+
+    def _build_package_proto(self, root: str, proto_file: str) -> None:
+        from grpc_tools import protoc
+
+        command = [
+            "grpc_tools.protoc",
+            "-I",
+            "./",
+            f"--python_out={root}",
+            f"--grpc_python_out={root}",
+        ] + [proto_file]
+        if protoc.main(command) != 0:
+            raise RuntimeError("error: {} failed".format(command))
+
+    def run(self):
+        self._build_package_proto(
+            ".", "morphling/proto/morphling.proto"
+        )
+
+
 class CustomInstall(install):
     """Custom installation to ensure proto files are compiled and extensions are built before installation."""
 
     def run(self):
         self.run_command("build_ext")
+        self.run_command("build_package_protos")
         super().run()
 
 class CustomBuild(sdist):
     """Custom build command to run build_package_protos."""
 
     def run(self):
+        self.run_command("build_package_protos")
         super().run()
 
 
@@ -195,12 +228,13 @@ class CustomBdistWheel(bdist_wheel):
     """Custom bdist_wheel command to run build_package_protos."""
 
     def run(self):
+        self.run_command("build_package_protos")
         super().run()
 
 
 cmdclass = {
     "build_ext": cmake_build_ext,
-    # "build_package_protos": BuildPackageProtos,
+    "build_package_protos": BuildPackageProtos,
     "install": CustomInstall,
     "sdist": CustomBuild,
     "bdist_wheel": CustomBdistWheel,
@@ -212,13 +246,19 @@ setup(
     ext_modules=[
         CMakeExtension(name="morphling._C"),
     ],
+    entry_points={
+        "console_scripts": [
+            "emulator=morphling.entrypoint.emulator:main",
+        ],
+    },
     install_requires=install_requires,
     long_description=read_readme(),
     long_description_content_type="text/markdown",
     extras_require=extras,
-    packages=["morphling"],
+    packages=find_packages(),
     package_data={
         "morphling": ["py.typed", "*.so"],
     },
+    include_package_data=True,
     cmdclass=cmdclass,
 )
