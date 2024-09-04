@@ -26,8 +26,6 @@ class EmulationEngine(object):
 
     def __init__(self, config: PretrainedConfig):
 
-        self.offload_exemption = set()
-
         self.config = config
 
         model_name_or_path = config._name_or_path
@@ -55,6 +53,7 @@ class EmulationEngine(object):
 
         self.cls = cls
         self.name_id_map = {}
+        self.name_size_map = {}
         self.tensor_id_map = {}
         self.registered_tensors = set()
         self.forward_hooks = []
@@ -201,6 +200,7 @@ class EmulationEngine(object):
                 # print("Creating model from scratch ...")
 
                 name_id_map_file = os.path.join(self.checkpoint, "name_id_map.json")
+                name_size_map_file = os.path.join(self.checkpoint, "name_size_map.json")
 
                 self.dtype_cls = self.config.torch_dtype
 
@@ -239,12 +239,18 @@ class EmulationEngine(object):
 
                     with open(name_id_map_file, "w") as f:
                         json.dump(self.name_id_map, f)
+
+                    with open(name_size_map_file, "w") as f:
+                        json.dump(self.name_size_map, f)
                 else:
                     print("Loading model from offload_path ...", flush=True)
                     self.cls.__init__ = self.cls._old_init
                     # load the name_id_map
                     with open(name_id_map_file, "r") as f:
                         self.name_id_map = json.load(f)
+
+                    with open(name_size_map_file, "r") as f:
+                        self.name_size_map = json.load(f)
 
                 is_flash_attn_available = kwargs.get("is_flash_attn_available", False)
 
@@ -333,6 +339,9 @@ class EmulationEngine(object):
                 self.tensor_handle.offload_tensor(
                     state_dict[param_name], self.name_id_map[param_name]
                 )
+
+            param_size = state_dict[param_name].numel() * state_dict[param_name].element_size()
+            self.name_size_map[param_name] = param_size
 
         gc.collect()
         torch.cuda.empty_cache()

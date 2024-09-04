@@ -5,8 +5,6 @@
 
 #include "archer_aio_threadpool.h"
 
-#include "utils/logger.h"
-
 ArcherAioThreadPool::ArcherAioThreadPool(int num_threads)
     : num_threads_(num_threads) {
   for (auto i = 0; i < num_threads_; ++i) {
