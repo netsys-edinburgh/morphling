@@ -12,6 +12,7 @@ from typing import Dict
 from setuptools import Extension, find_packages, setup
 from setuptools.command.bdist_wheel import bdist_wheel
 from setuptools.command.build_ext import build_ext
+from setuptools.command.install import install
 from setuptools.command.sdist import sdist
 
 try:
@@ -176,8 +177,33 @@ class cmake_build_ext(build_ext):
             print(self.build_temp, ext_target_name)
 
 
+class CustomInstall(install):
+    """Custom installation to ensure proto files are compiled and extensions are built before installation."""
+
+    def run(self):
+        self.run_command("build_ext")
+        super().run()
+
+class CustomBuild(sdist):
+    """Custom build command to run build_package_protos."""
+
+    def run(self):
+        super().run()
+
+
+class CustomBdistWheel(bdist_wheel):
+    """Custom bdist_wheel command to run build_package_protos."""
+
+    def run(self):
+        super().run()
+
+
 cmdclass = {
     "build_ext": cmake_build_ext,
+    # "build_package_protos": BuildPackageProtos,
+    "install": CustomInstall,
+    "sdist": CustomBuild,
+    "bdist_wheel": CustomBdistWheel,
 }
 
 setup(
@@ -190,7 +216,7 @@ setup(
     long_description=read_readme(),
     long_description_content_type="text/markdown",
     extras_require=extras,
-    packages=find_packages(),
+    packages=["morphling"],
     package_data={
         "morphling": ["py.typed", "*.so"],
     },
