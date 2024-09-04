@@ -1,6 +1,7 @@
-import torch
-import numpy as np
 import logging
+
+import numpy as np
+import torch
 
 # Set up logging
 log_file = "matrix_comparison.log"
@@ -11,8 +12,8 @@ def compare_matrices(mat1, mat2, epsilon=1e-6):
 
 size = 2000
 
-A = torch.ones((size, size), dtype=torch.float32)  
-B = torch.ones((size, size), dtype=torch.float32) * 2  
+A = torch.ones((size, size), dtype=torch.float32)
+B = torch.ones((size, size), dtype=torch.float32) * 2
 
 expected_value = 2 * size
 C_expected = np.full((size, size), expected_value, dtype=np.float32)

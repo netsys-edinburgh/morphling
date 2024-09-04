@@ -1,28 +1,14 @@
-// ----------------------------------------------------------------------------
-//  ServerlessLLM
-//  Copyright (c) ServerlessLLM Team 2024
-//
-//   Licensed under the Apache License, Version 2.0 (the "License");
-//   you may not use this file except in compliance with the License.
-//
-//   You may obtain a copy of the License at
-//
-//                   http://www.apache.org/licenses/LICENSE-2.0
-//
-//   Unless required by applicable law or agreed to in writing, software
-//   distributed under the License is distributed on an "AS IS" BASIS,
-//   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//   See the License for the specific language governing permissions and
-//   limitations under the License.
-//  ----------------------------------------------------------------------------
 #include <torch/extension.h>
 
-#include "checkpoint.h"
+#include "archer_tensor_handle.h"
 
-namespace py = pybind11;
-
-// define pybind11 module
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("save_tensors", &SaveTensors, "Save a state dict")
-      .def("restore_tensors", &RestoreTensors, "Restore a state dict")
+  py::class_<ArcherTensorHandle>(m, "tensor_handle")
+      .def("is_tensor_index_initialized",
+           &ArcherTensorHandle::IsTensorIndexInitialized,
+           "Check if tensor index is initialized")
+      .def("offload_tensor", &ArcherTensorHandle::OffloadTensor,
+           "Offload tensor to disk")
+      .def("is_tensor_offloaded", &ArcherTensorHandle::IsTensorOffloaded,
+           "Check if tensor is offloaded");
 }

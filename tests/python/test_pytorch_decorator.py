@@ -2,6 +2,7 @@ import torch
 
 from morphling.common.keywords import pyobj_keywords, torch_keywords
 
+
 def torch_decorator(func, funcname=None):
     def wrapper(*args, **kwargs):
         print("torch_decorator ", funcname)

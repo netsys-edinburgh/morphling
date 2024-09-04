@@ -1,6 +1,9 @@
-import os, psutil
-import torch
 import multiprocessing as mp
+import os
+
+import psutil
+import torch
+
 
 def get_memory_usage(size):
     a = torch.zeros(size)

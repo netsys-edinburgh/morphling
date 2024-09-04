@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.optim import SGD
 
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
