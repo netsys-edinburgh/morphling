@@ -1,2 +1,7 @@
 clang-format
+grpcio==1.49.1
+grpcio-tools==1.49.1
 pre-commit
+torch
+torchaudio
+torchvision

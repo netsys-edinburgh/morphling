@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package morphling;
+
+service MemoryManager {
+    rpc LoadParamAsync (LoadParamRequest) returns (LoadParamResponse) {}
+    rpc ConfirmParamLoaded (LoadParamRequest) returns (LoadParamResponse) {}
+    rpc RegisterModel (RegisterModelRequest) returns (RegisterModelResponse) {}
+}
+
+
+
+message Response {
+    string message = 1;
+    uint32 code = 2;
+}
+
+message RegisterModelRequest {
+    string ckpt_path = 1;
+}
+
+message RegisterModelResponse {
+    Response response = 1;
+}
+
+message LoadParamRequest {
+    uint32 param_id = 1;
+    uint32 device_id = 2;
+}
+
+message LoadParamResponse {
+    Response response = 1;
+}

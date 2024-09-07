@@ -1,5 +1,5 @@
-from transformers import AutoModelForCausalLM, AutoConfig
 import torch
+from transformers import AutoConfig, AutoModelForCausalLM
 
 
 def torch_decorator(func, funcname=None):
