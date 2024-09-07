@@ -17,6 +17,61 @@ void initialize_logging() {
   }
 }
 
+void log_matrix_column_major(const char* matrix_name, const float* matrix,
+                             int rows, int cols) {
+  char message[1024];
+  snprintf(message, sizeof(message),
+           "Matrix %s in column-major order:", matrix_name);
+  log_message(message);
+
+  for (int j = 0; j < cols; ++j) {
+    char column_values[1024] = "";
+    for (int i = 0; i < rows; ++i) {
+      char value_str[32];
+      snprintf(value_str, sizeof(value_str), "%f ",
+               matrix[j * rows + i]);  // Access element in column-major order
+      strncat(column_values, value_str,
+              sizeof(column_values) - strlen(column_values) - 1);
+    }
+    log_message(column_values);
+  }
+}
+
+void log_matrix_with_transpose(const char* matrix_name, const float* matrix,
+                               int rows, int cols, bool is_transposed) {
+  char message[1024];
+  snprintf(message, sizeof(message),
+           "Matrix %s in column-major order:", matrix_name);
+  log_message(message);
+
+  // When matrix is transposed, swap rows and columns for printing
+  if (is_transposed) {
+    for (int i = 0; i < cols; ++i) {
+      char row_values[1024] = "";
+      for (int j = 0; j < rows; ++j) {
+        char value_str[32];
+        snprintf(value_str, sizeof(value_str), "%f ",
+                 matrix[j * cols + i]);  // Access as transposed
+        strncat(row_values, value_str,
+                sizeof(row_values) - strlen(row_values) - 1);
+      }
+      log_message(row_values);
+    }
+  } else {
+    for (int j = 0; j < cols; ++j) {
+      char column_values[1024] = "";
+      for (int i = 0; i < rows; ++i) {
+        char value_str[32];
+        snprintf(value_str, sizeof(value_str), "%f ",
+                 matrix[j * rows + i]);  // Access as is
+        strncat(column_values, value_str,
+                sizeof(column_values) - strlen(column_values) - 1);
+      }
+      log_message(column_values);
+    }
+  }
+}
+
 void get_timestamp(char* buffer, size_t size) {
   time_t now = time(NULL);
   struct tm* local = localtime(&now);
@@ -27,7 +82,6 @@ void log_message(const char* message) {
   if (log_file == NULL) {
     initialize_logging();
   }
-  return;
   char timestamp[20];
   get_timestamp(timestamp, sizeof(timestamp));
   fprintf(log_file, "[%s] %s\n", timestamp, message);
@@ -91,7 +145,7 @@ void print_first_10_values(const char* matrix_name, const float* matrix,
            "First 10 values of matrix %s (at %p): ", matrix_name,
            (void*)matrix);
 
-  for (int i = 0; i < 10 && i < size; i++) {
+  for (int i = 0; i < 20 && i < size; i++) {
     char value_str[32];
     snprintf(value_str, sizeof(value_str), "%f ", matrix[i]);
     strncat(message, value_str, sizeof(message) - strlen(message) - 1);
@@ -224,13 +278,13 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
     }
   }
 
-  // if (((*transa == 'T' || *transa == 't') && (*transb == 'N' || *transb ==
-  // 'n')) ||
-  //     ((*transa == 'N' || *transa == 'n') && (*transb == 'T' || *transb ==
-  //     't'))) { orig_sgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb,
-  //     beta, c, ldc); return;
+  // log_message("Logging matrix A:");
+  // log_matrix_with_transpose("Matrix A", a, *m, *k,
+  //                           (*transa == 'T' || *transa == 't'));
 
-  // }
+  // log_message("Logging matrix B:");
+  // log_matrix_with_transpose("Matrix B", b, *k, *n,
+  //                           (*transb == 'T' || *transb == 't'));
 
   size_t shm_size = get_shared_memory_size();
   size_t freeMem, totalMem;
@@ -244,17 +298,6 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
                       : (*ldb) * (*k) * sizeof(float);
   size_t size_c = (*ldc) * (*n) * sizeof(float);
   size_t task_size = sizeof(sgemm_args_t) + size_a + size_b + size_c;
-
-  // bool execute_on_cpu = false;
-  // if (*lda > 2 * *m || *ldb > 2 * *k || *ldc > 2 * *n || task_size > shm_size
-  // || task_size > freeMem) {
-  //     execute_on_cpu = true;
-  // }
-
-  // if (execute_on_cpu) {
-  //     orig_sgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c,
-  //     ldc); return;
-  // }
 
   shared_memory_t* shared_mem_ptr = initialize_shared_memory(shm_size);
   if (!shared_mem_ptr) {
@@ -307,31 +350,37 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
       task_ptr->k = *k;
       task_ptr->alpha = *alpha;
 
-      // Copy matrix A considering padding
       task_ptr->a = (float*)((char*)task_ptr + sizeof(sgemm_args_t));
       for (int col = 0; col < (*transa == 'N' || *transa == 'n' ? *k : *m);
            col++) {
         memcpy((float*)(task_ptr->a + col * (*lda)), a + col * (*lda),
-               (*m) * sizeof(float));
+               (*transa == 'N' || *transa == 'n' ? *m : *k) * sizeof(float));
       }
       task_ptr->lda = *lda;
 
-      // Copy matrix B considering padding
       task_ptr->b = (float*)((char*)task_ptr->a + size_a);
       for (int col = 0; col < (*transb == 'N' || *transb == 'n' ? *n : *k);
            col++) {
         memcpy((float*)(task_ptr->b + col * (*ldb)), b + col * (*ldb),
-               (*k) * sizeof(float));
+               (*transb == 'N' || *transb == 'n' ? *k : *n) * sizeof(float));
       }
       task_ptr->ldb = *ldb;
 
-      // Copy matrix C considering padding
       task_ptr->c = (float*)((char*)task_ptr->b + size_b);
       for (int col = 0; col < *n; col++) {
         memcpy((float*)(task_ptr->c + col * (*ldc)), c + col * (*ldc),
                (*m) * sizeof(float));
       }
       task_ptr->ldc = *ldc;
+
+      // log_message("Logging matrix A:");
+      // log_matrix_with_transpose("Matrix A", task_ptr->a, *m, *k,
+      //                           (*transa == 'T' || *transa == 't'));
+
+      // log_message("Logging matrix B:");
+      // log_matrix_with_transpose("Matrix B", task_ptr->b, *k, *n,
+      //                           (*transb == 'T' || *transb == 't'));
+      // print_first_10_values("Matrix B", task_ptr->b, *k * *n);
 
       shared_mem_ptr->meta_data[index].offset = offset;
       atomic_store(&shared_mem_ptr->meta_data[index].flag, WRITTEN);
@@ -383,31 +432,35 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
           return;
         }
 
+        memset(temp_c, 0, (*m) * (*n) * sizeof(float));
+
         orig_sgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, temp_c,
                    ldc);
+        
+        log_message("Printing the first 20 values for comparison between intercepted and original SGEMM:");
+        for (int i = 0; i < (*m) * (*n) && i < 20; i++) {
+            char value_log[256];
+            snprintf(value_log, sizeof(value_log), "Index %d: intercepted=%.5f, original=%.5f", i, c[i], temp_c[i]);
+            log_message(value_log);
+        }
 
-        // Call the original SGEMM
 
-        // Compare the results
         log_message(
             "Comparing results between intercepted and original SGEMM.");
         for (int i = 0; i < (*m) * (*n); i++) {
-          if (fabs(temp_c[i] - c[i]) > 1e-3) {
+          if (fabs(temp_c[i] - c[i]) > 1e-6) {
             char comparison_log[256];
             snprintf(comparison_log, sizeof(comparison_log),
-                     "Mismatch at index %d: intercepted=%.5f, original=%.5f", i,
+                     "Mismatch at index %d: intercepted=%.7f, original=%.7f", i,
                      temp_c[i], c[i]);
             log_message(comparison_log);
           }
         }
+        // log_matrix_column_major("Matrix C (intercepted)", c, *m, *n);
+        // log_matrix_column_major("Matrix C (original)", temp_c, *m, *n);
 
-        // Free the temporary buffer
         free(temp_c);
 
-        // Print the first 10 values of matrix C
-        print_first_10_values("Matrix C", c, (*m) * (*n));
-
-        // Mark the task as complete
         atomic_store(&shared_mem_ptr->meta_data[index].flag, EMPTY);
       }
 
@@ -425,7 +478,6 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
   }
 
   unlock_memory();
-  // orig_sgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
 }
 
 int main() {
