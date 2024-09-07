@@ -5,7 +5,9 @@ from collections import Counter
 from multiprocessing import shared_memory
 
 import numpy as np
+import torch
 
+from morphling._C import CheckpointHandle
 from morphling.runtime import EmulationEngine
 
 
@@ -57,12 +59,28 @@ def main():
         )
         tmp[:] = ids_of_size[:]
 
-    # print buffer as hex and skip bytes with all zeros
-    print("Buffer:")
-    for i in range(0, len(buffer), 16):
-        line = buffer[i : i + 16]
-        if line != b"\x00" * 16:
-            print(f"{i:04x} {line.hex()}")
+
+    pin_mem_size, pin_mem_offsets = EmulationEngine.compute_pin_offsets(param_meta_map)
+    name_id_map = {}
+    for name, meta in param_meta_map.items():
+        name_id_map[name] = meta["id"]
+
+    checkpoint_handle = CheckpointHandle(args.ckpt_path)
+    checkpoint_handle.read_checkpoint(pin_mem_offsets, name_id_map)
+
+    # pin_param_buffer = torch.zeros(pin_mem_size, dtype=torch.uint8).pin_memory()
+    # pin_buffer = pin_param_buffer.data_ptr()
+
+    # # read from file offset to pin_buffer offsets
+    # for name in param_meta_map:
+    #     param_meta = param_meta_map[name]
+    #     file_offset = param_meta["file_offset"]
+    #     size = param_meta["size"]
+    #     pin_offset = pin_mem_offsets[name]
+    #     with open(os.path.join(args.ckpt_path, "archer_param_0"), "rb") as f:
+    #         f.seek(file_offset)
+    #         pin_buffer[pin_offset:pin_offset+size] = torch.ByteTensor(list(f.read(size)))
+
 
 if __name__ == "__main__":
     main()
