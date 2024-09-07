@@ -20,24 +20,17 @@ class ArcherTensorHandle : public noncopyable {
   ~ArcherTensorHandle() = default;
 
   bool IsTensorOffloaded(const std::uint32_t tensor_id);
-  void OffloadTensor(torch::Tensor& tensor, const std::uint32_t tensor_id);
+  std::uint64_t OffloadTensor(torch::Tensor& tensor,
+                              const std::uint32_t tensor_id);
   bool IsTensorIndexInitialized() const { return is_serialized_; }
 
-  void SetTensor(std::uint32_t tensor_id, torch::Tensor& buffer);
-  void SetTensor(std::uint32_t tensor_id, torch::Tensor& buffer,
-                 const torch::Device& device);
+ private:
+  std::uint64_t StoreTensor(const std::uint32_t tensor_id,
+                            torch::Tensor& buffer);
+  std::string GetIndexFileName(const std::uint32_t file_id) const;
 
   void ReadTensor(const std::uint32_t tensor_id, void* memory_ptr,
                   bool on_demand = false);
-
-  std::uint32_t GetTensorId(void* tensor) const;
-
-  int64_t GetTensorSizeAligned(const std::uint32_t tensor_id) const;
-  torch::TensorOptions GetTensorOptions(const std::uint32_t tensor_id) const;
-
- private:
-  void StoreTensor(const std::uint32_t tensor_id, torch::Tensor& buffer);
-  std::string GetIndexFileName(const std::uint32_t file_id) const;
 
  private:
   std::string prefix_;
