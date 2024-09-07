@@ -75,8 +75,8 @@ int main() {
                          float           *C, int ldc)
   */
   // cublas is column-major, while torch is row-major, perform C = A * B
-  cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, 2048, 1024, 512, &alpha,
-              (float*)d_B, 2048, (float*)d_A, 512, &beta, (float*)d_C, 2048);
+  cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, 2048, 1024, 512, &alpha,
+                 (float*)d_B, 2048, (float*)d_A, 512, &beta, (float*)d_C, 2048);
   end = std::chrono::high_resolution_clock::now();
   elapsed_seconds = end - start;
   std::cout << "cuBLAS sgemm took " << elapsed_seconds.count() << " seconds."
