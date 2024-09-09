@@ -6,8 +6,9 @@
 #include "archer_tensor_handle.h"
 
 #include <cuda_runtime_api.h>
-#include <glog/logging.h>
 #include <torch/script.h>
+
+#include "utils/logger.h"
 
 const int c_block_size = 128 * 1024;
 const int c_io_queue_depth = 8;
@@ -17,8 +18,8 @@ const char* ARCHER_IHDEX_NAME = "archer_index";
 
 ArcherTensorHandle::ArcherTensorHandle(const std::string& prefix)
     : prefix_(prefix), prio_aio_handle_(prefix), file_id_(0), file_offset_(0) {
-  // InitLogger();
-  google::InitGoogleLogging("morphling");
+  InitLogger();
+  // google::InitGoogleLogging("morphling");
 
   if (prefix_.back() != '/') {
     prefix_ += '/';
@@ -26,24 +27,22 @@ ArcherTensorHandle::ArcherTensorHandle(const std::string& prefix)
 
   struct stat st;
   if (stat(prefix_.c_str(), &st) != -1 && !S_ISDIR(st.st_mode)) {
-    LOG(FATAL) << "Invalid prefix: " << prefix_ << " is not a directory";
+    LOG_FATAL("Invalid prefix: {} is not a directory", prefix_);
   }
   if (stat(prefix_.c_str(), &st) == -1) {
-    LOG(WARNING) << "Invalid prefix: " << prefix_
-                 << " does not exist, creating";
+    LOG_WARN("Invalid prefix: {} does not exist, creating", prefix_);
     mkdir(prefix_.c_str(), 0777);
   }
 
   auto ckpt_index_path = prefix_ + std::string(ARCHER_IHDEX_NAME);
   if (access(ckpt_index_path.c_str(), F_OK) != -1) {
-    LOG(INFO) << "Loading index file from " << ckpt_index_path;
+    LOG_INFO("Loading index file from {}", ckpt_index_path);
     tensor_index_->Deserialize(ckpt_index_path.c_str());
     is_serialized_ = true;
   } else {
-    LOG(INFO) << "Index file " << ckpt_index_path
-              << " does not exist, creating";
+    LOG_INFO("Index file size {} does not exist, creating", ckpt_index_path);
   }
-  LOG(INFO) << "Index file size " << tensor_index_->size();
+  LOG_INFO("Index file size {}", tensor_index_->size());
 }
 
 std::uint64_t ArcherTensorHandle::OffloadTensor(torch::Tensor& tensor,
@@ -88,8 +87,8 @@ std::uint64_t ArcherTensorHandle::StoreTensor(const std::uint32_t tensor_id,
   if (tensor_exists) {
     // size must be the same if found
     if (it->second.size != buffer.nbytes()) {
-      LOG(FATAL) << "Tensor " << tensor_id << " size mismatch "
-                 << it->second.size << " != " << buffer.nbytes();
+      LOG_FATAL("Tensor {} size mismatch {} != {}", tensor_id, it->second.size,
+                buffer.nbytes());
     }
     tensor_meta = it->second;
   }
@@ -116,9 +115,7 @@ std::string ArcherTensorHandle::GetIndexFileName(
 void ArcherTensorHandle::ReadTensor(const uint32_t tensor_id, void* memory_ptr,
                                     bool on_demand) {
   auto it = tensor_index_->find(tensor_id);
-  if (it == tensor_index_->end()) {
-    LOG(FATAL) << "Tensor not found " << tensor_id;
-  }
+  LOG_FATAL_IF(it != tensor_index_->end(), "Tensor not found {}", tensor_id);
 
   auto tensor_meta = it->second;
   auto filename = GetIndexFileName(tensor_meta.file_id);
