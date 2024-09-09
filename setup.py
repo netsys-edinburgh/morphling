@@ -245,6 +245,7 @@ setup(
     version="0.0.1",
     ext_modules=[
         CMakeExtension(name="morphling._C"),
+        # CMakeExtension(name="morphling.morphling_server"),
     ],
     entry_points={
         "console_scripts": [
@@ -257,7 +258,7 @@ setup(
     extras_require=extras,
     packages=find_packages(),
     package_data={
-        "morphling": ["py.typed", "*.so"],
+        "morphling": ["py.typed", "*.so", "morphling_server"],
     },
     include_package_data=True,
     cmdclass=cmdclass,

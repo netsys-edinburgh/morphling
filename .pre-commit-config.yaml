@@ -32,6 +32,7 @@ repos:
     hooks:
     -   id: clang-format  # formatter of C/C++ code based on a style guide: LLVM, Google, Chromium, Mozilla, and WebKit available
         args: ['-style=file']
+    -   id: cppcheck
 
 -   repo: https://github.com/codespell-project/codespell
     rev: v2.3.0

@@ -11,7 +11,7 @@ bool IsDevicePointer(const void* ptr) {
   cudaPointerAttributes attr;
   cudaError_t err = cudaPointerGetAttributes(&attr, ptr);
   if (err != cudaSuccess) {
-    LOG_ERROR("cudaPointerGetAttributes failed: ", cudaGetErrorString(err));
+    LOG_ERROR("cudaPointerGetAttributes failed: {}", cudaGetErrorString(err));
     return false;
   }
   return attr.type == cudaMemoryTypeDevice;

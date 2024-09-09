@@ -28,7 +28,7 @@ class EmulationEngine(object):
     @staticmethod
     def find_tensor_same_size(
         param_meta_map: Dict[str, dict], size: int
-    ) -> Tuple[int, int]:
+    ) -> np.ndarray:
         names_of_size = [
             name for name, param in param_meta_map.items() if param["size"] == size
         ]
