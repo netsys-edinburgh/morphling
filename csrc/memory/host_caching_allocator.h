@@ -1,3 +1,5 @@
+#if 0
+
 // c10/mobile/CPUCachingAllocator.h
 //
 // Part of the Pytorch Project, under the BSD-3-Clause License.
@@ -104,3 +106,5 @@ extern HostCachingAllocator* get();
 }  // namespace HostCachingAllocator
 
 }  // namespace c10
+
+#endif

@@ -29,7 +29,7 @@ void CheckpointHandle::ReadCheckpoint(
   }
   auto file_size = st.st_size;
 
-  LOG_FATAL_IF(buffer_ == nullptr, "Buffer is not null, should only load once");
+  LOG_FATAL_IF(buffer_ != nullptr, "Buffer is not null, should only load once");
   cudaHostAlloc(&buffer_, file_size, cudaHostAllocDefault);
 
   tensor_index_.Deserialize(index_filename.c_str());

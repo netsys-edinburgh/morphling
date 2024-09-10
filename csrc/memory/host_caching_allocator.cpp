@@ -1,3 +1,5 @@
+#if 0
+
 //===- c10/mobile/CPUCachingAllocator.cpp ----------------===//
 //
 // Part of the Pytorch Project, under the BSD 3-Clause License.
@@ -108,3 +110,5 @@ HostCachingAllocator* get() {
 }  // namespace HostCachingAllocator
 
 }  // namespace c10
+
+#endif
