@@ -1,5 +1,6 @@
 #ifndef INTERCEPTOR_H
 #define INTERCEPTOR_H
+
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 #include <dlfcn.h>
@@ -19,7 +20,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "../memory/initialize_memory.h"
+// Updated includes for shared memory management
+#include "/home/eren/DeviceEmulator/csrc/memory/shared_memory_initializer.h"
+#include "/home/eren/DeviceEmulator/csrc/memory/shared_memory_manager.h"
 
 #define SHM_NAME "/sgemm_shm"
 #define LOG_DIR "/home/eren/DeviceEmulator/csrc/intercept/logs/"
@@ -70,6 +73,8 @@ void get_timestamp(char* buffer, size_t size);
 void log_message(const char* message);
 void lock_memory();
 void unlock_memory();
+size_t calculate_matrix_size(char trans, int rows, int cols, int leading_dim);
+
 size_t get_shared_memory_size();
 int enqueue_task(task_queue_t* task_queue, int task_index);
 void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
