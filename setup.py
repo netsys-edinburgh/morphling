@@ -245,7 +245,7 @@ setup(
     version="0.0.1",
     ext_modules=[
         CMakeExtension(name="morphling._C"),
-        # CMakeExtension(name="morphling.morphling_server"),
+        # CMakeExtension(name="morphling.morphling_interceptor"),
     ],
     entry_points={
         "console_scripts": [

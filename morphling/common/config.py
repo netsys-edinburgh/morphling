@@ -44,6 +44,9 @@ class EmulatorConfig:
         if self.cpu_memory > total_cpu_memory:
             raise ValueError(f"cpu_memory should not exceed {total_cpu_memory} GB")
 
+        os.environ["MORPHLING_CKPT_PATH"] = self.ckpt_path
+        os.environ["MORPHLING_CPU_MEMORY"] = self.cpu_memory
+        os.environ["MORPHLING_GPU_MEMORY"] = self.gpu_memory
 
     @classmethod
     def load_from_file(self, config_path):

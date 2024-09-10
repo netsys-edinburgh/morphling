@@ -115,7 +115,7 @@ std::string ArcherTensorHandle::GetIndexFileName(
 void ArcherTensorHandle::ReadTensor(const uint32_t tensor_id, void* memory_ptr,
                                     bool on_demand) {
   auto it = tensor_index_->find(tensor_id);
-  LOG_FATAL_IF(it != tensor_index_->end(), "Tensor not found {}", tensor_id);
+  LOG_FATAL_IF(it == tensor_index_->end(), "Tensor not found {}", tensor_id);
 
   auto tensor_meta = it->second;
   auto filename = GetIndexFileName(tensor_meta.file_id);

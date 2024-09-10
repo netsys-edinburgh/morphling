@@ -1,6 +1,127 @@
-#ifndef INTERCEPTOR_H
-#define INTERCEPTOR_H
+#pragma once
 
+#include "memory/caching_allocator.h"
+#include "utils/logger.h"
+
+#define DECLARE_INTERCEPTOR_TYPE(name, T)                                     \
+  typedef void (*name##_type)(const char*, const char*, const int*,           \
+                              const int*, const int*, const float*, const T*, \
+                              const int*, const T*, const int*, const float*, \
+                              T*, const int*)
+#define DECLARE_INTERCEPTOR_PTR(name) extern name##_type orig_##name
+#define DECLARE_INTERCEPTOR_FUNC(name, T)                                     \
+  void name##_(const char* transa, const char* transb, const int* m,          \
+               const int* n, const int* k, const float* alpha, const T* a,    \
+               const int* lda, const T* b, const int* ldb, const float* beta, \
+               T* c, const int* ldc)
+
+template <typename T>
+struct InterceptedArgs {
+  char transa;
+  char transb;
+  int m;
+  int n;
+  int k;
+  float alpha;
+  const T* a;
+  int lda;
+  const T* b;
+  int ldb;
+  float beta;
+  T* c;
+  int ldc;
+};
+
+#define DECLARE_INTERCEPTOR(name, T) \
+  DECLARE_INTERCEPTOR_TYPE(name, T); \
+  DECLARE_INTERCEPTOR_PTR(name);     \
+  DECLARE_INTERCEPTOR_FUNC(name, T);
+
+#define IMPL_INTERCEPTOR_PTR(name) name##_type orig_##name = NULL
+#define IMPL_INTERCEPTOR_FUNC(name, T, LIB)                                   \
+  void name##_(const char* transa, const char* transb, const int* m,          \
+               const int* n, const int* k, const float* alpha, const T* a,    \
+               const int* lda, const T* b, const int* ldb, const float* beta, \
+               T* c, const int* ldc) {                                        \
+    if (!orig_##name) {                                                       \
+      void* handle_lib = dlopen(LIB, RTLD_LAZY);                              \
+      LOG_FATAL_IF(!handle_lib, "Error loading MKL library: {}", dlerror());  \
+      orig_##name = (name##_type)dlsym(handle_lib, #name "_");                \
+      LOG_FATAL_IF(!orig_##name, "Error loading original " #name "_: {}",     \
+                   dlerror());                                                \
+    }                                                                         \
+    InterceptedArgs<T> args = {.transa = *transa,                             \
+                               .transb = *transb,                             \
+                               .m = *m,                                       \
+                               .n = *n,                                       \
+                               .k = *k,                                       \
+                               .alpha = *alpha,                               \
+                               .a = a,                                        \
+                               .lda = *lda,                                   \
+                               .b = b,                                        \
+                               .ldb = *ldb,                                   \
+                               .beta = *beta,                                 \
+                               .c = c,                                        \
+                               .ldc = *ldc};                                  \
+    NotifyTaskExecution(args);                                                \
+    WaitTaskExecution(args);                                                  \
+  }
+
+#define IMPL_INTERCEPTOR(name, T, LIB) \
+  IMPL_INTERCEPTOR_PTR(name);          \
+  IMPL_INTERCEPTOR_FUNC(name, T, LIB);
+
+template <typename T>
+std::tuple<size_t, size_t, size_t> CalculateTaskSizes(
+    const InterceptedArgs<T>& args) {
+  size_t size_a = (args.transa == 'N' || args.transa == 'n')
+                      ? args.lda * args.k * sizeof(T)
+                      : args.lda * args.m * sizeof(T);
+  size_t size_b = (args.transb == 'N' || args.transb == 'n')
+                      ? args.ldb * args.n * sizeof(T)
+                      : args.ldb * args.k * sizeof(T);
+  size_t size_c = args.ldc * args.n * sizeof(T);
+
+  return {size_a, size_b, size_c};
+}
+
+bool CheckBufferOffloaded(const void* buffer, size_t size);
+
+template <typename T>
+void NotifyTaskExecution(const InterceptedArgs<T>& args) {
+  auto [size_a, size_b, size_c] = CalculateTaskSizes(args);
+  size_t task_size = sizeof(InterceptedArgs<T>) + size_a + size_b + size_c;
+  if (CheckBufferOffloaded(args.a, size_a)) {
+    task_size -= size_a;
+  }
+  if (CheckBufferOffloaded(args.b, size_b)) {
+    task_size -= size_b;
+  }
+  if (CheckBufferOffloaded(args.c, size_c)) {
+    task_size -= size_c;
+  }
+
+  // InitCachingAllocator();
+}
+
+template <typename T>
+void WaitTaskExecution(const InterceptedArgs<T>& args) {}
+
+template <typename T>
+void SerializeInterceptedArgs(const InterceptedArgs<T>& args, void* buffer) {
+  InterceptedArgs<T>* buffer_args =
+      reinterpret_cast<InterceptedArgs<T>*>(buffer);
+  *buffer_args = args;
+  // deal with pointers a, b, c
+}
+
+template <typename T>
+void DeserializeInterceptedArgs(const void* buffer, InterceptedArgs<T>* args) {}
+
+DECLARE_INTERCEPTOR(sgemm, float)
+DECLARE_INTERCEPTOR(sgemm_batch, float)
+
+#if 0
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 #include <dlfcn.h>
@@ -82,5 +203,4 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
             const float* b, const int* ldb, const float* beta, float* c,
             const int* ldc);
 void process_task_from_queue(shared_memory_t* shared_mem_ptr);
-
 #endif

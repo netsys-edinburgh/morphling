@@ -52,15 +52,16 @@ set(UMPIRE_ENABLE_NUMA ON)
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
+
 # FetchContent_Declare(
-#   gflags
-#   GIT_REPOSITORY https://github.com/gflags/gflags.git
-#   GIT_TAG v2.2.2
+# gflags
+# GIT_REPOSITORY https://github.com/gflags/gflags.git
+# GIT_TAG v2.2.2
 # )
 # FetchContent_Declare(
-#   glog
-#   GIT_REPOSITORY https://github.com/google/glog.git
-#   GIT_TAG v0.6.0
+# glog
+# GIT_REPOSITORY https://github.com/google/glog.git
+# GIT_TAG v0.6.0
 # )
 FetchContent_Declare(
   rttr
@@ -75,12 +76,12 @@ FetchContent_Declare(
 FetchContent_Declare(
   grpc
   GIT_REPOSITORY https://github.com/grpc/grpc.git
-  GIT_TAG        v1.48.4
+  GIT_TAG v1.48.4
 )
 FetchContent_Declare(
   spdlog
   GIT_REPOSITORY https://github.com/gabime/spdlog.git
-  GIT_TAG  v1.14.1
+  GIT_TAG v1.14.1
 )
 FetchContent_MakeAvailable(rttr rapidjson grpc spdlog)
 
@@ -96,11 +97,11 @@ endif()
 # Retrieve the Python version
 # message(STATUS "Python version: ${PYTHON_VERSION_STRING}")
 find_package(PythonInterp REQUIRED)
+
 # Retrieve the Python major and minor version
 string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\..*" _ ${PYTHON_VERSION_STRING})
 set(Python_VERSION ${CMAKE_MATCH_1}.${CMAKE_MATCH_2})
 message(STATUS "Python version: ${Python_VERSION}")
-
 
 # set(Python3_EXECUTABLE ${CONDA_PREFIX_PATH}/bin/python3)
 # set(Python_INCLUDE_DIRS ${CONDA_PREFIX_PATH}/include)
@@ -151,7 +152,6 @@ message(STATUS "torch_python_LIBRARY: ${torch_python_LIBRARY}")
 # Find the protoc executable
 # find_program(_PROTOBUF_PROTOC protoc)
 # find_program(_GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin)
-
 set(_PROTOBUF_LIBPROTOBUF libprotobuf)
 set(_PROTOBUF_PROTOC $<TARGET_FILE:protoc>)
 set(_GRPC_GRPCPP grpc++)
@@ -189,26 +189,25 @@ message(STATUS "Python3_LIBRARIES: ${Python3_LIBRARIES}")
 
 # # Generate the protobuf (.pb.cc and .pb.h) and gRPC files (.grpc.pb.cc and .grpc.pb.h)
 # foreach(proto_file ${PROTO_FILES})
-#     get_filename_component(proto_filename ${proto_file} NAME_WE)
+# get_filename_component(proto_filename ${proto_file} NAME_WE)
 
-#     add_custom_command(
-#         OUTPUT ${PROTO_GEN_DIR}/${proto_filename}.pb.cc ${PROTO_GEN_DIR}/${proto_filename}.pb.h
-#                ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.cc ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.h
-#         COMMAND ${PROTOC_EXECUTABLE}
-#         ARGS --proto_path=${CMAKE_SOURCE_DIR}/proto
-#              --cpp_out=${PROTO_GEN_DIR}
-#              --grpc_out=${PROTO_GEN_DIR}
-#              --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN_EXECUTABLE}
-#              ${proto_file}
-#         DEPENDS ${proto_file}
-#         COMMENT "Generating C++ code from ${proto_file}"
-#     )
+# add_custom_command(
+# OUTPUT ${PROTO_GEN_DIR}/${proto_filename}.pb.cc ${PROTO_GEN_DIR}/${proto_filename}.pb.h
+# ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.cc ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.h
+# COMMAND ${PROTOC_EXECUTABLE}
+# ARGS --proto_path=${CMAKE_SOURCE_DIR}/proto
+# --cpp_out=${PROTO_GEN_DIR}
+# --grpc_out=${PROTO_GEN_DIR}
+# --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN_EXECUTABLE}
+# ${proto_file}
+# DEPENDS ${proto_file}
+# COMMENT "Generating C++ code from ${proto_file}"
+# )
 
-#     # Add the generated files to the list of sources
-#     list(APPEND PROTO_SRCS ${PROTO_GEN_DIR}/${proto_filename}.pb.cc)
-#     list(APPEND PROTO_SRCS ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.cc)
+# # Add the generated files to the list of sources
+# list(APPEND PROTO_SRCS ${PROTO_GEN_DIR}/${proto_filename}.pb.cc)
+# list(APPEND PROTO_SRCS ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.cc)
 # endforeach()
-
 add_custom_target(
   generate_proto_files ALL
   DEPENDS "${hw_proto_srcs}" "${hw_proto_hdrs}" "${hw_grpc_srcs}" "${hw_grpc_hdrs}"
@@ -230,6 +229,7 @@ add_custom_command(
 include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Python3_INCLUDE_DIRS}
+
   # ${CONDA_PREFIX_PATH}/include
   ${rttr_SOURCE_DIR}/src
   ${rttr_BINARY_DIR}/src
@@ -243,11 +243,19 @@ link_directories(
   ${CONDA_PREFIX_PATH}/lib
 )
 
-file(GLOB_RECURSE SOURCES "csrc/*.cpp")
-list(REMOVE_ITEM SOURCES "csrc/server.cpp")
-list(REMOVE_ITEM SOURCES "csrc/checkpoint/checkpoint_py.cpp")
+file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
+file(GLOB MEMORY_SRC "csrc/memory/*.cpp")
+file(GLOB UTILS_SRC "csrc/utils/*.cpp")
+file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
 
-add_library(morphling STATIC ${SOURCES})
+add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${MEMORY_SRC})
+target_link_libraries(morphling_interceptor PUBLIC
+  CUDA::cudart Threads::Threads
+  libspdlog.so grpc++ grpc++_reflection
+)
+target_include_directories(morphling_interceptor PUBLIC "csrc" ${CUDA_INCLUDE_DIRS})
+
+add_library(morphling STATIC ${UTILS_SRC} ${CHECKPOINT_SRC})
 target_link_libraries(morphling PUBLIC
   CUDA::cudart Threads::Threads
   libspdlog.so ${TORCH_LIBRARIES}
@@ -292,11 +300,10 @@ get_torch_gpu_compiler_flags(MORPHLING_GPU_FLAGS ${MORPHLING_GPU_LANG})
 #
 # _C extension
 #
-file(GLOB CKPT_SOURCES "csrc/checkpoint/*.cpp")
 set(MORPHLING_EXT_SRC
-  ${CKPT_SOURCES}
-  "csrc/utils/logger.cpp"
-  "csrc/utils/cuda_utils.cpp"
+  ${CHECKPOINT_SRC}
+  ${UTILS_SRC}
+  "csrc/python/checkpoint_py.cpp"
 )
 
 define_gpu_extension_target(

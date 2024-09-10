@@ -10,7 +10,9 @@
 #include <ostream>
 #include <sstream>
 #include <unordered_map>
+#include <vector>
 
+#include "common/pytorch_defs.h"
 #include "common/types_and_defs.h"
 #include "utils/noncopyable.h"
 

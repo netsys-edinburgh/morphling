@@ -21,14 +21,14 @@ int ArcherOpenFile(const char* filename) {
   const int mode = 0660;
   const auto fd = open(filename, flags, mode);
 
-  LOG_FATAL_IF(fd >= 0, "Failed to open file: {}, errno: {}, msg: {}", filename,
+  LOG_FATAL_IF(fd < 0, "Failed to open file: {}, errno: {}, msg: {}", filename,
                errno, strerror(errno));
   return fd;
 }
 
 int ArcherCloseFile(const int fd) {
   const auto ret = close(fd);
-  LOG_FATAL_IF(ret >= 0, "Failed to close file: {}, errno: {}, msg: {}", fd,
+  LOG_FATAL_IF(ret < 0, "Failed to close file: {}, errno: {}, msg: {}", fd,
                errno, strerror(errno));
   return 0;
 }
@@ -55,7 +55,7 @@ int ArcherReadFileBatch(const int fd, void* buffer, const size_t num_bytes,
 
   for (auto& future : futures) {
     const auto ret = future.get();
-    LOG_FATAL_IF(ret >= 0, "Failed to read file: {}, errno: {}, msg: {}", fd,
+    LOG_FATAL_IF(ret < 0, "Failed to read file: {}, errno: {}, msg: {}", fd,
                  errno, strerror(errno));
   }
 
@@ -83,7 +83,7 @@ int ArcherWriteFileBatch(const int fd, const void* buffer,
 
   for (auto& future : futures) {
     const auto ret = future.get();
-    LOG_FATAL_IF(ret >= 0, "Failed to write file: {}, errno: {}, msg: {}", fd,
+    LOG_FATAL_IF(ret < 0, "Failed to write file: {}, errno: {}, msg: {}", fd,
                  errno, strerror(errno));
   }
 
@@ -93,7 +93,7 @@ int ArcherWriteFileBatch(const int fd, const void* buffer,
 int ArcherReadFile(int fd, void* buffer, const size_t num_bytes,
                    const size_t offset) {
   const auto ret = pread(fd, buffer, num_bytes, offset);
-  LOG_FATAL_IF(ret >= 0, "Failed to read file: {}, errno: {}, msg: {}", fd,
+  LOG_FATAL_IF(ret < 0, "Failed to read file: {}, errno: {}, msg: {}", fd,
                errno, strerror(errno));
 
   return 0;
@@ -102,7 +102,7 @@ int ArcherReadFile(int fd, void* buffer, const size_t num_bytes,
 int ArcherWriteFile(int fd, const void* buffer, size_t num_bytes,
                     size_t offset) {
   const auto ret = pwrite(fd, buffer, num_bytes, offset);
-  LOG_FATAL_IF(ret >= 0, "Failed to write file: {}, errno: {}, msg: {}", fd,
+  LOG_FATAL_IF(ret < 0, "Failed to write file: {}, errno: {}, msg: {}", fd,
                errno, strerror(errno));
   return 0;
 }

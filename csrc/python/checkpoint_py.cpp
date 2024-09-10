@@ -1,7 +1,7 @@
 #include <torch/extension.h>
 
-#include "archer_tensor_handle.h"
-#include "checkpoint_handle.h"
+#include "checkpoint/archer_tensor_handle.h"
+#include "checkpoint/checkpoint_handle.h"
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<ArcherTensorHandle>(m, "tensor_handle")

@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
   }
 
   std::filesystem::path ckpt_path(path);
-  LOG_FATAL_IF(std::filesystem::exists(ckpt_path),
+  LOG_FATAL_IF(!std::filesystem::exists(ckpt_path),
                "Checkpoint path does not exist {}", ckpt_path.string());
 
   auto param_meta_map_file = ckpt_path / PARAM_META_FILE;
@@ -162,11 +162,11 @@ int main(int argc, char** argv) {
 
   // create shared memory
   int shm_fd = shm_open(PARAM_SHM_NAME, O_CREAT | O_RDWR, 0666);
-  LOG_FATAL_IF(shm_fd >= 0, "Failed to create shared memory");
+  LOG_FATAL_IF(shm_fd < 0, "Failed to create shared memory");
 
   void* shm_mem =
       mmap(NULL, shm_mem_size, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-  LOG_FATAL_IF(shm_mem != MAP_FAILED, "Failed to map shared memory");
+  LOG_FATAL_IF(shm_mem == MAP_FAILED, "Failed to map shared memory");
 
   std::unordered_map<size_t, size_t> unique_sizes_counter;
   for (const auto& [param_name, param_meta] : param_meta_map) {
