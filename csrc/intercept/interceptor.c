@@ -1,9 +1,8 @@
 #include "interceptor.h"
-
 sgemm_type orig_sgemm = NULL;
-pthread_mutex_t shm_mutex = PTHREAD_MUTEX_INITIALIZER;
-FILE* log_file;
+shared_memory_t* shared_mem_ptr = NULL;  // Central shared memory pointer
 
+FILE* log_file;
 void initialize_logging() {
   if (log_file == NULL) {
     char log_filename[256];
@@ -13,6 +12,61 @@ void initialize_logging() {
     if (log_file == NULL) {
       perror("fopen");
       exit(EXIT_FAILURE);
+    }
+  }
+}
+
+void log_matrix_column_major(const char* matrix_name, const float* matrix,
+                             int rows, int cols) {
+  char message[1024];
+  snprintf(message, sizeof(message),
+           "Matrix %s in column-major order:", matrix_name);
+  log_message(message);
+
+  for (int j = 0; j < cols; ++j) {
+    char column_values[1024] = "";
+    for (int i = 0; i < rows; ++i) {
+      char value_str[32];
+      snprintf(value_str, sizeof(value_str), "%f ",
+               matrix[j * rows + i]);  // Access element in column-major order
+      strncat(column_values, value_str,
+              sizeof(column_values) - strlen(column_values) - 1);
+    }
+    log_message(column_values);
+  }
+}
+
+void log_matrix_with_transpose(const char* matrix_name, const float* matrix,
+                               int rows, int cols, bool is_transposed) {
+  char message[1024];
+  snprintf(message, sizeof(message),
+           "Matrix %s in column-major order:", matrix_name);
+  log_message(message);
+
+  // When matrix is transposed, swap rows and columns for printing
+  if (is_transposed) {
+    for (int i = 0; i < cols; ++i) {
+      char row_values[1024] = "";
+      for (int j = 0; j < rows; ++j) {
+        char value_str[32];
+        snprintf(value_str, sizeof(value_str), "%f ",
+                 matrix[j * cols + i]);  // Access as transposed
+        strncat(row_values, value_str,
+                sizeof(row_values) - strlen(row_values) - 1);
+      }
+      log_message(row_values);
+    }
+  } else {
+    for (int j = 0; j < cols; ++j) {
+      char column_values[1024] = "";
+      for (int i = 0; i < rows; ++i) {
+        char value_str[32];
+        snprintf(value_str, sizeof(value_str), "%f ",
+                 matrix[j * rows + i]);  // Access as is
+        strncat(column_values, value_str,
+                sizeof(column_values) - strlen(column_values) - 1);
+      }
+      log_message(column_values);
     }
   }
 }
@@ -37,20 +91,6 @@ void log_device_pointer(const char* matrix_name, const float* device_ptr) {
   char message[256];
   snprintf(message, sizeof(message), "Device pointer for %s: %p", matrix_name,
            (void*)device_ptr);
-  log_message(message);
-}
-
-void lock_memory() {
-  pthread_mutex_lock(&shm_mutex);
-  char message[100];
-  snprintf(message, sizeof(message), "Process %d: Mutex locked.", getpid());
-  log_message(message);
-}
-
-void unlock_memory() {
-  pthread_mutex_unlock(&shm_mutex);
-  char message[100];
-  snprintf(message, sizeof(message), "Process %d: Mutex unlocked.", getpid());
   log_message(message);
 }
 
@@ -90,7 +130,7 @@ void print_first_10_values(const char* matrix_name, const float* matrix,
            "First 10 values of matrix %s (at %p): ", matrix_name,
            (void*)matrix);
 
-  for (int i = 0; i < 10 && i < size; i++) {
+  for (int i = 0; i < 20 && i < size; i++) {
     char value_str[32];
     snprintf(value_str, sizeof(value_str), "%f ", matrix[i]);
     strncat(message, value_str, sizeof(message) - strlen(message) - 1);
@@ -181,10 +221,26 @@ int dummy_dequeue_task(task_queue_t* task_queue,
   return 0;
 }
 
-void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
-            const int* k, const float* alpha, const float* a, const int* lda,
-            const float* b, const int* ldb, const float* beta, float* c,
-            const int* ldc) {
+void print_first_10_values_column_major(const char* label, float* matrix,
+                                        int rows, int cols) {
+  printf("%s:\n", label);
+
+  int count = 0;
+  for (int j = 0; j < cols; ++j) {    // Iterate over columns
+    for (int i = 0; i < rows; ++i) {  // Iterate over rows within each column
+      printf("%f ",
+             matrix[j * rows + i]);  // Access element in column-major order
+      count++;
+      if (count >= 10) {
+        printf("\n");
+        return;
+      }
+    }
+  }
+  printf("\n");
+}
+
+void load_sgemm() {
   if (!orig_sgemm) {
     void* handle_lib = dlopen("libmkl_rt.so", RTLD_LAZY);
     if (!handle_lib) {
@@ -203,220 +259,187 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
       return;
     }
   }
+}
 
-  if (((*transa == 'T' || *transa == 't') &&
-       (*transb == 'N' || *transb == 'n')) ||
-      ((*transa == 'N' || *transa == 'n') &&
-       (*transb == 'T' || *transb == 't'))) {
-    orig_sgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
-    return;
-  }
-
-  size_t shm_size = get_shared_memory_size();
-  size_t freeMem, totalMem;
-  cudaMemGetInfo(&freeMem, &totalMem);
-
-  size_t size_a = (*lda) * (*k) * sizeof(float);
-  size_t size_b = (*ldb) * (*n) * sizeof(float);
-  size_t size_c = (*ldc) * (*n) * sizeof(float);
-  size_t task_size = sizeof(sgemm_args_t) + size_a + size_b + size_c;
-
-  bool execute_on_cpu = false;
-  if (*lda > 2 * *m || *ldb > 2 * *k || *ldc > 2 * *n || task_size > shm_size ||
-      task_size > freeMem) {
-    execute_on_cpu = true;
-  }
-
-  if (execute_on_cpu) {
-    orig_sgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
-    return;
-  }
-
-  shared_memory_t* shared_mem_ptr = initialize_shared_memory(shm_size);
+bool ensure_shared_memory_initialized(size_t* shm_size) {
   if (!shared_mem_ptr) {
-    return;
+    *shm_size = get_shared_memory_size();
+    shared_mem_ptr = attach_shared_memory(*shm_size);
+
+    if (!shared_mem_ptr) {
+      log_message("Error: Shared memory is not initialized.");
+      return false;
+    }
+  } else {
+    *shm_size = get_shared_memory_size();
   }
 
-  lock_memory();
+  return true;
+}
 
-  pthread_mutex_lock(&shared_mem_ptr->offset_mutex);
-  if (shared_mem_ptr->current_offset + task_size > shm_size) {
-    char message[256];
-    snprintf(message, sizeof(message),
-             "Process %d: Not enough shared memory for task. Skipping task.",
-             getpid());
+bool get_cuda_memory_info(size_t* freeMem, size_t* totalMem) {
+  cudaError_t cudaStatus = cudaMemGetInfo(freeMem, totalMem);
+
+  if (cudaStatus != cudaSuccess) {
+    log_message("Error: Unable to retrieve CUDA memory information.");
+    return false;
+  }
+
+  return true;
+}
+
+bool sgemm_task_size_and_offset(const char* transa, const char* transb,
+                                const int* m, const int* n, const int* k,
+                                const int* lda, const int* ldb, const int* ldc,
+                                size_t shm_size, size_t* task_size,
+                                size_t* offset, size_t* size_a, size_t* size_b,
+                                size_t* size_c) {
+  *size_a = (*transa == 'N' || *transa == 'n') ? (*lda) * (*k) * sizeof(float)
+                                               : (*lda) * (*m) * sizeof(float);
+
+  *size_b = (*transb == 'N' || *transb == 'n') ? (*ldb) * (*n) * sizeof(float)
+                                               : (*ldb) * (*k) * sizeof(float);
+
+  *size_c = (*ldc) * (*n) * sizeof(float);
+
+  *task_size = sizeof(sgemm_args_t) + *size_a + *size_b + *size_c;
+
+  *offset = atomic_fetch_add(&shared_mem_ptr->current_offset, *task_size);
+
+  if (*offset + *task_size > shm_size) {
+    log_message("Not enough shared memory for task. Skipping task.");
+    return false;
+  }
+
+  return true;
+}
+
+void sgemm_write_task_to_shared_memory(
+    const char* transa, const char* transb, const int* m, const int* n,
+    const int* k, const float* alpha, const float* a, const int* lda,
+    const float* b, const int* ldb, const float* beta, float* c, const int* ldc,
+    size_t offset, size_t size_a, size_t size_b, size_t size_c, size_t index) {
+  char param_log[512];
+  snprintf(param_log, sizeof(param_log),
+           "Process %d: Parameters before writing to shared memory - "
+           "transa=%c, transb=%c, m=%d, n=%d, k=%d, alpha=%f, a=%p, lda=%d, "
+           "b=%p, ldb=%d, beta=%f, c=%p, ldc=%d",
+           getpid(), *transa, *transb, *m, *n, *k, *alpha, (void*)a, *lda,
+           (void*)b, *ldb, *beta, (void*)c, *ldc);
+
+  char timestamp[20];
+  get_timestamp(timestamp, sizeof(timestamp));
+  fprintf(log_file, "[%s] %s\n", timestamp, param_log);
+  fflush(log_file);
+
+  sgemm_args_t* task_ptr = (sgemm_args_t*)((char*)shared_mem_ptr + offset);
+  task_ptr->transa = *transa;
+  task_ptr->transb = *transb;
+  task_ptr->m = *m;
+  task_ptr->n = *n;
+  task_ptr->k = *k;
+  task_ptr->alpha = *alpha;
+
+  task_ptr->a = (float*)((char*)task_ptr + sizeof(sgemm_args_t));
+  for (int col = 0; col < (*transa == 'N' || *transa == 'n' ? *k : *m); col++) {
+    memcpy((float*)(task_ptr->a + col * (*lda)), a + col * (*lda),
+           (*transa == 'N' || *transa == 'n' ? *m : *k) * sizeof(float));
+  }
+  task_ptr->lda = *lda;
+
+  task_ptr->b = (float*)((char*)task_ptr->a + size_a);
+  for (int col = 0; col < (*transb == 'N' || *transb == 'n' ? *n : *k); col++) {
+    memcpy((float*)(task_ptr->b + col * (*ldb)), b + col * (*ldb),
+           (*transb == 'N' || *transb == 'n' ? *k : *n) * sizeof(float));
+  }
+  task_ptr->ldb = *ldb;
+
+  task_ptr->c = (float*)((char*)task_ptr->b + size_b);
+  for (int col = 0; col < *n; col++) {
+    memcpy((float*)(task_ptr->c + col * (*ldc)), c + col * (*ldc),
+           (*m) * sizeof(float));
+  }
+  task_ptr->ldc = *ldc;
+
+  shared_mem_ptr->meta_data[index].offset = offset;
+  atomic_store(&shared_mem_ptr->meta_data[index].flag, WRITTEN);
+}
+
+bool enqueue_and_wait_for_completion(size_t index) {
+  if (enqueue_task(&shared_mem_ptr->task_queue, index) == -1) {
+    char message[200];
+    snprintf(
+        message, sizeof(message),
+        "Process %d: Task queue is full. Task at index %zu was not enqueued.",
+        getpid(), index);
     log_message(message);
-    pthread_mutex_unlock(&shared_mem_ptr->offset_mutex);
-    unlock_memory();
-    return;
+    return false;
   }
 
-  size_t offset = shared_mem_ptr->current_offset;
-  shared_mem_ptr->current_offset += task_size;
-  pthread_mutex_unlock(&shared_mem_ptr->offset_mutex);
+  log_message("Task enqueued successfully.");
 
+  while (atomic_load(&shared_mem_ptr->meta_data[index].flag) != COMPLETE) {
+    usleep(1000);
+  }
+
+  log_message("Task is COMPLETE.");
+  return true;
+}
+
+bool sgemm_write_back_results_to_matrix(float* c, const int* m, const int* n,
+                                        const int* ldc, size_t size_a,
+                                        size_t size_b, size_t shm_size,
+                                        size_t index) {
+  sgemm_args_t* task_ptr =
+      (sgemm_args_t*)((char*)shared_mem_ptr +
+                      shared_mem_ptr->meta_data[index].offset);
+  task_ptr->a = (float*)((char*)task_ptr + sizeof(sgemm_args_t));
+  task_ptr->b = (float*)((char*)task_ptr->a + size_a);
+  task_ptr->c = (float*)((char*)task_ptr->b + size_b);
+
+  if ((char*)task_ptr->c < (char*)shared_mem_ptr ||
+      (char*)task_ptr->c + (*m) * (*n) * sizeof(float) >
+          (char*)shared_mem_ptr + shm_size) {
+    log_message("Error: task_ptr->c is outside of shared memory bounds.");
+    return false;
+  }
+
+  log_message("Copying result from shared memory to original matrix C.");
+  for (int col = 0; col < *n; col++) {
+    memcpy(c + col * (*ldc), task_ptr->c + col * (*ldc), (*m) * sizeof(float));
+  }
+
+  atomic_store(&shared_mem_ptr->meta_data[index].flag, EMPTY);
+
+  return true;
+}
+
+bool find_and_enqueue_task(const char* transa, const char* transb, const int* m,
+                           const int* n, const int* k, const float* alpha,
+                           const float* a, const int* lda, const float* b,
+                           const int* ldb, const float* beta, float* c,
+                           const int* ldc, size_t offset, size_t size_a,
+                           size_t size_b, size_t size_c, size_t shm_size) {
   int slot_found = 0;
   for (size_t index = 0; index < MAX_TASKS; index++) {
     int expected = EMPTY;
+
     if (atomic_compare_exchange_strong(&shared_mem_ptr->meta_data[index].flag,
                                        &expected, WRITING)) {
-      char param_log[512];
-      snprintf(param_log, sizeof(param_log),
-               "Process %d: Parameters before writing to shared memory - "
-               "transa=%c, transb=%c, m=%d, n=%d, k=%d, "
-               "alpha=%f, a=%p, lda=%d, b=%p, ldb=%d, beta=%f, c=%p, ldc=%d",
-               getpid(), *transa, *transb, *m, *n, *k, *alpha, (void*)a, *lda,
-               (void*)b, *ldb, *beta, (void*)c, *ldc);
+      sgemm_write_task_to_shared_memory(transa, transb, m, n, k, alpha, a, lda,
+                                        b, ldb, beta, c, ldc, offset, size_a,
+                                        size_b, size_c, index);
 
-      log_message(param_log);
-
-      sgemm_args_t* task_ptr = (sgemm_args_t*)((char*)shared_mem_ptr + offset);
-
-      task_ptr->transa = *transa;
-      task_ptr->transb = *transb;
-      task_ptr->m = *m;
-      task_ptr->n = *n;
-      task_ptr->k = *k;
-      task_ptr->alpha = *alpha;
-
-      task_ptr->a = (float*)((char*)task_ptr + sizeof(sgemm_args_t));
-      memcpy((void*)task_ptr->a, a, size_a);
-      task_ptr->lda = *lda;
-
-      task_ptr->b = (float*)((char*)task_ptr->a + size_a);
-      memcpy((void*)task_ptr->b, b, size_b);
-      task_ptr->ldb = *ldb;
-
-      task_ptr->beta = *beta;
-
-      task_ptr->c = (float*)((char*)task_ptr->b + size_b);
-      memcpy(task_ptr->c, c, size_c);
-      task_ptr->ldc = *ldc;
-
-      shared_mem_ptr->meta_data[index].offset = offset;
-      atomic_store(&shared_mem_ptr->meta_data[index].flag, WRITTEN);
-
-      if (enqueue_task(&shared_mem_ptr->task_queue, index) == -1) {
-        char message[200];
-        snprintf(message, sizeof(message),
-                 "Process %d: Task queue is full. Task at index %zu was not "
-                 "enqueued.",
-                 getpid(), index);
-        log_message(message);
+      if (!enqueue_and_wait_for_completion(index)) {
         atomic_store(&shared_mem_ptr->meta_data[index].flag, EMPTY);
-      } else {
-        log_message("Task enqueued successfully.");
-
-        // wait for the task to complete
-        while (atomic_load(&shared_mem_ptr->meta_data[index].flag) !=
-               COMPLETE) {
-          usleep(1000);
-        }
-
-        log_message("Task is COMPLETE.");
-
-        // recalculate pointers to matrices A, B, and C in shared memory
-        task_ptr->a = (float*)((char*)task_ptr + sizeof(sgemm_args_t));
-        task_ptr->b = (float*)((char*)task_ptr->a +
-                               task_ptr->m * task_ptr->k * sizeof(float));
-        task_ptr->c = (float*)((char*)task_ptr->b +
-                               task_ptr->k * task_ptr->n * sizeof(float));
-
-        // verify that the pointers are within the bounds of shared memory
-        if ((char*)task_ptr->c < (char*)shared_mem_ptr ||
-            (char*)task_ptr->c + (*m) * (*n) * sizeof(float) >
-                (char*)shared_mem_ptr + shm_size) {
-          log_message("Error: task_ptr->c is outside of shared memory bounds.");
-          unlock_memory();
-          return;
-        }
-
-        // allocate GPU memory for verification
-        float* d_expected_c;
-        cudaMalloc((void**)&d_expected_c, size_c);
-
-        // allocate device memory for matrices A, B, and C
-        float *d_a, *d_b, *d_c;
-        cudaMalloc((void**)&d_a, size_a);
-        cudaMalloc((void**)&d_b, size_b);
-        cudaMalloc((void**)&d_c, size_c);
-
-        // copy matrices A, B, and C from shared memory to device memory
-        cudaMemcpy(d_a, task_ptr->a, size_a, cudaMemcpyHostToDevice);
-        cudaMemcpy(d_b, task_ptr->b, size_b, cudaMemcpyHostToDevice);
-        cudaMemcpy(d_c, task_ptr->c, size_c, cudaMemcpyHostToDevice);
-
-        // create cuBLAS handle
-        cublasHandle_t handle;
-        cublasCreate(&handle);
-
-        // initialize matrix C on the device to zero
-        cudaMemset(d_c, 0, size_c);
-
-        // perform matrix multiplication with cuBLAS
-        cublasSgemm(
-            handle,
-            (task_ptr->transa == 'N' || task_ptr->transa == 'n') ? CUBLAS_OP_N
-                                                                 : CUBLAS_OP_T,
-            (task_ptr->transb == 'N' || task_ptr->transb == 'n') ? CUBLAS_OP_N
-                                                                 : CUBLAS_OP_T,
-            *m, *n, *k, alpha, d_a, *lda, d_b, *ldb, beta, d_expected_c, *ldc);
-
-        // allocate memory for the expected result
-        float* expected_c = (float*)malloc((*m) * (*n) * sizeof(float));
-        if (!expected_c) {
-          log_message("Error: Memory allocation failed for expected_c.");
-          cudaFree(d_expected_c);
-          cudaFree(d_a);
-          cudaFree(d_b);
-          cudaFree(d_c);
-          cublasDestroy(handle);
-          unlock_memory();
-          return;
-        }
-
-        // copy the expected result back to host memory
-        cudaMemcpy(expected_c, d_expected_c, size_c, cudaMemcpyDeviceToHost);
-
-        // compare the result from shared memory with the expected result
-        bool match = true;
-        for (int i = 0; i < (*m) * (*n); i++) {
-          if (fabs(expected_c[i] - task_ptr->c[i]) > 1e-8) {
-            match = false;
-            char mismatch_log[256];
-            snprintf(mismatch_log, sizeof(mismatch_log),
-                     "Mismatch at index %d: expected %f, got %f", i,
-                     expected_c[i], task_ptr->c[i]);
-            log_message(mismatch_log);
-          }
-        }
-
-        // log the result of the comparison
-        if (match) {
-          log_message("Result verification passed: The values match.");
-        } else {
-          log_message("Result verification failed: The values do not match.");
-        }
-
-        // free allocated resources
-        free(expected_c);
-        cudaFree(d_expected_c);
-        cudaFree(d_a);
-        cudaFree(d_b);
-        cudaFree(d_c);
-        cublasDestroy(handle);
-
-        // copy the result back to the original matrix C
-        log_message("Copying result from shared memory to original matrix C.");
-        memcpy(c, task_ptr->c, (*m) * (*n) * sizeof(float));
-
-        // print the first 10 values of matrix C
-        print_first_10_values("Matrix C", c, (*m) * (*n));
-
-        // mark the task as complete
-        atomic_store(&shared_mem_ptr->meta_data[index].flag, EMPTY);
+        return false;
       }
 
+      if (!sgemm_write_back_results_to_matrix(c, m, n, ldc, size_a, size_b,
+                                              shm_size, index)) {
+        atomic_store(&shared_mem_ptr->meta_data[index].flag, EMPTY);
+        return false;
+      }
       slot_found = 1;
       break;
     }
@@ -428,30 +451,70 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
              "Process %d: No available slot found for intercepted SGEMM.",
              getpid());
     log_message(message);
+    return false;
   }
 
-  unlock_memory();
-  orig_sgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+  return true;
+}
+
+void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
+            const int* k, const float* alpha, const float* a, const int* lda,
+            const float* b, const int* ldb, const float* beta, float* c,
+            const int* ldc) {
+  load_sgemm();
+  if (!orig_sgemm) {
+    return;
+  }
+
+  size_t shm_size;
+  if (!ensure_shared_memory_initialized(&shm_size)) {
+    return;
+  }
+
+  size_t freeMem, totalMem;
+  if (!get_cuda_memory_info(&freeMem, &totalMem)) {
+    return;
+  }
+
+  size_t task_size, offset;
+  size_t size_a, size_b, size_c;
+  if (!sgemm_task_size_and_offset(transa, transb, m, n, k, lda, ldb, ldc,
+                                  shm_size, &task_size, &offset, &size_a,
+                                  &size_b, &size_c)) {
+    return;
+  }
+
+  if (!find_and_enqueue_task(transa, transb, m, n, k, alpha, a, lda, b, ldb,
+                             beta, c, ldc, offset, size_a, size_b, size_c,
+                             shm_size)) {
+    return;
+  }
 }
 
 int main() {
   initialize_logging();
 
-  char message[100];
+  char message[256];
   snprintf(message, sizeof(message), "Process %d: Started processing.",
            getpid());
   log_message(message);
 
   size_t shm_size = get_shared_memory_size();
-  if (!shared_mem_ptr) {
-    shared_mem_ptr = initialize_shared_memory(shm_size);
-    if (!shared_mem_ptr) {
-      return 0;
-    }
-  }
   snprintf(message, sizeof(message),
-           "Process %d: Shared memory mapped successfully.", getpid());
+           "Process %d: Calculated shared memory size: %zu bytes.", getpid(),
+           shm_size);
   log_message(message);
+
+  shared_mem_ptr = attach_shared_memory(shm_size);
+  if (!shared_mem_ptr) {
+    log_message("Error: Shared memory attachment failed.");
+    return 1;
+  }
+
+  snprintf(message, sizeof(message),
+           "Process %d: Shared memory attached successfully.", getpid());
+  log_message(message);
+
   destroy_shared_memory(shared_mem_ptr, shm_size);
 
   snprintf(message, sizeof(message),
