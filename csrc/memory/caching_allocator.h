@@ -6,6 +6,7 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "utils/logger.h"
 #include "utils/noncopyable.h"
 
 // the caching allocator that supports CPU and CUDA memory
@@ -59,12 +60,30 @@ class CachingAllocator : public noncopyable {
 
 extern std::unique_ptr<CachingAllocator> kCachingAllocator;
 
-inline void InitCachingAllocator(size_t bytes,
-                                 CachingAllocator::MemoryType type,
+static void InitCachingAllocator(CachingAllocator::MemoryType type,
                                  int device_id = -1) {
-  // run only once, thread-safe
-  if (kCachingAllocator == nullptr) {
+  static std::once_flag flag;
+  std::call_once(flag, [&]() {
+    size_t bytes = 0;
+    if (type == CachingAllocator::MemoryType::CUDA) {
+      LOG_FATAL_IF(device_id < 0, "Invalid device id");
+      // Get environment variable MORPHLING_SHM_SIZE
+      const char* size = std::getenv("MORPHLING_GPU_SIZE");
+      LOG_FATAL_IF(size == nullptr, "MORPHLING_GPU_SIZE is not set");
+      bytes = std::stoull(size);
+    } else if (type == CachingAllocator::MemoryType::SHM) {
+      // Get environment variable MORPHLING_SHM_SIZE
+      const char* size = std::getenv("MORPHLING_SHM_SIZE");
+      LOG_FATAL_IF(size == nullptr, "MORPHLING_SHM_SIZE is not set");
+      bytes = std::stoull(size);
+    } else if (type == CachingAllocator::MemoryType::PIN) {
+      const char* size = std::getenv("MORPHLING_PIN_SIZE");
+      LOG_FATAL_IF(size == nullptr, "MORPHLING_PIN_SIZE is not set");
+      bytes = std::stoull(size);
+    } else {
+      LOG_FATAL("Unknown memory type");
+    }
     kCachingAllocator =
         std::make_unique<CachingAllocator>(bytes, type, device_id);
-  }
+  });
 }

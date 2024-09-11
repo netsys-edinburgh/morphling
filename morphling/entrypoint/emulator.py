@@ -6,23 +6,23 @@ from multiprocessing import shared_memory
 
 import numpy as np
 import torch
+from transformers import HfArgumentParser
 
 from morphling._C import CheckpointHandle
+from morphling.common import *
 from morphling.runtime import EmulationEngine
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt_path", type=str, required=True)
-
-    args = parser.parse_args()
+    parser = HfArgumentParser((EmulatorConfig, ))
+    args = parser.parse_args()[0]
 
     param_meta_map_file = os.path.join(args.ckpt_path, "param_meta_map.json")
 
     with open(param_meta_map_file, "r") as f:
         param_meta_map = json.load(f)
 
-    shm_mem_size, shm_mem_offsets = EmulationEngine.compute_shm_offsets(param_meta_map)
+    shm_mem_size, shm_mem_offsets = compute_shm_offsets(param_meta_map)
 
     unique_sizes_counter = Counter(
         [param["size"] for param in param_meta_map.values()]
@@ -34,7 +34,7 @@ def main():
 
     for size, count in unique_sizes_counter.items():
         # find all tensor name and id with the same size
-        ids_of_size = EmulationEngine.find_tensor_same_size(param_meta_map, size)
+        ids_of_size = find_tensor_same_size(param_meta_map, size)
 
         # print(f"Size: {size}, Count: {count}, Names: {names_of_size}, IDs: {ids_of_size}")
 
@@ -60,7 +60,7 @@ def main():
         tmp[:] = ids_of_size[:]
 
 
-    pin_mem_size, pin_mem_offsets = EmulationEngine.compute_pin_offsets(param_meta_map)
+    pin_mem_size, pin_mem_offsets = compute_pin_offsets(param_meta_map)
     name_id_map = {}
     for name, meta in param_meta_map.items():
         name_id_map[name] = meta["id"]
