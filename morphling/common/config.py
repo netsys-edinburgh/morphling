@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Union
@@ -5,6 +6,8 @@ from typing import Union
 import psutil
 import torch
 from transformers import HfArgumentParser
+
+from morphling.common.types_and_defs import *
 
 
 @dataclass
@@ -45,8 +48,21 @@ class EmulatorConfig:
             raise ValueError(f"cpu_memory should not exceed {total_cpu_memory} GB")
 
         os.environ["MORPHLING_CKPT_PATH"] = self.ckpt_path
-        os.environ["MORPHLING_CPU_MEMORY"] = self.cpu_memory
-        os.environ["MORPHLING_GPU_MEMORY"] = self.gpu_memory
+        os.environ["MORPHLING_GPU_SIZE"] = self.gpu_memory
+
+
+        param_meta_map_file = os.path.join(self.ckpt_path, "param_meta_map.json")
+
+        with open(param_meta_map_file, "r") as f:
+            param_meta_map = json.load(f)
+
+        shm_mem_size, shm_mem_offsets = compute_shm_offsets(param_meta_map)
+        pin_mem_size, pin_mem_offsets = compute_pin_offsets(param_meta_map)
+
+        os.environ["MORPHLING_PIN_SIZE"] = pin_mem_size
+        os.environ["MORPHLING_SHM_SIZE"] = self.cpu_memory - pin_mem_size
+
+        assert self.cpu_memory > pin_mem_size, "CPU memory should be greater than model size"
 
     @classmethod
     def load_from_file(self, config_path):

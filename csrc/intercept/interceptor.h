@@ -89,8 +89,11 @@ bool CheckBufferOffloaded(const void* buffer, size_t size);
 
 template <typename T>
 void NotifyTaskExecution(const InterceptedArgs<T>& args) {
+  InitCachingAllocator(CachingAllocator::MemoryType::SHM);
+  void* task_buffer = kCachingAllocator->Allocate(task_size);
+  SerializeInterceptedArgs(args, task_buffer);
+
   auto [size_a, size_b, size_c] = CalculateTaskSizes(args);
-  size_t task_size = sizeof(InterceptedArgs<T>) + size_a + size_b + size_c;
   if (CheckBufferOffloaded(args.a, size_a)) {
     task_size -= size_a;
   }
@@ -100,8 +103,6 @@ void NotifyTaskExecution(const InterceptedArgs<T>& args) {
   if (CheckBufferOffloaded(args.c, size_c)) {
     task_size -= size_c;
   }
-
-  // InitCachingAllocator();
 }
 
 template <typename T>
