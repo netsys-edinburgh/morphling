@@ -10,6 +10,7 @@
 
 #include "checkpoint/checkpoint_handle.h"
 #include "common/types_and_defs.h"
+#include "memory/caching_allocator.h"
 #include "morphling.grpc.pb.h"
 #include "morphling.pb.h"
 #include "utils/json_reader.h"
@@ -153,6 +154,8 @@ int main(int argc, char** argv) {
   std::filesystem::path ckpt_path(path);
   LOG_FATAL_IF(!std::filesystem::exists(ckpt_path),
                "Checkpoint path does not exist {}", ckpt_path.string());
+
+  InitCachingAllocator(CachingAllocator::MemoryType::PIN_SHM);
 
   auto param_meta_map_file = ckpt_path / PARAM_META_FILE;
   auto json_reader = JsonReader<ParamMeta>(ckpt_path.string());
