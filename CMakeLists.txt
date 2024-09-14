@@ -317,6 +317,7 @@ define_gpu_extension_target(
 )
 
 # Enable testing if the option is ON
+message(STATUS "BUILD_TESTS: ${BUILD_TESTS}")
 if(BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests/cpp)
