@@ -1,8 +1,14 @@
 #include "caching_allocator.h"
 
 #include <cuda_runtime_api.h>
+#include <fcntl.h>
 #include <sys/ipc.h>
+#include <sys/mman.h>
 #include <sys/shm.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <uuid/uuid.h>
 
 #include "common/types_and_defs.h"
 #include "utils/logger.h"
@@ -62,6 +68,8 @@ void* CachingAllocator::AllocateMemory(size_t bytes) {
       return AllocPinMemory(bytes);
     case MemoryType::CUDA:
       return AllocCudaMemory(bytes);
+    case MemoryType::PIN_SHM:
+      return AllocPinShmMemory(bytes);
   }
   LOG_FATAL("Unknown memory type");
   return nullptr;
@@ -73,6 +81,11 @@ void* CachingAllocator::AllocCudaMemory(size_t bytes) {
   return ptr;
 }
 void* CachingAllocator::AllocPinMemory(size_t bytes) {
+  // void* ptr = aligned_alloc(4096, bytes);
+  // int ret = mlock(ptr, bytes);
+  // LOG_FATAL_IF(ret != 0, "mlock failed: errno {}, message {}", errno,
+  //              strerror(errno));
+  // cudaHostRegister(ptr, bytes, cudaHostRegisterDefault);
   void* ptr;
   cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault);
   return ptr;
@@ -80,8 +93,38 @@ void* CachingAllocator::AllocPinMemory(size_t bytes) {
 void* CachingAllocator::AllocShmMemory(size_t bytes) {
   int shm_id = shmget(IPC_PRIVATE, bytes, IPC_CREAT | 0666);
   void* ptr = shmat(shm_id, nullptr, 0);
-  shm_id_map_[ptr] = shm_id;
+  LOG_FATAL_IF(ptr == (void*)-1, "shmat failed: errno {}, message {}", errno,
+               strerror(errno));
+  shm_id_map_[ptr] = {shm_id, ptr, bytes};
   return ptr;
+}
+void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
+  // generate uuid string
+  ShmMeta shm_meta;
+  uuid_t bin_uuid;
+  uuid_generate_random(bin_uuid);
+  uuid_unparse(bin_uuid, shm_meta.name + 1);
+  shm_meta.name[0] = '/';  // shm_open requires the first char to be '/'
+
+  int shm_fd = shm_open(shm_meta.name, O_CREAT | O_RDWR, 0666);
+  LOG_FATAL_IF(shm_fd == -1, "shm_open failed: errno {}, message {}", errno,
+               strerror(errno));
+  LOG_FATAL_IF(ftruncate(shm_fd, bytes) == -1,
+               "ftruncate failed: errno {}, message {}", errno,
+               strerror(errno));
+
+  // Specify the fixed address
+  void* preferred_addr = AllocPinMemory(bytes);
+  void* shm_addr = mmap(preferred_addr, bytes, PROT_READ | PROT_WRITE,
+                        MAP_SHARED | MAP_FIXED | MAP_LOCKED, shm_fd, 0);
+  LOG_FATAL_IF(shm_addr == MAP_FAILED, "mmap failed: errno {}, message {}",
+               errno, strerror(errno));
+
+  shm_meta.id = shm_fd;
+  shm_meta.ptr = preferred_addr;
+  shm_meta.size = bytes;
+  shm_id_map_[preferred_addr] = shm_meta;
+  return preferred_addr;
 }
 
 void CachingAllocator::FreeMemory(void* ptr) {
@@ -95,6 +138,9 @@ void CachingAllocator::FreeMemory(void* ptr) {
     case MemoryType::CUDA:
       FreeCudaMemory(ptr);
       break;
+    case MemoryType::PIN_SHM:
+      FreePinShmMemory(ptr);
+      break;
   }
 }
 void CachingAllocator::FreeCudaMemory(void* ptr) {
@@ -104,8 +150,15 @@ void CachingAllocator::FreeCudaMemory(void* ptr) {
 void CachingAllocator::FreePinMemory(void* ptr) { cudaFreeHost(ptr); }
 void CachingAllocator::FreeShmMemory(void* ptr) {
   shmdt(ptr);
-  auto shmid = shm_id_map_[ptr];
+  auto shmid = shm_id_map_[ptr].id;
   shmctl(shmid, IPC_RMID, nullptr);
+  shm_id_map_.erase(ptr);
+}
+void CachingAllocator::FreePinShmMemory(void* ptr) {
+  munmap(ptr, shm_id_map_[ptr].size);
+  shm_unlink(shm_id_map_[ptr].name);
+  close(shm_id_map_[ptr].id);
+  FreePinMemory(ptr);
   shm_id_map_.erase(ptr);
 }
 

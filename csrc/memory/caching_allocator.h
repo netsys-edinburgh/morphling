@@ -13,7 +13,13 @@
 // work as an offset manager for the memory pool
 class CachingAllocator : public noncopyable {
  public:
-  enum class MemoryType { SHM, PIN, CUDA };
+  enum class MemoryType { SHM, PIN, CUDA, PIN_SHM };
+  struct ShmMeta {
+    int id;
+    void* ptr;
+    size_t size;
+    char name[38];
+  };
 
  public:
   explicit CachingAllocator(size_t bytes, MemoryType type, int device_id = -1);
@@ -28,7 +34,16 @@ class CachingAllocator : public noncopyable {
     if (it == shm_id_map_.end()) {
       return -1;
     }
-    return it->second;
+    return it->second.id;
+  }
+
+  std::string GetShmName(void* ptr) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    const auto& it = shm_id_map_.find(ptr);
+    if (it == shm_id_map_.end()) {
+      return "";
+    }
+    return it->second.name;
   }
 
  private:
@@ -40,11 +55,13 @@ class CachingAllocator : public noncopyable {
   void* AllocCudaMemory(size_t bytes);
   void* AllocPinMemory(size_t bytes);
   void* AllocShmMemory(size_t bytes);
+  void* AllocPinShmMemory(size_t bytes);
 
   void FreeMemory(void* ptr);
   void FreeCudaMemory(void* ptr);
   void FreePinMemory(void* ptr);
   void FreeShmMemory(void* ptr);
+  void FreePinShmMemory(void* ptr);
 
  protected:
   int device_id_;
@@ -55,7 +72,7 @@ class CachingAllocator : public noncopyable {
   std::unordered_map<size_t, std::deque<void*>> available_map_;
   std::unordered_map<void*, size_t> allocation_map_;
   std::mutex mutex_;
-  std::unordered_map<void*, int> shm_id_map_;
+  std::unordered_map<void*, ShmMeta> shm_id_map_;
 };
 
 extern std::unique_ptr<CachingAllocator> kCachingAllocator;
@@ -76,7 +93,8 @@ static void InitCachingAllocator(CachingAllocator::MemoryType type,
       const char* size = std::getenv("MORPHLING_SHM_SIZE");
       LOG_FATAL_IF(size == nullptr, "MORPHLING_SHM_SIZE is not set");
       bytes = std::stoull(size);
-    } else if (type == CachingAllocator::MemoryType::PIN) {
+    } else if (type == CachingAllocator::MemoryType::PIN or
+               type == CachingAllocator::MemoryType::PIN_SHM) {
       const char* size = std::getenv("MORPHLING_PIN_SIZE");
       LOG_FATAL_IF(size == nullptr, "MORPHLING_PIN_SIZE is not set");
       bytes = std::stoull(size);

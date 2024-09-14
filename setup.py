@@ -6,6 +6,7 @@ import io
 import os
 import subprocess
 import sys
+from distutils.command.build import build as _build
 from pathlib import Path
 from typing import Dict
 
@@ -141,10 +142,28 @@ class cmake_build_ext(build_ext):
             # Default build tool to whatever cmake picks.
             build_tool = []
 
+        if 'TEST' in os.environ and os.environ['TEST'] == '1':
+            cmake_args.append('-DBUILD_TESTS=ON')
+        else:
+            cmake_args.append('-DBUILD_TESTS=OFF')
+
         subprocess.check_call(
             ["cmake", ext.cmake_lists_dir, *build_tool, *cmake_args],
             cwd=self.build_temp,
         )
+
+        if 'TEST' in os.environ and os.environ['TEST'] == '1':
+            # get folder names under self.build_temp/test/cpp/CmakeFiles
+            # and pass them to ninja
+            test_folder = os.path.join(self.build_temp, 'tests', "cpp")
+
+            with open(os.path.join(test_folder, 'CTestTestfile.cmake'), 'r') as f:
+                content = f.readlines()
+                for line in content:
+                    if 'add_test(' in line:
+                        # add_test([=[test_shared_pin_memory]=], get test_shared_pin_memory
+                        test_name = line.strip().split('add_test([=[')[-1].split(']=]')[0]
+                        subprocess.check_call(['ninja', '-C', self.build_temp, test_name])
 
     def build_extensions(self) -> None:
         # Ensure that CMake is present and working
@@ -169,8 +188,7 @@ class cmake_build_ext(build_ext):
                 ".",
                 "--target",
                 ext_target_name,
-                "-j",
-                # str(num_jobs)
+                "-j", str(num_jobs),
             ]
 
             subprocess.check_call(["cmake", *build_args], cwd=self.build_temp)
@@ -232,12 +250,18 @@ class CustomBdistWheel(bdist_wheel):
         super().run()
 
 
+class CMakeTestCommand(_build):
+    def run(self):
+        # Run CMake's tests (e.g., via ctest or the compiled test executable)
+        subprocess.check_call(['ninja', '-C'], cwd=self.build_temp)
+
 cmdclass = {
     "build_ext": cmake_build_ext,
     "build_package_protos": BuildPackageProtos,
     "install": CustomInstall,
     "sdist": CustomBuild,
     "bdist_wheel": CustomBdistWheel,
+    "test": CMakeTestCommand,
 }
 
 setup(
@@ -249,7 +273,8 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "emulator=morphling.entrypoint.emulator:main",
+            "morphling_emulator=morphling.entrypoint.emulator:main",
+            "morphling_device_config=morphling.entrypoint.generate_device_config:main",
         ],
     },
     install_requires=install_requires,
