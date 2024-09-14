@@ -28,6 +28,11 @@ class CachingAllocator : public noncopyable {
   virtual void* Allocate(const size_t bytes);
   virtual void Free(void* ptr);
 
+  bool IsAllocated(void* ptr) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    return allocation_map_.find(ptr) != allocation_map_.end();
+  }
+
   int GetShmId(void* ptr) {
     std::lock_guard<std::mutex> guard(mutex_);
     const auto& it = shm_id_map_.find(ptr);
@@ -104,4 +109,9 @@ static void InitCachingAllocator(CachingAllocator::MemoryType type,
     kCachingAllocator =
         std::make_unique<CachingAllocator>(bytes, type, device_id);
   });
+}
+
+extern "C" {
+void* TorchAllocate(size_t bytes);
+void TorchFree(void* ptr);
 }

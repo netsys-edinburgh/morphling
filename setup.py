@@ -249,19 +249,12 @@ class CustomBdistWheel(bdist_wheel):
         self.run_command("build_package_protos")
         super().run()
 
-
-class CMakeTestCommand(_build):
-    def run(self):
-        # Run CMake's tests (e.g., via ctest or the compiled test executable)
-        subprocess.check_call(['ninja', '-C'], cwd=self.build_temp)
-
 cmdclass = {
     "build_ext": cmake_build_ext,
     "build_package_protos": BuildPackageProtos,
     "install": CustomInstall,
     "sdist": CustomBuild,
     "bdist_wheel": CustomBdistWheel,
-    "test": CMakeTestCommand,
 }
 
 setup(
@@ -269,7 +262,7 @@ setup(
     version="0.0.1",
     ext_modules=[
         CMakeExtension(name="morphling._C"),
-        # CMakeExtension(name="morphling.morphling_interceptor"),
+        # CMakeExtension(name="morphling.morphling_allocator"),
     ],
     entry_points={
         "console_scripts": [

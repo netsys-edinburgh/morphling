@@ -302,10 +302,15 @@ get_torch_gpu_compiler_flags(MORPHLING_GPU_FLAGS ${MORPHLING_GPU_LANG})
 #
 set(MORPHLING_EXT_SRC
   ${CHECKPOINT_SRC}
+  ${MEMORY_SRC}
   ${UTILS_SRC}
   "csrc/python/checkpoint_py.cpp"
 )
-
+set(MORPHLING_EXT_LIB
+  torch ${torch_python_LIBRARY}
+  uuid Threads::Threads
+  libspdlog.so
+)
 define_gpu_extension_target(
   _C
   DESTINATION morphling
@@ -313,11 +318,32 @@ define_gpu_extension_target(
   SOURCES ${MORPHLING_EXT_SRC}
   COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
   ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+  LIBRARIES ${MORPHLING_EXT_LIB}
   WITH_SOABI
 )
 
+# set(MORPHLING_ALLOCATOR_SRC
+#   ${MEMORY_SRC}
+#   ${UTILS_SRC}
+# )
+# set(MORPHLING_ALLOCATOR_LIB
+#   uuid Threads::Threads
+#   libspdlog.so
+# )
+# define_gpu_extension_target(
+#   morphling_allocator
+#   DESTINATION morphling
+#   LANGUAGE ${MORPHLING_GPU_LANG}
+#   SOURCES ${MORPHLING_ALLOCATOR_SRC}
+#   COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+#   ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+#   LIBRARIES ${MORPHLING_ALLOCATOR_LIB}
+#   WITH_SOABI
+# )
+
 # Enable testing if the option is ON
 message(STATUS "BUILD_TESTS: ${BUILD_TESTS}")
+
 if(BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests/cpp)

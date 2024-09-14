@@ -82,7 +82,7 @@ int main() {
   // test memory copy speed using pinned memory
   cudaMemset(cuda_ptr, 0, SHM_SIZE);
   auto start = std::chrono::high_resolution_clock::now();
-  err = cudaMemcpy(cuda_ptr, shm_addr, SHM_SIZE, cudaMemcpyHostToDevice);
+  err = cudaMemcpy(cuda_ptr, ptr, SHM_SIZE, cudaMemcpyHostToDevice);
   if (err != cudaSuccess) {
     std::cerr << "cudaMemcpy failed: " << cudaGetErrorString(err) << std::endl;
     return 1;

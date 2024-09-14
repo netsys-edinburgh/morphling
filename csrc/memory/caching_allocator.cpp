@@ -169,3 +169,18 @@ CachingAllocator::CachingAllocator(size_t bytes, MemoryType type, int device_id)
       device_id_(device_id) {}
 
 CachingAllocator::~CachingAllocator() { FreeCached(); }
+
+extern "C" {
+void* TorchAllocate(size_t bytes) {
+  InitCachingAllocator(CachingAllocator::MemoryType::PIN_SHM);
+  void* ptr = kCachingAllocator->Allocate(bytes);
+  return ptr;
+}
+
+void TorchFree(void* ptr) {
+  InitCachingAllocator(CachingAllocator::MemoryType::PIN_SHM);
+  LOG_FATAL_IF(kCachingAllocator->IsAllocated(ptr) == false,
+               "Attempted to free unallocated memory");
+  kCachingAllocator->Free(ptr);
+}
+}
