@@ -1,19 +1,37 @@
 #pragma once
 
+#include <torch/torch.h>
+
 #include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 
+#include "common/types_and_defs.h"
 #include "utils/logger.h"
 #include "utils/noncopyable.h"
 
+#define MEMORY_TYPE_VALUES(X, EnumType) \
+  X(SHM, EnumType)                      \
+  X(PIN, EnumType)                      \
+  X(CUDA, EnumType)                     \
+  X(PIN_SHM, EnumType)
+
+DEFINE_ENUM_CLASS(MemoryType, MEMORY_TYPE_VALUES)
+
+class CachingAllocator;
+extern std::unique_ptr<CachingAllocator> kCachingAllocator;
+
+extern "C" {
+void* TorchAllocate(size_t bytes);
+void TorchFree(void* ptr);
+}
+
 // the caching allocator that supports CPU and CUDA memory
 // work as an offset manager for the memory pool
-class CachingAllocator : public noncopyable {
+class CachingAllocator : public torch::Allocator {
  public:
-  enum class MemoryType { SHM, PIN, CUDA, PIN_SHM };
   struct ShmMeta {
     int id;
     void* ptr;
@@ -51,6 +69,37 @@ class CachingAllocator : public noncopyable {
     return it->second.name;
   }
 
+  size_t GetShmSize(void* ptr) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    const auto& it = shm_id_map_.find(ptr);
+    if (it == shm_id_map_.end()) {
+      return 0;
+    }
+    return it->second.size;
+  }
+
+  MemoryType GetType() const { return type_; }
+
+  size_t GetMaxBytes() const { return max_bytes_; }
+  size_t GetAllocatedBytes() const { return allocated_bytes_; }
+  size_t GetUsedBytes() const { return used_bytes_; }
+
+  // For Torch Interface
+  torch::DataPtr allocate(size_t n) override {
+    void* data = Allocate(n);
+    return {data, data, &TorchFree,
+            torch::DeviceType::CPU};  // Use free() for deallocation
+  }
+
+  void copy_data(void* dest, const void* src, size_t count) const override {
+    default_copy_data(dest, src, count);
+  }
+
+  // // Optional: Handle deallocation (if needed)
+  // void deallocate(void* ptr) override {
+  //   Free(ptr);  // Custom deallocation logic
+  // }
+
  private:
   void* AllocateAndCache(const size_t bytes);
   void FreeCached();
@@ -73,6 +122,7 @@ class CachingAllocator : public noncopyable {
   MemoryType type_;
   size_t max_bytes_;
   size_t allocated_bytes_;
+  size_t used_bytes_;
 
   std::unordered_map<size_t, std::deque<void*>> available_map_;
   std::unordered_map<void*, size_t> allocation_map_;
@@ -80,26 +130,22 @@ class CachingAllocator : public noncopyable {
   std::unordered_map<void*, ShmMeta> shm_id_map_;
 };
 
-extern std::unique_ptr<CachingAllocator> kCachingAllocator;
-
-static void InitCachingAllocator(CachingAllocator::MemoryType type,
-                                 int device_id = -1) {
+static void InitCachingAllocator(MemoryType type, int device_id = -1) {
   static std::once_flag flag;
   std::call_once(flag, [&]() {
     size_t bytes = 0;
-    if (type == CachingAllocator::MemoryType::CUDA) {
+    if (type == MemoryType::CUDA) {
       LOG_FATAL_IF(device_id < 0, "Invalid device id");
       // Get environment variable MORPHLING_SHM_SIZE
       const char* size = std::getenv("MORPHLING_GPU_SIZE");
       LOG_FATAL_IF(size == nullptr, "MORPHLING_GPU_SIZE is not set");
       bytes = std::stoull(size);
-    } else if (type == CachingAllocator::MemoryType::SHM) {
+    } else if (type == MemoryType::SHM) {
       // Get environment variable MORPHLING_SHM_SIZE
       const char* size = std::getenv("MORPHLING_SHM_SIZE");
       LOG_FATAL_IF(size == nullptr, "MORPHLING_SHM_SIZE is not set");
       bytes = std::stoull(size);
-    } else if (type == CachingAllocator::MemoryType::PIN or
-               type == CachingAllocator::MemoryType::PIN_SHM) {
+    } else if (type == MemoryType::PIN or type == MemoryType::PIN_SHM) {
       const char* size = std::getenv("MORPHLING_PIN_SIZE");
       LOG_FATAL_IF(size == nullptr, "MORPHLING_PIN_SIZE is not set");
       bytes = std::stoull(size);
@@ -108,10 +154,18 @@ static void InitCachingAllocator(CachingAllocator::MemoryType type,
     }
     kCachingAllocator =
         std::make_unique<CachingAllocator>(bytes, type, device_id);
+    LOG_INFO("Caching allocator initialized with {}GB, type: {}", bytes / GB,
+             type);
   });
 }
 
-extern "C" {
-void* TorchAllocate(size_t bytes);
-void TorchFree(void* ptr);
-}
+class ReplaceTorchAllocatorOnLoad {
+ public:
+  ReplaceTorchAllocatorOnLoad() {
+    InitCachingAllocator(MemoryType::PIN_SHM);
+    torch::SetAllocator(torch::DeviceType::CPU, kCachingAllocator.get());
+  }
+};
+
+// Create a static instance of this class
+static ReplaceTorchAllocatorOnLoad kReplaceTorchAllocatorOnLoad;

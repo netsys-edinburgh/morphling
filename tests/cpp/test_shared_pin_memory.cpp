@@ -14,13 +14,12 @@
 
 #include "memory/caching_allocator.h"
 
-#define SHM_NAME "/my_shared_memory"
 #define SHM_SIZE 4096ULL * 1024 * 1024  // Define the size of the shared memory
 
 int main() {
   // set env variable to enable caching allocator
   setenv("MORPHLING_PIN_SIZE", std::to_string(SHM_SIZE).c_str(), 1);
-  InitCachingAllocator(CachingAllocator::MemoryType::PIN_SHM);
+  InitCachingAllocator(MemoryType::PIN_SHM);
 
   void* ptr = kCachingAllocator->Allocate(SHM_SIZE);
   std::string shm_name = kCachingAllocator->GetShmName(ptr);

@@ -60,13 +60,13 @@ def main():
         tmp[:] = ids_of_size[:]
 
 
-    pin_mem_size, pin_mem_offsets = compute_pin_offsets(param_meta_map)
-    name_id_map = {}
-    for name, meta in param_meta_map.items():
-        name_id_map[name] = meta["id"]
+    # pin_mem_size, pin_mem_offsets = compute_pin_offsets(param_meta_map)
+    # name_id_map = {}
+    # for name, meta in param_meta_map.items():
+    #     name_id_map[name] = meta["id"]
 
-    checkpoint_handle = CheckpointHandle(args.ckpt_path)
-    checkpoint_handle.read_checkpoint(pin_mem_offsets, name_id_map)
+    # checkpoint_handle = CheckpointHandle(args.ckpt_path)
+    # checkpoint_handle.read_checkpoint(pin_mem_offsets, name_id_map)
 
     # pin_param_buffer = torch.zeros(pin_mem_size, dtype=torch.uint8).pin_memory()
     # pin_buffer = pin_param_buffer.data_ptr()

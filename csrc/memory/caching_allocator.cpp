@@ -23,18 +23,18 @@ void* CachingAllocator::Allocate(const size_t bytes) {
   }
   void* ptr = it->second.back();
   it->second.pop_back();
+  used_bytes_ += bytes;
   return ptr;
 }
 
 void CachingAllocator::Free(void* ptr) {
   std::lock_guard<std::mutex> guard(mutex_);
   const auto& it = allocation_map_.find(ptr);
-  if (it == allocation_map_.end()) {
-    FreeMemory(ptr);
-    return;
-  }
+  LOG_FATAL_IF(it == allocation_map_.end(),
+               "Attempted to free unallocated memory");
   const size_t alloc_size = it->second;
   available_map_[alloc_size].push_back(ptr);
+  used_bytes_ -= alloc_size;
 }
 
 void CachingAllocator::FreeCached() {
@@ -50,10 +50,11 @@ void CachingAllocator::FreeCached() {
 void* CachingAllocator::AllocateAndCache(const size_t bytes) {
   if (allocated_bytes_ + bytes > max_bytes_) {
     FreeCached();
-    LOG_FATAL_IF(
-        allocated_bytes_ + bytes > max_bytes_,
-        "Out of memory; attempted to allocate {}GB, but only {}GB available",
-        bytes / GB, (max_bytes_ - allocated_bytes_) / GB);
+    LOG_FATAL_IF(allocated_bytes_ + bytes > max_bytes_,
+                 "Out of memory; attempted to allocate {}GB, allocated {}GB, "
+                 "but only {}GB available",
+                 bytes / GB, allocated_bytes_ / GB,
+                 (max_bytes_ - allocated_bytes_) / GB);
   }
   void* ptr = AllocateMemory(bytes);
   allocation_map_[ptr] = bytes;
@@ -61,6 +62,9 @@ void* CachingAllocator::AllocateAndCache(const size_t bytes) {
 }
 
 void* CachingAllocator::AllocateMemory(size_t bytes) {
+  if (bytes == 0) {
+    return nullptr;
+  }
   switch (type_) {
     case MemoryType::SHM:
       return AllocShmMemory(bytes);
@@ -113,18 +117,24 @@ void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
                "ftruncate failed: errno {}, message {}", errno,
                strerror(errno));
 
+  size_t page_size = sysconf(_SC_PAGESIZE);
+  size_t aligned_bytes = ((bytes + page_size - 1) / page_size) * page_size;
+
   // Specify the fixed address
-  void* preferred_addr = AllocPinMemory(bytes);
-  void* shm_addr = mmap(preferred_addr, bytes, PROT_READ | PROT_WRITE,
+  void* buf = AllocPinMemory(aligned_bytes);
+
+  LOG_DEBUG("try alloc bytes: {}, preferred_addr: {:p}, aligned_bytes: {}",
+            bytes, buf, aligned_bytes);
+  void* shm_addr = mmap(buf, aligned_bytes, PROT_READ | PROT_WRITE,
                         MAP_SHARED | MAP_FIXED | MAP_LOCKED, shm_fd, 0);
   LOG_FATAL_IF(shm_addr == MAP_FAILED, "mmap failed: errno {}, message {}",
                errno, strerror(errno));
 
   shm_meta.id = shm_fd;
-  shm_meta.ptr = preferred_addr;
-  shm_meta.size = bytes;
-  shm_id_map_[preferred_addr] = shm_meta;
-  return preferred_addr;
+  shm_meta.ptr = buf;
+  shm_meta.size = aligned_bytes;
+  shm_id_map_[buf] = shm_meta;
+  return buf;
 }
 
 void CachingAllocator::FreeMemory(void* ptr) {
@@ -165,20 +175,23 @@ void CachingAllocator::FreePinShmMemory(void* ptr) {
 CachingAllocator::CachingAllocator(size_t bytes, MemoryType type, int device_id)
     : max_bytes_(bytes),
       allocated_bytes_(0),
+      used_bytes_(0),
       type_(type),
-      device_id_(device_id) {}
+      device_id_(device_id) {
+  InitLogger();
+}
 
 CachingAllocator::~CachingAllocator() { FreeCached(); }
 
 extern "C" {
 void* TorchAllocate(size_t bytes) {
-  InitCachingAllocator(CachingAllocator::MemoryType::PIN_SHM);
+  InitCachingAllocator(MemoryType::PIN_SHM);
   void* ptr = kCachingAllocator->Allocate(bytes);
   return ptr;
 }
 
 void TorchFree(void* ptr) {
-  InitCachingAllocator(CachingAllocator::MemoryType::PIN_SHM);
+  InitCachingAllocator(MemoryType::PIN_SHM);
   LOG_FATAL_IF(kCachingAllocator->IsAllocated(ptr) == false,
                "Attempted to free unallocated memory");
   kCachingAllocator->Free(ptr);

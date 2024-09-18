@@ -88,24 +88,26 @@ link_directories(
 # endforeach(TEST_SOURCE)
 
 message(STATUS "CMAKE_CURRENT_SOURCE_DIR: ${CMAKE_CURRENT_SOURCE_DIR}")
-add_executable(test_shared_pin_memory test_shared_pin_memory.cpp ${MEMORY_SRC})
+add_executable(test_shared_pin_memory test_shared_pin_memory.cpp ${MEMORY_SRC} ${UTILS_SRC})
 target_include_directories(test_shared_pin_memory PRIVATE
     ${CUDA_INCLUDE_DIRS}
+    ${TORCH_INCLUDE_DIRS}
 )
 target_link_libraries(test_shared_pin_memory
-    CUDA::cublas CUDA::cudart uuid
+    CUDA::cublas CUDA::cudart uuid ${TORCH_LIBRARIES}
 )
 add_test(NAME test_shared_pin_memory COMMAND test_shared_pin_memory)
 set_target_properties(test_shared_pin_memory PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
 )
 
-add_executable(test_memcpy_bw test_memcpy_bw.cpp ${MEMORY_SRC})
+add_executable(test_memcpy_bw test_memcpy_bw.cpp ${MEMORY_SRC}  ${UTILS_SRC})
 target_include_directories(test_shared_pin_memory PRIVATE
     ${CUDA_INCLUDE_DIRS}
+    ${TORCH_INCLUDE_DIRS}
 )
 target_link_libraries(test_memcpy_bw
-    CUDA::cublas CUDA::cudart uuid numa
+    CUDA::cublas CUDA::cudart uuid numa ${TORCH_LIBRARIES}
 )
 add_test(NAME test_memcpy_bw COMMAND test_memcpy_bw)
 set_target_properties(test_memcpy_bw PROPERTIES

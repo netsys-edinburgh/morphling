@@ -41,4 +41,4 @@ void log_message(const char* message);
 void init_task_queue(task_queue_t* task_queue);
 int dequeue_task(task_queue_t* task_queue);
 
-#endif // SHARED_MEMORY_MANAGER_H
+#endif  // SHARED_MEMORY_MANAGER_H

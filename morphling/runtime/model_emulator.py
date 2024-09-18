@@ -14,7 +14,7 @@ from safetensors import safe_open
 from tqdm import tqdm
 from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
-from morphling._C import tensor_handle
+from morphling._C import ArcherTensorHandle, MemoryManagerClient
 from morphling.common import *
 from morphling.utils import get_checkpoint_paths
 
@@ -70,7 +70,7 @@ class EmulationEngine(object):
         os.makedirs(self.checkpoint, exist_ok=True)
 
         self.emulator_config = config
-        self.tensor_handle = tensor_handle(config.ckpt_path)
+        self.ArcherTensorHandle = ArcherTensorHandle(config.ckpt_path)
 
         return self
 
@@ -206,7 +206,7 @@ class EmulationEngine(object):
                 self.dtype_cls = self.config.torch_dtype
 
                 if (
-                    not self.tensor_handle.is_tensor_index_initialized()
+                    not self.ArcherTensorHandle.is_tensor_index_initialized()
                     or not os.path.exists(param_meta_map_file)
                 ):
                     print(
@@ -239,7 +239,7 @@ class EmulationEngine(object):
                         gc.collect()
                         torch.cuda.empty_cache()
 
-                    update_shm_offsets(self.param_meta_map)
+                    # update_shm_offsets(self.param_meta_map)
 
                     with open(param_meta_map_file, "w") as f:
                         json.dump(self.param_meta_map, f)
@@ -276,6 +276,15 @@ class EmulationEngine(object):
                             ]
                             self.param_meta_map.pop(name_without_prefix)
                     param.ar_id = self.param_meta_map.get(name, None)
+
+
+                self.client = MemoryManagerClient()
+                param_shm_map = self.client.get_model_param()
+
+                for name, param in model.named_parameters(recurse=True):
+                    if name not in param_shm_map:
+                        continue
+                    self.client.set_tensor_shm(param.data, name)
 
                 return model
 
@@ -336,19 +345,22 @@ class EmulationEngine(object):
                 param = state_dict[param_name]
                 param_id = self._generate_param_id()
 
-                file_offset = self.tensor_handle.offload_tensor(param, param_id)
+                file_offset = self.ArcherTensorHandle.offload_tensor(param, param_id)
 
                 self.param_meta_map[param_name] = {
                     "id": param_id,
                     "size": param.numel() * param.element_size(),
-                    "shm_offset": -1,
+                    # "shm_offset": -1,
                     "file_offset": file_offset,
                     "shape": tuple(param.shape),
                     "stride": tuple(param.stride()),
                     "dtype": str(param.dtype),
                 }
 
-            # if not self.tensor_handle.is_tensor_offloaded(self.param_meta_map[param_name]["id"]):
+            # if not self.ArcherTensorHandle.is_tensor_offloaded(self.param_meta_map[param_name]["id"]):
 
         gc.collect()
         torch.cuda.empty_cache()
+
+
+
