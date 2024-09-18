@@ -67,6 +67,21 @@ extern void InitLogger();
     LOG_INFO(__VA_ARGS__);     \
   }
 
+#define CHECK_CUBLAS_ERROR(call)                       \
+  {                                                    \
+    cublasStatus_t err = (call);                       \
+    LOG_FATAL_IF(err != CUBLAS_STATUS_SUCCESS,         \
+                 "CUBLAS error: {}, message: {}", err, \
+                 cublasGetErrorString(err));           \
+  }
+
+#define CHECK_CUDA_ERROR(call)                                           \
+  {                                                                      \
+    cudaError_t err = (call);                                            \
+    LOG_FATAL_IF(err != cudaSuccess, "CUDA error: {}, message: {}", err, \
+                 cudaGetErrorString(err));                               \
+  }
+
 // #define LOG_DEBUG(...)                                      \
 //   do {                                                      \
 //     if (kLogLevel <= kDebug) {                              \

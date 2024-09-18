@@ -53,11 +53,11 @@ set(UMPIRE_ENABLE_NUMA ON)
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
 
-# FetchContent_Declare(
-# gflags
-# GIT_REPOSITORY https://github.com/gflags/gflags.git
-# GIT_TAG v2.2.2
-# )
+FetchContent_Declare(
+gflags
+GIT_REPOSITORY https://github.com/gflags/gflags.git
+GIT_TAG v2.2.2
+)
 # FetchContent_Declare(
 # glog
 # GIT_REPOSITORY https://github.com/google/glog.git
@@ -83,7 +83,7 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/gabime/spdlog.git
   GIT_TAG v1.14.1
 )
-FetchContent_MakeAvailable(rttr rapidjson grpc spdlog)
+FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags)
 
 set(gRPC_INSTALL ON) # Install gRPC for TARGET_FILE
 
@@ -268,6 +268,7 @@ message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
 add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs})
 add_dependencies(morphling_server generate_proto_files)
 target_link_libraries(morphling_server PRIVATE morphling
+  gflags::gflags
   ${_PROTOBUF_LIBPROTOBUF}
   grpc++ grpc++_reflection
   libspdlog.so
@@ -309,7 +310,7 @@ set(MORPHLING_EXT_SRC
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads
-  libspdlog.so
+  libspdlog.so rttr_core
 )
 define_gpu_extension_target(
   _C

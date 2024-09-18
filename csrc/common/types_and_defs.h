@@ -20,3 +20,39 @@ template <typename T>
 struct DoNothingDeleter {
   void operator()(T* ptr) const {}
 };
+
+// Helper macros to generate enum and string mappings
+#define ENUM_ENTRY_COMMA(value, EnumType) value,
+#define ENUM_CASE(value, EnumType) \
+  case EnumType::value:            \
+    return #value;
+#define STRING_CASE(value, EnumType) \
+  if (s == #value) return EnumType::value;
+
+// Macro to define enum class, enum to string, and string to enum functions
+#define DEFINE_ENUM_CLASS(EnumType, ENUM_VALUES)                              \
+  enum class EnumType { ENUM_VALUES(ENUM_ENTRY_COMMA, EnumType) Unknown };    \
+                                                                              \
+  /* Enum to string function */                                               \
+  inline const char* EnumType##ToString(EnumType v) {                         \
+    switch (v) {                                                              \
+      ENUM_VALUES(ENUM_CASE, EnumType)                                        \
+      default:                                                                \
+        return "Unknown";                                                     \
+    }                                                                         \
+  }                                                                           \
+                                                                              \
+  /* String to enum function */                                               \
+  inline EnumType StringTo##EnumType(const std::string& s) {                  \
+    ENUM_VALUES(STRING_CASE, EnumType)                                        \
+    return EnumType::Unknown;                                                 \
+  }                                                                           \
+                                                                              \
+  /* Specialize fmt::formatter for spdlog support */                          \
+  template <>                                                                 \
+  struct fmt::formatter<EnumType> : fmt::formatter<std::string> {             \
+    template <typename FormatContext>                                         \
+    auto format(EnumType v, FormatContext& ctx) {                             \
+      return fmt::formatter<std::string>::format(EnumType##ToString(v), ctx); \
+    }                                                                         \
+  };

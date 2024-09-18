@@ -74,7 +74,7 @@ std::string formatstr() {
 void InitLogger() {
   std::call_once(kLoggerFlag, []() {
     spdlog::cfg::load_env_levels();
-    spdlog::set_pattern("[%H:%M:%S %z] [%^---%L---%$] [thread %t] [%@] %v");
+    // spdlog::set_pattern("[%H:%M:%S %z] [%^---%L---%$] [thread %t] [%@] %v");
 
     spdlog::info("LOG_LEVEL : {}", getenv("SPDLOG_LEVEL"));
   });

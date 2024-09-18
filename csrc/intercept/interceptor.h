@@ -1,5 +1,6 @@
 #pragma once
 
+#include "client.h"
 #include "memory/caching_allocator.h"
 #include "utils/logger.h"
 
@@ -15,21 +16,26 @@
                const int* lda, const T* b, const int* ldb, const float* beta, \
                T* c, const int* ldc)
 
-template <typename T>
-struct InterceptedArgs {
-  char transa;
-  char transb;
-  int m;
-  int n;
-  int k;
-  float alpha;
-  const T* a;
-  int lda;
-  const T* b;
-  int ldb;
-  float beta;
-  T* c;
-  int ldc;
+enum class CPUDataType { kFloat, kHalf };
+enum class GPUDataType { kFloat, kHalf, kBFloat };
+
+#define MAX_GEMM_DIM 5  // FIXME: very unlikely the dimension will exceed 5
+struct GemmArgs {
+  char transa[MAX_GEMM_DIM];
+  char transb[MAX_GEMM_DIM];
+  int m[MAX_GEMM_DIM];
+  int n[MAX_GEMM_DIM];
+  int k[MAX_GEMM_DIM];
+  float alpha[MAX_GEMM_DIM];
+  const float* a[MAX_GEMM_DIM];  // FIXME: assumes CPU always use float, GPU use
+                                 // different types
+  int lda[MAX_GEMM_DIM];
+  const float* b[MAX_GEMM_DIM];
+  int ldb[MAX_GEMM_DIM];
+  float beta[MAX_GEMM_DIM];
+  float* c[MAX_GEMM_DIM];
+  int ldc[MAX_GEMM_DIM];
+  int group_size;  // FIXME: we do not deal with group with different sizes
 };
 
 #define DECLARE_INTERCEPTOR(name, T) \
@@ -50,77 +56,52 @@ struct InterceptedArgs {
       LOG_FATAL_IF(!orig_##name, "Error loading original " #name "_: {}",     \
                    dlerror());                                                \
     }                                                                         \
-    InterceptedArgs<T> args = {.transa = *transa,                             \
-                               .transb = *transb,                             \
-                               .m = *m,                                       \
-                               .n = *n,                                       \
-                               .k = *k,                                       \
-                               .alpha = *alpha,                               \
-                               .a = a,                                        \
-                               .lda = *lda,                                   \
-                               .b = b,                                        \
-                               .ldb = *ldb,                                   \
-                               .beta = *beta,                                 \
-                               .c = c,                                        \
-                               .ldc = *ldc};                                  \
-    NotifyTaskExecution(args);                                                \
-    WaitTaskExecution(args);                                                  \
+    GemmArgs args = {.group_size = 1};                                        \
+    args.transa[0] = *transa;                                                 \
+    args.transb[0] = *transb;                                                 \
+    args.m[0] = *m;                                                           \
+    args.n[0] = *n;                                                           \
+    args.k[0] = *k;                                                           \
+    args.alpha[0] = *alpha;                                                   \
+    args.a[0] = a;                                                            \
+    args.lda[0] = *lda;                                                       \
+    args.b[0] = b;                                                            \
+    args.ldb[0] = *ldb;                                                       \
+    args.beta[0] = *beta;                                                     \
+    args.c[0] = c;                                                            \
+    args.ldc[0] = *ldc;                                                       \
+    TaskExecution(args);                                                      \
   }
 
 #define IMPL_INTERCEPTOR(name, T, LIB) \
   IMPL_INTERCEPTOR_PTR(name);          \
   IMPL_INTERCEPTOR_FUNC(name, T, LIB);
 
-template <typename T>
-std::tuple<size_t, size_t, size_t> CalculateTaskSizes(
-    const InterceptedArgs<T>& args) {
-  size_t size_a = (args.transa == 'N' || args.transa == 'n')
-                      ? args.lda * args.k * sizeof(T)
-                      : args.lda * args.m * sizeof(T);
-  size_t size_b = (args.transb == 'N' || args.transb == 'n')
-                      ? args.ldb * args.n * sizeof(T)
-                      : args.ldb * args.k * sizeof(T);
-  size_t size_c = args.ldc * args.n * sizeof(T);
-
-  return {size_a, size_b, size_c};
+std::tuple<size_t, size_t, size_t> CalculateTaskSizes(const GemmArgs& args) {
+  if (args.group_size == 1) {
+    auto size_a = (args.transa[0] == 'N' || args.transa[0] == 'n')
+                      ? args.lda[0] * args.k[0] * sizeof(float)
+                      : args.lda[0] * args.m[0] * sizeof(float);
+    auto size_b = (args.transb[0] == 'N' || args.transb[0] == 'n')
+                      ? args.ldb[0] * args.n[0] * sizeof(float)
+                      : args.ldb[0] * args.k[0] * sizeof(float);
+    auto size_c = args.ldc[0] * args.n[0] * sizeof(float);
+    return {size_a, size_b, size_c};
+  }
+  return {0, 0, 0};
 }
 
 bool CheckBufferOffloaded(const void* buffer, size_t size);
 
-template <typename T>
-void NotifyTaskExecution(const InterceptedArgs<T>& args) {
-  InitCachingAllocator(CachingAllocator::MemoryType::SHM);
+void TaskExecution(const GemmArgs& args) {
+  InitCachingAllocator(MemoryType::PIN_SHM);
   void* task_buffer = kCachingAllocator->Allocate(task_size);
-  SerializeInterceptedArgs(args, task_buffer);
-
-  auto [size_a, size_b, size_c] = CalculateTaskSizes(args);
-  if (CheckBufferOffloaded(args.a, size_a)) {
-    task_size -= size_a;
-  }
-  if (CheckBufferOffloaded(args.b, size_b)) {
-    task_size -= size_b;
-  }
-  if (CheckBufferOffloaded(args.c, size_c)) {
-    task_size -= size_c;
-  }
-}
-
-template <typename T>
-void WaitTaskExecution(const InterceptedArgs<T>& args) {}
-
-template <typename T>
-void SerializeInterceptedArgs(const InterceptedArgs<T>& args, void* buffer) {
-  InterceptedArgs<T>* buffer_args =
-      reinterpret_cast<InterceptedArgs<T>*>(buffer);
+  GemmArgs* buffer_args = reinterpret_cast<GemmArgs*>(buffer);
   *buffer_args = args;
-  // deal with pointers a, b, c
+  kMemoryManagerClient->ScheduleGemmAsync(args.a, args.b, args.c, task_buffer);
 }
-
-template <typename T>
-void DeserializeInterceptedArgs(const void* buffer, InterceptedArgs<T>* args) {}
 
 DECLARE_INTERCEPTOR(sgemm, float)
-DECLARE_INTERCEPTOR(sgemm_batch, float)
 
 #if 0
 #include <cublas_v2.h>

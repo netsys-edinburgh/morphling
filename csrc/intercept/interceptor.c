@@ -1,3 +1,4 @@
+#if 0
 #include "interceptor.h"
 sgemm_type orig_sgemm = NULL;
 shared_memory_t* shared_mem_ptr = NULL;  // Central shared memory pointer
@@ -528,3 +529,4 @@ int main() {
   fclose(log_file);
   return 0;
 }
+#endif
