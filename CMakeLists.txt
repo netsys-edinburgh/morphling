@@ -19,45 +19,46 @@ set(ENABLE_TESTS OFF)
 
 message(STATUS "CMAKE_BINARY_DIR: ${CMAKE_BINARY_DIR}")
 
-# Specify the directory where the UMPIRE project will be cloned and built
-set(EXTERNAL_DIR ${CMAKE_BINARY_DIR}/external)
-set(UMPIRE_REPO_URL https://github.com/LLNL/Umpire.git)
-set(UMPIRE_REPO_TAG v2024.07.0)
+# # Specify the directory where the UMPIRE project will be cloned and built
+# set(EXTERNAL_DIR ${CMAKE_BINARY_DIR}/external)
+# set(UMPIRE_REPO_URL https://github.com/LLNL/Umpire.git)
+# set(UMPIRE_REPO_TAG v2024.07.0)
 
-clone_and_build_external_project(${EXTERNAL_DIR}
-  umpire
-  ${UMPIRE_REPO_URL}
-  ${UMPIRE_REPO_TAG}
-  -DENABLE_TESTS=OFF -DENABLE_CUDA=ON -DENABLE_OPENMP=ON -DENABLE_MPI=ON
-  -DUMPIRE_ENABLE_IPC_SHARED_MEMORY=ON -DUMPIRE_ENABLE_ASAN=ON -DUMPIRE_ENABLE_NUMA=ON -DUMPIRE_ENABLE_LOGGING=ON
-  -DBLT_CXX_STD=c++17 -DCMAKE_CUDA_STANDARD=17 -DUMPIRE_ENABLE_GMOCK=OFF -DUMPIRE_ENABLE_FORTRAN=OFF
-)
-set(UMPIRE_INCLUDE_DIRS ${EXTERNAL_DIR}/umpire/src ${EXTERNAL_DIR}/umpire/build/include)
-set(UMPIRE_LIBRARY_DIRS ${EXTERNAL_DIR}/umpire/build/lib)
+# clone_and_build_external_project(${EXTERNAL_DIR}
+#   umpire
+#   ${UMPIRE_REPO_URL}
+#   ${UMPIRE_REPO_TAG}
+#   -DENABLE_TESTS=OFF -DENABLE_CUDA=ON -DENABLE_OPENMP=ON -DENABLE_MPI=ON
+#   -DUMPIRE_ENABLE_IPC_SHARED_MEMORY=ON -DUMPIRE_ENABLE_ASAN=ON -DUMPIRE_ENABLE_NUMA=ON -DUMPIRE_ENABLE_LOGGING=ON
+#   -DBLT_CXX_STD=c++17 -DCMAKE_CUDA_STANDARD=17 -DUMPIRE_ENABLE_GMOCK=OFF -DUMPIRE_ENABLE_FORTRAN=OFF
+# )
+# set(UMPIRE_INCLUDE_DIRS ${EXTERNAL_DIR}/umpire/src ${EXTERNAL_DIR}/umpire/build/include)
+# set(UMPIRE_LIBRARY_DIRS ${EXTERNAL_DIR}/umpire/build/lib)
 
 # RTTR Support Flags
 set(BUILD_UNIT_TESTS OFF)
 set(BUILD_EXAMPLES OFF)
 
-# BLT Support Flags
-set(ENABLE_CUDA ON)
-set(ENABLE_OPENMP ON)
-set(ENABLE_MPI ON)
-set(ENABLE_HIP OFF)
+# # BLT Support Flags
+# set(ENABLE_CUDA ON)
+# set(ENABLE_OPENMP ON)
+# set(ENABLE_MPI ON)
+# set(ENABLE_HIP OFF)
 
-# Umpire Support Flags
-set(UMPIRE_ENABLE_IPC_SHARED_MEMORY ON)
-set(UMPIRE_ENABLE_ASAN ON)
-set(UMPIRE_ENABLE_NUMA ON)
+# # Umpire Support Flags
+# set(UMPIRE_ENABLE_IPC_SHARED_MEMORY ON)
+# set(UMPIRE_ENABLE_ASAN ON)
+# set(UMPIRE_ENABLE_NUMA ON)
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
 
 FetchContent_Declare(
-gflags
-GIT_REPOSITORY https://github.com/gflags/gflags.git
-GIT_TAG v2.2.2
+  gflags
+  GIT_REPOSITORY https://github.com/gflags/gflags.git
+  GIT_TAG v2.2.2
 )
+
 # FetchContent_Declare(
 # glog
 # GIT_REPOSITORY https://github.com/google/glog.git
@@ -106,8 +107,8 @@ message(STATUS "Python version: ${Python_VERSION}")
 # set(Python3_EXECUTABLE ${CONDA_PREFIX_PATH}/bin/python3)
 # set(Python_INCLUDE_DIRS ${CONDA_PREFIX_PATH}/include)
 # set(Python3_LIBRARIES ${CONDA_PREFIX_PATH}/lib)
-
-# set(PYTHON_EXECUTABLE ${CONDA_PREFIX_PATH}/bin/python)
+set(CONDA_INCLUDE_DIRS ${CONDA_PREFIX_PATH}/include)
+set(CONDA_LINK_DIRS ${CONDA_PREFIX_PATH}/lib)
 
 # Supported python versions.  These versions will be searched in order, the
 # first match will be selected.  These should be kept in sync with setup.py.
@@ -230,7 +231,7 @@ include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Python3_INCLUDE_DIRS}
 
-  # ${CONDA_PREFIX_PATH}/include
+  ${CONDA_PREFIX_PATH}/include
   ${rttr_SOURCE_DIR}/src
   ${rttr_BINARY_DIR}/src
   ${absl_SOURCE_DIR}
@@ -247,35 +248,38 @@ file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
 file(GLOB MEMORY_SRC "csrc/memory/*.cpp")
 file(GLOB UTILS_SRC "csrc/utils/*.cpp")
 file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
+file(GLOB SCHEDULER_SRC "csrc/scheduler/*.cpp")
 
-add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${MEMORY_SRC})
+add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
 target_link_libraries(morphling_interceptor PUBLIC
   CUDA::cudart Threads::Threads
   libspdlog.so grpc++ grpc++_reflection
 )
 target_include_directories(morphling_interceptor PUBLIC "csrc" ${CUDA_INCLUDE_DIRS})
 
-add_library(morphling STATIC ${UTILS_SRC} ${CHECKPOINT_SRC})
-target_link_libraries(morphling PUBLIC
-  CUDA::cudart Threads::Threads
-  libspdlog.so ${TORCH_LIBRARIES}
-)
-target_include_directories(morphling PUBLIC "csrc" ${CUDA_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS})
+# add_library(morphling STATIC ${UTILS_SRC} ${CHECKPOINT_SRC})
+# target_link_libraries(morphling PUBLIC
+#   CUDA::cudart Threads::Threads
+#   libspdlog.so ${TORCH_LIBRARIES}
+# )
+# target_include_directories(morphling PUBLIC "csrc" ${CUDA_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS})
 
 message(STATUS "rttr_SOURCE_DIR: ${rttr_SOURCE_DIR}")
 message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
 
-add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs})
+add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs} ${SCHEDULER_SRC} ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC})
 add_dependencies(morphling_server generate_proto_files)
-target_link_libraries(morphling_server PRIVATE morphling
+target_link_libraries(morphling_server PRIVATE
   gflags::gflags
   ${_PROTOBUF_LIBPROTOBUF}
   grpc++ grpc++_reflection
   libspdlog.so
-  rttr_core
+  rttr_core uuid
+  CUDA::cublas CUDA::cudart
   libpython${Python_VERSION}.so
+  ${TORCH_LIBRARIES}
 )
-target_include_directories(morphling_server PRIVATE "csrc")
+target_include_directories(morphling_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
 
 # Supported NVIDIA architectures.
 set(CUDA_SUPPORTED_ARCHS "7.0;7.5;8.0;8.6;8.9;9.0")
@@ -305,12 +309,16 @@ set(MORPHLING_EXT_SRC
   ${CHECKPOINT_SRC}
   ${MEMORY_SRC}
   ${UTILS_SRC}
+  ${hw_proto_srcs}
+  ${hw_grpc_srcs}
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads
   libspdlog.so rttr_core
+  grpc++ grpc++_reflection
+  morphling_interceptor
 )
 define_gpu_extension_target(
   _C
@@ -323,23 +331,42 @@ define_gpu_extension_target(
   WITH_SOABI
 )
 
-# set(MORPHLING_ALLOCATOR_SRC
-#   ${MEMORY_SRC}
-#   ${UTILS_SRC}
+# set(MORPHLING_INTERCEPTOR_SRC
+# ${INTERCEPT_SRC}
+# "csrc/python/intercept_py.cpp"
 # )
-# set(MORPHLING_ALLOCATOR_LIB
-#   uuid Threads::Threads
-#   libspdlog.so
+# set(MORPHLING_INTERCEPTOR_LIB
+# mkl_rt grpc++ grpc++_reflection
+# libspdlog.so
 # )
 # define_gpu_extension_target(
-#   morphling_allocator
-#   DESTINATION morphling
-#   LANGUAGE ${MORPHLING_GPU_LANG}
-#   SOURCES ${MORPHLING_ALLOCATOR_SRC}
-#   COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
-#   ARCHITECTURES ${MORPHLING_GPU_ARCHES}
-#   LIBRARIES ${MORPHLING_ALLOCATOR_LIB}
-#   WITH_SOABI
+# morphling_interceptor
+# DESTINATION morphling
+# LANGUAGE ${MORPHLING_GPU_LANG}
+# SOURCES ${MORPHLING_EXT_SRC}
+# COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+# ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+# LIBRARIES ${MORPHLING_EXT_LIB}
+# WITH_SOABI
+# )
+
+# set(MORPHLING_ALLOCATOR_SRC
+# ${MEMORY_SRC}
+# ${UTILS_SRC}
+# )
+# set(MORPHLING_ALLOCATOR_LIB
+# uuid Threads::Threads
+# libspdlog.so
+# )
+# define_gpu_extension_target(
+# morphling_allocator
+# DESTINATION morphling
+# LANGUAGE ${MORPHLING_GPU_LANG}
+# SOURCES ${MORPHLING_ALLOCATOR_SRC}
+# COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+# ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+# LIBRARIES ${MORPHLING_ALLOCATOR_LIB}
+# WITH_SOABI
 # )
 
 # Enable testing if the option is ON

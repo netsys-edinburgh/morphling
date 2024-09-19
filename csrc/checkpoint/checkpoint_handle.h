@@ -27,8 +27,6 @@ RTTR_REGISTRATION {
 }
 
 typedef std::unordered_map<std::string, ParamMeta> ParamMetaMap;
-typedef std::unordered_map<std::string, std::tuple<std::string, size_t>>
-    ParamShmMap;
 
 class CheckpointHandle : public noncopyable {
  public:

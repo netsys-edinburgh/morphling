@@ -101,6 +101,7 @@ class CMakeExtension(Extension):
     def __init__(self, name: str, cmake_lists_dir: str = ".", **kwa) -> None:
         super().__init__(name, sources=[], **kwa)
         self.cmake_lists_dir = os.path.abspath(cmake_lists_dir)
+        self.target_type = kwa.get('target_type', 'shared')
 
 
 # Adapted from https://github.com/vllm-project/vllm/blob/a1242324c99ff8b1e29981006dfb504da198c7c3/setup.py
@@ -194,6 +195,18 @@ class cmake_build_ext(build_ext):
             subprocess.check_call(["cmake", *build_args], cwd=self.build_temp)
             print(self.build_temp, ext_target_name)
 
+    def get_ext_filename(self, ext_name):
+        """
+        Override to manage both shared libraries (.so) and executables.
+        """
+        for ext in self.extensions:
+            if ext.name == ext_name and ext.target_type == 'executable':
+                # For executables, return the name directly without suffixes
+                ext_target_name = ext_name.replace(".", "/") #TODO: fix this
+                return ext_target_name
+        # Default behavior for shared libraries
+        return super().get_ext_filename(ext_name)
+
 
 class BuildPackageProtos(Command):
     """Command to generate project *_pb2.py modules from proto files."""
@@ -232,6 +245,7 @@ class CustomInstall(install):
     def run(self):
         self.run_command("build_ext")
         self.run_command("build_package_protos")
+
         super().run()
 
 class CustomBuild(sdist):
@@ -261,8 +275,8 @@ setup(
     name="morphling",
     version="0.0.1",
     ext_modules=[
-        CMakeExtension(name="morphling._C"),
-        # CMakeExtension(name="morphling.morphling_allocator"),
+        CMakeExtension(name="morphling._C", target_type='shared'),
+        CMakeExtension(name="morphling.morphling_server", target_type='executable'),
     ],
     entry_points={
         "console_scripts": [

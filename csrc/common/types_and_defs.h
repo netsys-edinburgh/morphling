@@ -1,5 +1,8 @@
 #pragma once
 #include <cstdint>
+#include <string>
+#include <tuple>
+#include <unordered_map>
 
 #define PARAM_META_FILE "param_meta.json"
 #define BUFFER_SHM_NAME "/emulator_shm_buffer"
@@ -11,6 +14,9 @@ typedef std::size_t HashID;
 typedef std::size_t NodeID;
 typedef std::uint64_t GraphID;
 typedef std::uint64_t RequestID;
+
+typedef std::unordered_map<std::string, std::tuple<std::string, size_t>>
+    ParamShmMap;
 
 #define KB 1024
 #define MB (KB * KB)

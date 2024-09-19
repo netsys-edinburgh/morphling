@@ -17,47 +17,49 @@ def main():
     parser = HfArgumentParser((EmulatorConfig, ))
     args = parser.parse_args()[0]
 
-    param_meta_map_file = os.path.join(args.ckpt_path, "param_meta_map.json")
+    print(args)
 
-    with open(param_meta_map_file, "r") as f:
-        param_meta_map = json.load(f)
+    # param_meta_map_file = os.path.join(args.ckpt_path, "param_meta_map.json")
 
-    shm_mem_size, shm_mem_offsets = compute_shm_offsets(param_meta_map)
+    # with open(param_meta_map_file, "r") as f:
+    #     param_meta_map = json.load(f)
 
-    unique_sizes_counter = Counter(
-        [param["size"] for param in param_meta_map.values()]
-    )
+    # shm_mem_size, shm_mem_offsets = compute_shm_offsets(param_meta_map)
 
-    shm_param_buffer = shared_memory.SharedMemory(create=True, size=shm_mem_size)
-    buffer = shm_param_buffer.buf
-    buffer[:] = bytearray(shm_mem_size)
+    # unique_sizes_counter = Counter(
+    #     [param["size"] for param in param_meta_map.values()]
+    # )
 
-    for size, count in unique_sizes_counter.items():
-        # find all tensor name and id with the same size
-        ids_of_size = find_tensor_same_size(param_meta_map, size)
+    # shm_param_buffer = shared_memory.SharedMemory(create=True, size=shm_mem_size)
+    # buffer = shm_param_buffer.buf
+    # buffer[:] = bytearray(shm_mem_size)
 
-        # print(f"Size: {size}, Count: {count}, Names: {names_of_size}, IDs: {ids_of_size}")
+    # for size, count in unique_sizes_counter.items():
+    #     # find all tensor name and id with the same size
+    #     ids_of_size = find_tensor_same_size(param_meta_map, size)
 
-        assert (
-            len(ids_of_size) == count
-        ), f"Size mismatch: {len(ids_of_size)} != {count}"
+    #     # print(f"Size: {size}, Count: {count}, Names: {names_of_size}, IDs: {ids_of_size}")
 
-        # write ids_of_size to buffer
-        tmp = np.ndarray(
-            ids_of_size.shape,
-            dtype=ids_of_size.dtype,
-            buffer=buffer,
-            offset=shm_mem_offsets[size],
-        )
-        tmp[:] = ids_of_size[:]
+    #     assert (
+    #         len(ids_of_size) == count
+    #     ), f"Size mismatch: {len(ids_of_size)} != {count}"
 
-        tmp = np.ndarray(
-            ids_of_size.shape,
-            dtype=ids_of_size.dtype,
-            buffer=buffer,
-            offset=shm_mem_offsets[size] + size - count * 4,
-        )
-        tmp[:] = ids_of_size[:]
+    #     # write ids_of_size to buffer
+    #     tmp = np.ndarray(
+    #         ids_of_size.shape,
+    #         dtype=ids_of_size.dtype,
+    #         buffer=buffer,
+    #         offset=shm_mem_offsets[size],
+    #     )
+    #     tmp[:] = ids_of_size[:]
+
+    #     tmp = np.ndarray(
+    #         ids_of_size.shape,
+    #         dtype=ids_of_size.dtype,
+    #         buffer=buffer,
+    #         offset=shm_mem_offsets[size] + size - count * 4,
+    #     )
+    #     tmp[:] = ids_of_size[:]
 
 
     # pin_mem_size, pin_mem_offsets = compute_pin_offsets(param_meta_map)
