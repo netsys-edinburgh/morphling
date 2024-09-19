@@ -127,3 +127,25 @@ wait
 ps aux | grep '[p]ython3.*sgemm_dimensions.py\|[g]pu_process' | awk '{print $2}' | xargs -r kill -9
 
 echo "All processes have completed. Logs are available in the '$LOG_DIR' directory."
+
+
+g++ -g -fPIC -shared -o -std=c++17 "csrc/intercept/interceptor.so" \
+    "csrc/intercept/interceptor.cpp" \
+    "csrc/intercept/client.cpp" \
+    "csrc/utils/logger.cpp" \
+    "csrc/memory/caching_allocator.cpp" \
+    "build/temp.linux-x86_64-cpython-39/morphling.grpc.pb.cc" \
+    "build/temp.linux-x86_64-cpython-39/morphling.pb.cc" \
+    -D_GLIBCXX_USE_CXX11_ABI=0 \
+    -I"csrc" \
+    -I"${CUDA_HOME}/include" \
+    -I"build/temp.linux-x86_64-cpython-39/_deps/grpc-src/third_party/protobuf/src" \
+    -I"build/temp.linux-x86_64-cpython-39/" \
+    -I"build/temp.linux-x86_64-cpython-39/_deps/grpc-src/include" \
+    -I"build/temp.linux-x86_64-cpython-39/_deps/grpc-src/third_party/abseil-cpp/" \
+    -L"${CUDA_HOME}/lib64" \
+    -L"/mnt/data/xly/.conda/envs/emulator/lib" \
+    -L"build/temp.linux-x86_64-cpython-39/_deps/grpc-build/build/temp.linux-x86_64-cpython-39" \
+    -L"build/temp.linux-x86_64-cpython-39/_deps/grpc-build/third_party/protobuf/build/temp.linux-x86_64-cpython-39" \
+    -lmkl_rt -lgrpc++ -lgrpc++_reflection -lcublas -lcudart -lspdlog
+

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cublas_v2.h>
 #include <cuda_runtime_api.h>
 
 #include <condition_variable>
@@ -15,8 +16,7 @@
   for (int col = 0; col < ((trans == 'N' || trans == 'n') ? k : m); col++) { \
     size_t num_elements = ((trans == 'N' || trans == 'n') ? m : k);          \
     CHECK_CUDA_ERROR(cudaMemcpy(dst + col * ld, src + col * ld,              \
-                                num_elements * sizeof(float),                \
-                                mode) != cudaSuccess)                        \
+                                num_elements * sizeof(float), mode))         \
   }
 
 class GPUWorker : public WorkerBase {
@@ -30,11 +30,11 @@ class GPUWorker : public WorkerBase {
 
   DELETE_COPY_AND_ASSIGN(GPUWorker);
 
-  void EnqueueGemm(const GemmArgs& args);
+  void EnqueueGemm(const GemmArgsPtr& args);
 
  private:
   void Run() override;
-  void RunCublasGemm(const GemmArgs& args);
+  void RunCublasGemm(const GemmArgsPtr& args);
 
  private:
   std::unique_ptr<CachingAllocator> allocator_;
@@ -58,7 +58,7 @@ class GPUWorkerPool : public noncopyable {
 
   DELETE_COPY_AND_ASSIGN(GPUWorkerPool);
 
-  void EnqueueGemmWithPolicy(const GemmArgs& args);
+  void EnqueueGemmWithPolicy(const GemmArgsPtr& args);
 
  private:
   std::vector<std::unique_ptr<GPUWorker>> workers_;

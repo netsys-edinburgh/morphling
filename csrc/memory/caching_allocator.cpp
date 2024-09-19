@@ -17,24 +17,37 @@ std::unique_ptr<CachingAllocator> kCachingAllocator = nullptr;
 
 void* CachingAllocator::Allocate(const size_t bytes) {
   std::lock_guard<std::mutex> guard(mutex_);
+  LOG_DEBUG("Try Allocate: size: {}, used: {}", bytes, used_bytes_);
   const auto& it = available_map_.find(bytes);
+  void* ptr = nullptr;
   if (it == available_map_.end() || it->second.empty()) {
-    return AllocateAndCache(bytes);
+    if (bytes == 0) {
+      ptr = malloc(bytes);
+      LOG_WARN("Attempted to allocate 0 bytes, return {:p}", ptr);
+    } else {
+      ptr = AllocateAndCache(bytes);
+    }
+  } else {
+    ptr = it->second.back();
+    it->second.pop_back();
   }
-  void* ptr = it->second.back();
-  it->second.pop_back();
   used_bytes_ += bytes;
+  allocation_map_[ptr] = bytes;
+  LOG_DEBUG("Allocate: {:p}, size: {}, used: {}", ptr, bytes, used_bytes_);
   return ptr;
 }
 
 void CachingAllocator::Free(void* ptr) {
   std::lock_guard<std::mutex> guard(mutex_);
+  LOG_DEBUG("Try Free: {:p}", ptr);
   const auto& it = allocation_map_.find(ptr);
   LOG_FATAL_IF(it == allocation_map_.end(),
-               "Attempted to free unallocated memory");
+               "Attempted to free unallocated memory {:p}", ptr);
   const size_t alloc_size = it->second;
   available_map_[alloc_size].push_back(ptr);
   used_bytes_ -= alloc_size;
+  allocation_map_.erase(it);
+  LOG_DEBUG("Free: {:p}, size: {}, used: {}", ptr, alloc_size, used_bytes_);
 }
 
 void CachingAllocator::FreeCached() {
@@ -42,12 +55,15 @@ void CachingAllocator::FreeCached() {
     for (const auto& ptr : it.second) {
       FreeMemory(ptr);
       allocated_bytes_ -= it.first;
+      allocation_map_.erase(ptr);
+      used_bytes_ -= it.first;
     }
   }
   available_map_.clear();
 }
 
 void* CachingAllocator::AllocateAndCache(const size_t bytes) {
+  LOG_DEBUG("AllocateAndCache: size: {}, used: {}", bytes, used_bytes_);
   if (allocated_bytes_ + bytes > max_bytes_) {
     FreeCached();
     LOG_FATAL_IF(allocated_bytes_ + bytes > max_bytes_,
@@ -57,14 +73,10 @@ void* CachingAllocator::AllocateAndCache(const size_t bytes) {
                  (max_bytes_ - allocated_bytes_) / GB);
   }
   void* ptr = AllocateMemory(bytes);
-  allocation_map_[ptr] = bytes;
   return ptr;
 }
 
 void* CachingAllocator::AllocateMemory(size_t bytes) {
-  if (bytes == 0) {
-    return nullptr;
-  }
   switch (type_) {
     case MemoryType::SHM:
       return AllocShmMemory(bytes);
@@ -123,8 +135,9 @@ void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
   // Specify the fixed address
   void* buf = AllocPinMemory(aligned_bytes);
 
-  LOG_DEBUG("try alloc bytes: {}, preferred_addr: {:p}, aligned_bytes: {}",
-            bytes, buf, aligned_bytes);
+  // LOG_DEBUG("alloc pin shm: bytes: {}, preferred_addr: {:p}, aligned_bytes:
+  // {}",
+  //           bytes, buf, aligned_bytes);
   void* shm_addr = mmap(buf, aligned_bytes, PROT_READ | PROT_WRITE,
                         MAP_SHARED | MAP_FIXED | MAP_LOCKED, shm_fd, 0);
   LOG_FATAL_IF(shm_addr == MAP_FAILED, "mmap failed: errno {}, message {}",
@@ -165,8 +178,9 @@ void CachingAllocator::FreeShmMemory(void* ptr) {
   shm_id_map_.erase(ptr);
 }
 void CachingAllocator::FreePinShmMemory(void* ptr) {
+  // LOG_DEBUG("free pin shm: addr: {:p}, bytes", ptr, shm_id_map_[ptr].size);
   munmap(ptr, shm_id_map_[ptr].size);
-  shm_unlink(shm_id_map_[ptr].name);
+  // shm_unlink(shm_id_map_[ptr].name);
   close(shm_id_map_[ptr].id);
   FreePinMemory(ptr);
   shm_id_map_.erase(ptr);
@@ -185,15 +199,22 @@ CachingAllocator::~CachingAllocator() { FreeCached(); }
 
 extern "C" {
 void* TorchAllocate(size_t bytes) {
+  // LOG_DEBUG("TorchAllocate: size: {}", bytes);
   InitCachingAllocator(MemoryType::PIN_SHM);
   void* ptr = kCachingAllocator->Allocate(bytes);
   return ptr;
 }
 
 void TorchFree(void* ptr) {
+  // LOG_DEBUG("TorchFree: {:p}", ptr);
   InitCachingAllocator(MemoryType::PIN_SHM);
-  LOG_FATAL_IF(kCachingAllocator->IsAllocated(ptr) == false,
-               "Attempted to free unallocated memory");
   kCachingAllocator->Free(ptr);
+}
+
+void TorchFreeCtx(void* ctx) {
+  InitCachingAllocator(MemoryType::PIN_SHM);
+  TorchCtx* torch_ctx = static_cast<TorchCtx*>(ctx);
+  kCachingAllocator->Free(torch_ctx->ptr);
+  delete torch_ctx;
 }
 }

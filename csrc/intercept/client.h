@@ -1,27 +1,36 @@
 #pragma once
 
 #include <grpcpp/grpcpp.h>
-#include <torch/torch.h>
+// #include <torch/torch.h>
 
-#include "checkpoint/checkpoint_handle.h"
+#include "memory/caching_allocator.h"
 #include "morphling.grpc.pb.h"
 #include "morphling.pb.h"
+#include "utils/logger.h"
 #include "utils/noncopyable.h"
+
+#define SET_SHM_INFO_REPEAT(request, ptr)           \
+  do {                                              \
+    auto* info = request.add_##ptr##_info();        \
+    auto size = kCachingAllocator->GetShmSize(ptr); \
+    auto name = kCachingAllocator->GetShmName(ptr); \
+    info->set_size(size);                           \
+    info->set_name(name);                           \
+  } while (0);
 
 #define SET_SHM_INFO(request, ptr)                  \
   do {                                              \
-    morphling::ShmInfo info;                        \
+    auto* info = request.mutable_##ptr##_info();    \
     auto size = kCachingAllocator->GetShmSize(ptr); \
     auto name = kCachingAllocator->GetShmName(ptr); \
-    info.set_size(size);                            \
-    info.set_name(name);                            \
-    request.set_##ptr##_info(info);                 \
+    info->set_size(size);                           \
+    info->set_name(name);                           \
   } while (0);
 
 class MemoryManagerClient : public noncopyable {
  public:
-  MemoryManagerClient(std::shared_ptr<Channel> channel)
-      : stub_(MemoryManager::NewStub(channel)) {}
+  MemoryManagerClient(std::shared_ptr<grpc::Channel> channel)
+      : stub_(morphling::MemoryManager::NewStub(channel)) {}
 
   MemoryManagerClient() {
     char* server_address = std::getenv("MORPHLING_SERVER_ADDRESS");
@@ -29,13 +38,13 @@ class MemoryManagerClient : public noncopyable {
                  "MORPHLING_SERVER_ADDRESS is not set");
     auto channel =
         grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
-    stub_ = MemoryManager::NewStub(channel);
+    stub_ = morphling::MemoryManager::NewStub(channel);
   }
 
   ParamShmMap GetModelParam();
   void ScheduleGemmSync(void* a, void* b, void* c, void* task);
 
-  void SetTensorShm(torch::Tensor& tensor, const std::string& name);
+  // void SetTensorShm(torch::Tensor& tensor, const std::string& name);
 
  private:
   std::unique_ptr<morphling::MemoryManager::Stub> stub_;
@@ -53,6 +62,10 @@ static void InitMemoryManagerClient() {
                  "MORPHLING_SERVER_ADDRESS is not set");
     auto channel =
         grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
-    kMemoryManagerClient = std::make_unique<MemoryManagerClient>(channel);
+    LOG_WARN_IF(kMemoryManagerClient != nullptr,
+                "MemoryManagerClient is already initialized");
+    if (kMemoryManagerClient == nullptr) {
+      kMemoryManagerClient = std::make_unique<MemoryManagerClient>(channel);
+    }
   });
 }

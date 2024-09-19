@@ -26,6 +26,8 @@ void CheckpointHandle::ReadCheckpoint() {
   auto param_filename = GetFilePathByID(file_id);
   auto index_filename = prefix_ / std::string(ARCHER_IHDEX_NAME);
 
+  LOG_DEBUG("param_filename: {}", param_filename.c_str());
+
   // get param_filename file size
   struct stat st;
   if (stat(param_filename.c_str(), &st) == -1) {

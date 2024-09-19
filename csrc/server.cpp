@@ -90,7 +90,7 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
   MemoryManagerServer(const std::string& storage_path) {
     const char* size = std::getenv("MORPHLING_GPU_SIZE");
     LOG_FATAL_IF(size == nullptr, "MORPHLING_GPU_SIZE is not set");
-    bytes = std::stoull(size);
+    auto bytes = std::stoull(size);
 
     worker_pool_ = std::make_unique<GPUWorkerPool>(
         bytes, SchedulingPolicyType::kRoundRobinGemm);
@@ -98,16 +98,18 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
   Status ScheduleGemmSync(ServerContext* context,
                           const ScheduleGemmRequest* request,
                           ScheduleGemmResponse* response) override {
-    GemmArgs args = *OpenSharedMemory(request->task_info()->name(),
-                                      request->task_info()->size());
-    for (int i = 0; i < args.group_size; i++) {
+    GemmArgsPtr args = std::make_unique<GemmArgs>();
+    args.reset(reinterpret_cast<GemmArgs*>(OpenSharedMemory(
+        request->task_info().name().c_str(), request->task_info().size())));
+
+    for (int i = 0; i < args->group_size; i++) {
       // read from repeated fields a_info, b_info, c_info
-      args.a[i] = OpenSharedMemory(request->a_info(i).name(),
-                                   request->a_info(i).size());
-      args.b[i] = OpenSharedMemory(request->b_info(i).name(),
-                                   request->b_info(i).size());
-      args.c[i] = OpenSharedMemory(request->c_info(i).name(),
-                                   request->c_info(i).size());
+      args->a[i] = (float*)OpenSharedMemory(request->a_info(i).name().c_str(),
+                                            request->a_info(i).size());
+      args->b[i] = (float*)OpenSharedMemory(request->b_info(i).name().c_str(),
+                                            request->b_info(i).size());
+      args->c[i] = (float*)OpenSharedMemory(request->c_info(i).name().c_str(),
+                                            request->c_info(i).size());
     }
 
     return Status::OK;
@@ -138,11 +140,10 @@ void RunServer(const std::string& server_address,
 }
 
 int main(int argc, char** argv) {
-  google::ParseCommandLineFlags(&argc, &argv, true);
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
   // // parse command line arguments using standard c fashion
   // int opt;
   // char* path = NULL;
-
   // // getopt() is used to parse command-line options
   // while ((opt = getopt(argc, argv, "n:h")) != -1) {
   //   switch (opt) {

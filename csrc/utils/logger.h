@@ -53,6 +53,7 @@ extern void InitLogger();
 #define LOG_FATAL_IF(cond, ...) \
   if (cond) {                   \
     LOG_FATAL(__VA_ARGS__);     \
+    assert(false);              \
   }
 #define LOG_ERROR_IF(cond, ...) \
   if (cond) {                   \
@@ -67,19 +68,18 @@ extern void InitLogger();
     LOG_INFO(__VA_ARGS__);     \
   }
 
-#define CHECK_CUBLAS_ERROR(call)                       \
-  {                                                    \
-    cublasStatus_t err = (call);                       \
-    LOG_FATAL_IF(err != CUBLAS_STATUS_SUCCESS,         \
-                 "CUBLAS error: {}, message: {}", err, \
-                 cublasGetErrorString(err));           \
+#define CHECK_CUBLAS_ERROR(call)                                            \
+  {                                                                         \
+    cublasStatus_t err = (call);                                            \
+    LOG_FATAL_IF(err != CUBLAS_STATUS_SUCCESS, "CUBLAS error. message: {}", \
+                 cublasGetStatusString(err));                               \
   }
 
-#define CHECK_CUDA_ERROR(call)                                           \
-  {                                                                      \
-    cudaError_t err = (call);                                            \
-    LOG_FATAL_IF(err != cudaSuccess, "CUDA error: {}, message: {}", err, \
-                 cudaGetErrorString(err));                               \
+#define CHECK_CUDA_ERROR(call)                                  \
+  {                                                             \
+    cudaError_t err = (call);                                   \
+    LOG_FATAL_IF(err != cudaSuccess, "CUDA error. message: {}", \
+                 cudaGetErrorString(err));                      \
   }
 
 // #define LOG_DEBUG(...)                                      \

@@ -4,6 +4,19 @@
 #include "memory/caching_allocator.h"
 #include "utils/logger.h"
 
+extern "C" {
+
+typedef void (*sgemm_type)(const char*, const char*, const int*, const int*,
+                           const int*, const float*, const float*, const int*,
+                           const float*, const int*, const float*, float*,
+                           const int*);
+extern sgemm_type orig_sgemm;
+void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
+            const int* k, const float* alpha, const float* a, const int* lda,
+            const float* b, const int* ldb, const float* beta, float* c,
+            const int* ldc);
+}
+#if 0
 #define DECLARE_INTERCEPTOR_TYPE(name, T)                                     \
   typedef void (*name##_type)(const char*, const char*, const int*,           \
                               const int*, const int*, const float*, const T*, \
@@ -16,8 +29,52 @@
                const int* lda, const T* b, const int* ldb, const float* beta, \
                T* c, const int* ldc)
 
-enum class CPUDataType { kFloat, kHalf };
-enum class GPUDataType { kFloat, kHalf, kBFloat };
+#define DECLARE_INTERCEPTOR(name, T) \
+  DECLARE_INTERCEPTOR_TYPE(name, T); \
+  DECLARE_INTERCEPTOR_PTR(name);     \
+  DECLARE_INTERCEPTOR_FUNC(name, T);
+
+#define IMPL_INTERCEPTOR_PTR(name) name##_type orig_##name = NULL
+#define IMPL_INTERCEPTOR_FUNC(name, T, LIB)                                    \
+  void name##_(const char* transa, const char* transb, const int* m,           \
+               const int* n, const int* k, const float* alpha, const T* a,     \
+               const int* lda, const T* b, const int* ldb, const float* beta,  \
+               T* c, const int* ldc) {                                         \
+    if (!orig_##name) {                                                        \
+      void* handle_lib = dlopen(LIB, RTLD_LAZY);                               \
+      LOG_FATAL_IF(!handle_lib, "Error loading MKL library: {}", dlerror());   \
+      orig_##name = (name##_type)dlsym(handle_lib, #name "_");                 \
+      LOG_FATAL_IF(!orig_##name, "Error loading original " #name "_: {}",      \
+                   dlerror());                                                 \
+    }                                                                          \
+    LOG_DEBUG(                                                                 \
+        "Intercepted {}; args transa: {}, transb: {}, m: {}, n: {}, k: "       \
+        "{}, alpha: {}, lda: {}, ldb: {}, beta: {}, ldc: {}",                  \
+        #name, *transa, *transb, *m, *n, *k, *alpha, *lda, *ldb, *beta, *ldc); \
+    GemmArgs args = {.group_size = 1};                                         \
+    args.transa = *transa;                                                     \
+    args.transb = *transb;                                                     \
+    args.m = *m;                                                               \
+    args.n = *n;                                                               \
+    args.k = *k;                                                               \
+    args.alpha = *alpha;                                                       \
+    args.a = a;                                                                \
+    args.lda = *lda;                                                           \
+    args.b = b;                                                                \
+    args.ldb = *ldb;                                                           \
+    args.beta = *beta;                                                         \
+    args.c = c;                                                                \
+    args.ldc = *ldc;                                                           \
+    TaskExecution(args);                                                       \
+  }
+
+#define IMPL_INTERCEPTOR(name, T, LIB) \
+  IMPL_INTERCEPTOR_PTR(name);          \
+  IMPL_INTERCEPTOR_FUNC(name, T, LIB);
+#endif
+
+// enum class CPUDataType { kFloat, kHalf };
+// enum class GPUDataType { kFloat, kHalf, kBFloat };
 
 #define MAX_GEMM_DIM 5  // FIXME: very unlikely the dimension will exceed 5
 struct GemmArgs {
@@ -38,70 +95,17 @@ struct GemmArgs {
   int group_size;  // FIXME: we do not deal with group with different sizes
 };
 
-#define DECLARE_INTERCEPTOR(name, T) \
-  DECLARE_INTERCEPTOR_TYPE(name, T); \
-  DECLARE_INTERCEPTOR_PTR(name);     \
-  DECLARE_INTERCEPTOR_FUNC(name, T);
+typedef std::unique_ptr<GemmArgs> GemmArgsPtr;
 
-#define IMPL_INTERCEPTOR_PTR(name) name##_type orig_##name = NULL
-#define IMPL_INTERCEPTOR_FUNC(name, T, LIB)                                   \
-  void name##_(const char* transa, const char* transb, const int* m,          \
-               const int* n, const int* k, const float* alpha, const T* a,    \
-               const int* lda, const T* b, const int* ldb, const float* beta, \
-               T* c, const int* ldc) {                                        \
-    if (!orig_##name) {                                                       \
-      void* handle_lib = dlopen(LIB, RTLD_LAZY);                              \
-      LOG_FATAL_IF(!handle_lib, "Error loading MKL library: {}", dlerror());  \
-      orig_##name = (name##_type)dlsym(handle_lib, #name "_");                \
-      LOG_FATAL_IF(!orig_##name, "Error loading original " #name "_: {}",     \
-                   dlerror());                                                \
-    }                                                                         \
-    GemmArgs args = {.group_size = 1};                                        \
-    args.transa[0] = *transa;                                                 \
-    args.transb[0] = *transb;                                                 \
-    args.m[0] = *m;                                                           \
-    args.n[0] = *n;                                                           \
-    args.k[0] = *k;                                                           \
-    args.alpha[0] = *alpha;                                                   \
-    args.a[0] = a;                                                            \
-    args.lda[0] = *lda;                                                       \
-    args.b[0] = b;                                                            \
-    args.ldb[0] = *ldb;                                                       \
-    args.beta[0] = *beta;                                                     \
-    args.c[0] = c;                                                            \
-    args.ldc[0] = *ldc;                                                       \
-    TaskExecution(args);                                                      \
-  }
+std::tuple<size_t, size_t, size_t> CalculateTaskSizes(const GemmArgsPtr& args);
 
-#define IMPL_INTERCEPTOR(name, T, LIB) \
-  IMPL_INTERCEPTOR_PTR(name);          \
-  IMPL_INTERCEPTOR_FUNC(name, T, LIB);
+// bool CheckBufferOffloaded(const void* buffer, size_t size);
 
-std::tuple<size_t, size_t, size_t> CalculateTaskSizes(const GemmArgs& args) {
-  if (args.group_size == 1) {
-    auto size_a = (args.transa[0] == 'N' || args.transa[0] == 'n')
-                      ? args.lda[0] * args.k[0] * sizeof(float)
-                      : args.lda[0] * args.m[0] * sizeof(float);
-    auto size_b = (args.transb[0] == 'N' || args.transb[0] == 'n')
-                      ? args.ldb[0] * args.n[0] * sizeof(float)
-                      : args.ldb[0] * args.k[0] * sizeof(float);
-    auto size_c = args.ldc[0] * args.n[0] * sizeof(float);
-    return {size_a, size_b, size_c};
-  }
-  return {0, 0, 0};
-}
+void TaskExecution(const GemmArgsPtr& args);
 
-bool CheckBufferOffloaded(const void* buffer, size_t size);
-
-void TaskExecution(const GemmArgs& args) {
-  InitCachingAllocator(MemoryType::PIN_SHM);
-  void* task_buffer = kCachingAllocator->Allocate(task_size);
-  GemmArgs* buffer_args = reinterpret_cast<GemmArgs*>(buffer);
-  *buffer_args = args;
-  kMemoryManagerClient->ScheduleGemmAsync(args.a, args.b, args.c, task_buffer);
-}
-
-DECLARE_INTERCEPTOR(sgemm, float)
+// extern "C" {
+// DECLARE_INTERCEPTOR(sgemm, float)
+// }
 
 #if 0
 #include <cublas_v2.h>

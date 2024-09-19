@@ -1,6 +1,6 @@
 #pragma once
 
-#include <torch/torch.h>
+#include <cuda_runtime_api.h>
 
 #include <deque>
 #include <functional>
@@ -23,14 +23,20 @@ DEFINE_ENUM_CLASS(MemoryType, MEMORY_TYPE_VALUES)
 class CachingAllocator;
 extern std::unique_ptr<CachingAllocator> kCachingAllocator;
 
+struct TorchCtx {
+  void* ptr;
+  size_t size;
+};
+
 extern "C" {
 void* TorchAllocate(size_t bytes);
 void TorchFree(void* ptr);
+void TorchFreeCtx(void* ctx);
 }
 
 // the caching allocator that supports CPU and CUDA memory
 // work as an offset manager for the memory pool
-class CachingAllocator : public torch::Allocator {
+class CachingAllocator : public noncopyable {
  public:
   struct ShmMeta {
     int id;
@@ -84,22 +90,6 @@ class CachingAllocator : public torch::Allocator {
   size_t GetAllocatedBytes() const { return allocated_bytes_; }
   size_t GetUsedBytes() const { return used_bytes_; }
 
-  // For Torch Interface
-  torch::DataPtr allocate(size_t n) override {
-    void* data = Allocate(n);
-    return {data, data, &TorchFree,
-            torch::DeviceType::CPU};  // Use free() for deallocation
-  }
-
-  void copy_data(void* dest, const void* src, size_t count) const override {
-    default_copy_data(dest, src, count);
-  }
-
-  // // Optional: Handle deallocation (if needed)
-  // void deallocate(void* ptr) override {
-  //   Free(ptr);  // Custom deallocation logic
-  // }
-
  private:
   void* AllocateAndCache(const size_t bytes);
   void FreeCached();
@@ -120,7 +110,7 @@ class CachingAllocator : public torch::Allocator {
  protected:
   int device_id_;
   MemoryType type_;
-  size_t max_bytes_;
+  const size_t max_bytes_;
   size_t allocated_bytes_;
   size_t used_bytes_;
 
@@ -131,9 +121,10 @@ class CachingAllocator : public torch::Allocator {
 };
 
 static void InitCachingAllocator(MemoryType type, int device_id = -1) {
-  static std::once_flag flag;
-  std::call_once(flag, [&]() {
+  static std::once_flag kInitCachingAllocatorFlag;
+  std::call_once(kInitCachingAllocatorFlag, [&]() {
     size_t bytes = 0;
+    LOG_DEBUG("InitCachingAllocator: type: {}, device_id: {}", type, device_id);
     if (type == MemoryType::CUDA) {
       LOG_FATAL_IF(device_id < 0, "Invalid device id");
       // Get environment variable MORPHLING_SHM_SIZE
@@ -152,20 +143,14 @@ static void InitCachingAllocator(MemoryType type, int device_id = -1) {
     } else {
       LOG_FATAL("Unknown memory type");
     }
-    kCachingAllocator =
-        std::make_unique<CachingAllocator>(bytes, type, device_id);
-    LOG_INFO("Caching allocator initialized with {}GB, type: {}", bytes / GB,
-             type);
+    LOG_WARN_IF(kCachingAllocator != nullptr,
+                "Caching allocator is already initialized");
+
+    if (kCachingAllocator == nullptr) {
+      kCachingAllocator =
+          std::make_unique<CachingAllocator>(bytes, type, device_id);
+      LOG_INFO("Caching allocator initialized with {}GB, type: {}", bytes / GB,
+               type);
+    }
   });
 }
-
-class ReplaceTorchAllocatorOnLoad {
- public:
-  ReplaceTorchAllocatorOnLoad() {
-    InitCachingAllocator(MemoryType::PIN_SHM);
-    torch::SetAllocator(torch::DeviceType::CPU, kCachingAllocator.get());
-  }
-};
-
-// Create a static instance of this class
-static ReplaceTorchAllocatorOnLoad kReplaceTorchAllocatorOnLoad;

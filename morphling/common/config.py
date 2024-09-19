@@ -185,6 +185,14 @@ class EmulatorConfig:
         default="checkpoints",
         metadata={"help": "The path to save the emulator model checkpoints"},
     )
+    listen_port: int = field(
+        default=50051,
+        metadata={"help": "The port to listen to the incoming requests"},
+    )
+    listen_addr: str = field(
+        default="localhost",
+        metadata={"help": "The address to listen to the incoming requests"},
+    )
 
     def __post_init__(self):
         if self.gpu_memory < 0 or self.gpu_memory > 1:

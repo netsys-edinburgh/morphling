@@ -1,40 +1,45 @@
 #include "gpu_worker.h"
 
-#include <cublas_v2.h>
-#include <cuda_runtime_api.h>
-
 #include "utils/logger.h"
 
-void GPUWorker::RunCublasGemm(const GemmArgs& args) {
+void GPUWorker::RunCublasGemm(const GemmArgsPtr& args) {
   cublasHandle_t handle;
   CHECK_CUBLAS_ERROR(cublasCreate(&handle));
 
   CHECK_CUBLAS_ERROR(cublasSetMathMode(handle, CUBLAS_DEFAULT_MATH));
+  if (args->group_size > 1) {
+    LOG_FATAL("Grouped gemm not supported yet");
+  }
 
   // allocate device memory for matrices A, B, and C
   auto [size_a, size_b, size_c] = CalculateTaskSizes(args);
-  void* d_A = allocator_.Allocate(size_a);
-  void* d_B = allocator_.Allocate(size_b);
-  void* d_C = allocator_.Allocate(size_c);
+  auto* d_A = (float*)allocator_->Allocate(size_a);
+  auto* d_B = (float*)allocator_->Allocate(size_b);
+  auto* d_C = (float*)allocator_->Allocate(size_c);
 
   // validate leading dimensions
-  CUDA_MEMCPY_LOOP(transa, d_A, task.a, lda, m, k, cudaMemcpyHostToDevice);
-  CUDA_MEMCPY_LOOP(transb, d_B, task.b, ldb, n, k, cudaMemcpyHostToDevice);
+  CUDA_MEMCPY_LOOP(*args->transa, d_A, *args->a, *args->lda, *args->m, *args->k,
+                   cudaMemcpyHostToDevice);
+  CUDA_MEMCPY_LOOP(*args->transb, d_B, *args->b, *args->ldb, *args->n, *args->k,
+                   cudaMemcpyHostToDevice);
 
   // Set cuBLAS operation modes
-  cublasOperation_t transa =
-      (task.transa == 'N' || task.transa == 'n') ? CUBLAS_OP_N : CUBLAS_OP_T;
-  cublasOperation_t transb =
-      (task.transb == 'N' || task.transb == 'n') ? CUBLAS_OP_N : CUBLAS_OP_T;
+  cublasOperation_t transa = (*args->transa == 'N' || *args->transa == 'n')
+                                 ? CUBLAS_OP_N
+                                 : CUBLAS_OP_T;
+  cublasOperation_t transb = (*args->transb == 'N' || *args->transb == 'n')
+                                 ? CUBLAS_OP_N
+                                 : CUBLAS_OP_T;
 
   // Perform matrix multiplication
-  CHECK_CUBLAS_ERROR(cublasSgemm_v2(handle, transa, transb, task.m, task.n,
-                                    task.k, &task.alpha, d_A, task.lda, d_B,
-                                    task.ldb, &task.beta, d_C, task.ldc));
-  CUDA_MEMCPY_LOOP('N', task.c, d_C, ldc, m, n, cudaMemcpyDeviceToHost);
+  CHECK_CUBLAS_ERROR(cublasSgemm_v2(handle, transa, transb, *args->m, *args->n,
+                                    *args->k, args->alpha, d_A, *args->lda, d_B,
+                                    *args->ldb, args->beta, d_C, *args->ldc));
+  CUDA_MEMCPY_LOOP('N', *args->c, d_C, *args->ldc, *args->m, *args->n,
+                   cudaMemcpyDeviceToHost);
 }
 
-void GPUWorker::EnqueueGemm(const GemmArgs& args) {
+void GPUWorker::EnqueueGemm(const GemmArgsPtr& args) {
   {
     std::lock_guard<std::mutex> guard(mutex_);
     auto func = std::bind(&GPUWorker::RunCublasGemm, this, std::cref(args));
@@ -60,8 +65,7 @@ void GPUWorker::Run() {
 }
 
 GPUWorker::GPUWorker(int gpu_id, size_t size)
-    : buffer_(nullptr),
-      gpu_id_(gpu_id),
+    : gpu_id_(gpu_id),
       buffer_size_(size),
       in_stream_(nullptr),
       out_stream_(nullptr),
@@ -104,8 +108,7 @@ GPUWorkerPool::~GPUWorkerPool() {
   }
 }
 
-void GPUWorkerPool::EnqueueGemmWithPolicy(const GemmArgs& args) {
-  auto [gpu_id, priority] =
-      scheduler_->Schedule(reinterpret_cast<void*>(&args));
+void GPUWorkerPool::EnqueueGemmWithPolicy(const GemmArgsPtr& args) {
+  auto [gpu_id, priority] = scheduler_->Schedule(args.get());
   workers_[gpu_id]->EnqueueGemm(args);
 }
