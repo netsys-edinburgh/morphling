@@ -21,7 +21,8 @@
 # find_package(Threads REQUIRED)
 # find_package(GTest REQUIRED)
 find_package(OpenMP REQUIRED)
-find_package(MKL REQUIRED)
+
+# find_package(MKL REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 find_package(MPI REQUIRED)
 
@@ -29,7 +30,6 @@ set(CMAKE_SKIP_RPATH ON)
 
 # find all files in the directory match with "test_*"
 file(GLOB TEST_SOURCES "test_*.cpp")
-file(GLOB PROJECT_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../csrc/memory/*.cpp")
 
 # # print CMAKE_ROOT_DIR, CMAKE_CURRENT_SOURCE_DIR
 # message(STATUS "CMAKE_ROOT_DIR: ${CMAKE_ROOT_DIR}")
@@ -48,10 +48,11 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -march=znver3 -O3 -D__AVX256__=1 
 # link_directories(${CONDA_PREFIX_PATH}/lib)
 # set(CMAKE_BUILD_RPATH "/mnt/data/xly/.conda/envs/edgeml/lib:/usr/local/cuda-12.2/targets/x86_64-linux/lib")
 # set(CMAKE_INSTALL_RPATH "/mnt/data/xly/.conda/envs/edgeml/lib:/usr/local/cuda-12.2/targets/x86_64-linux/lib")
-
 include_directories(
     ${UMPIRE_INCLUDE_DIRS}
     ${EXTERNAL_DIR}/umpire/src/tpl/umpire/camp/include
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../csrc
     # ${EXTERNAL_DIR}/umpire/src/tpl/umpire/camp/src/errors.cpp
     ${EXTERNAL_DIR}/umpire/src/tpl
     ${EXTERNAL_DIR}/umpire/build/src/tpl/umpire/camp/include
@@ -62,36 +63,53 @@ link_directories(
 )
 
 # foreach(TEST_SOURCE ${TEST_SOURCES})
-#     get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
-#     add_executable(${TEST_NAME} ${TEST_SOURCE} ${PROJECT_SOURCES})
-#     target_include_directories(${TEST_NAME} PRIVATE
-#         ${CMAKE_CURRENT_SOURCE_DIR}/../..
-#         ${TORCH_INCLUDE_DIRS}
-#         ${MKL_INCLUDE_DIRS}
-#         ${CONDA_PREFIX_PATH}/include
-#         # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/nvidia/cublas/include/
-#         # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/nvidia/cuda_runtime/include/
-#         # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/triton/backends/nvidia/include/
-#         # /usr/local/cuda/include/
-#         ${CMAKE_INCLUDE_PATH}
-#         ${MPI_INCLUDE_PATH}
-#     )
-#     target_link_libraries(${TEST_NAME}
-#         umpire
-#         ${TORCH_LIBRARIES}
-#         pthread numa
-#         CUDA::cublas CUDA::cudart MKL::MKL OpenMP::OpenMP_CXX
-#         ${MPI_LIBRARIES}
-#     )
-#     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+# get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
+# add_executable(${TEST_NAME} ${TEST_SOURCE} ${PROJECT_SOURCES})
+# target_include_directories(${TEST_NAME} PRIVATE
+# ${CMAKE_CURRENT_SOURCE_DIR}/../..
+# ${TORCH_INCLUDE_DIRS}
+# ${MKL_INCLUDE_DIRS}
+# ${CONDA_PREFIX_PATH}/include
+# # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/nvidia/cublas/include/
+# # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/nvidia/cuda_runtime/include/
+# # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/triton/backends/nvidia/include/
+# # /usr/local/cuda/include/
+# ${CMAKE_INCLUDE_PATH}
+# ${MPI_INCLUDE_PATH}
+# )
+# target_link_libraries(${TEST_NAME}
+# umpire
+# ${TORCH_LIBRARIES}
+# pthread numa
+# CUDA::cublas CUDA::cudart MKL::MKL OpenMP::OpenMP_CXX
+# ${MPI_LIBRARIES}
+# )
+# add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 # endforeach(TEST_SOURCE)
 
-message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
-add_executable(test_umpire_mempool test_umpire_mempool.cpp)
-target_include_directories(test_umpire_mempool PRIVATE
+message(STATUS "CMAKE_CURRENT_SOURCE_DIR: ${CMAKE_CURRENT_SOURCE_DIR}")
+add_executable(test_shared_pin_memory test_shared_pin_memory.cpp ${MEMORY_SRC} ${UTILS_SRC})
+target_include_directories(test_shared_pin_memory PRIVATE
     ${CUDA_INCLUDE_DIRS}
+    ${TORCH_INCLUDE_DIRS}
 )
-target_link_libraries(test_umpire_mempool
-    umpire numa ${MPI_LIBRARIES}
-    MKL::MKL CUDA::cublas CUDA::cudart
+target_link_libraries(test_shared_pin_memory
+    CUDA::cublas CUDA::cudart uuid ${TORCH_LIBRARIES}
+)
+add_test(NAME test_shared_pin_memory COMMAND test_shared_pin_memory)
+set_target_properties(test_shared_pin_memory PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+
+add_executable(test_memcpy_bw test_memcpy_bw.cpp ${MEMORY_SRC}  ${UTILS_SRC})
+target_include_directories(test_shared_pin_memory PRIVATE
+    ${CUDA_INCLUDE_DIRS}
+    ${TORCH_INCLUDE_DIRS}
+)
+target_link_libraries(test_memcpy_bw
+    CUDA::cublas CUDA::cudart uuid numa ${TORCH_LIBRARIES}
+)
+add_test(NAME test_memcpy_bw COMMAND test_memcpy_bw)
+set_target_properties(test_memcpy_bw PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
 )

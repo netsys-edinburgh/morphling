@@ -211,7 +211,6 @@ class GeLUFunction(torch.autograd.Function):
 
         return grad_input
 
-
 # custom autograd function for dropout
 class DropoutFunction(torch.autograd.Function):
     @staticmethod
