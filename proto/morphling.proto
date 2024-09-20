@@ -3,31 +3,42 @@ syntax = "proto3";
 package morphling;
 
 service MemoryManager {
-    rpc LoadParamAsync (LoadParamRequest) returns (LoadParamResponse) {}
-    rpc ConfirmParamLoaded (LoadParamRequest) returns (LoadParamResponse) {}
-    rpc RegisterModel (RegisterModelRequest) returns (RegisterModelResponse) {}
+    rpc ScheduleGemmSync (ScheduleGemmRequest) returns (ScheduleGemmResponse) {}
+    rpc GetModelParam (ModelParamRequest) returns (ModelParamResponse) {}
 }
-
-
 
 message Response {
     string message = 1;
     uint32 code = 2;
 }
 
-message RegisterModelRequest {
-    string ckpt_path = 1;
+message ShmInfo {
+    string name = 1;
+    uint64 size = 2;
 }
 
-message RegisterModelResponse {
-    Response response = 1;
+message ScheduleGemmRequest {
+    string task_id = 1;
+    repeated ShmInfo a_info = 2;
+    repeated ShmInfo b_info = 3;
+    repeated ShmInfo c_info = 4;
+    ShmInfo task_info = 5;
 }
 
-message LoadParamRequest {
-    uint32 param_id = 1;
-    uint32 device_id = 2;
+message ScheduleGemmResponse {
+    Response rsp = 1;
 }
 
-message LoadParamResponse {
-    Response response = 1;
+message ModelParamRequest {
+}
+
+message ParamInfo {
+    string param_name = 1;
+    string shm_name = 2;
+    uint64 size = 3;
+}
+
+message ModelParamResponse {
+    Response rsp = 1;
+    repeated ParamInfo param_info = 2;
 }

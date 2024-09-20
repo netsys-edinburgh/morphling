@@ -14,8 +14,8 @@ from safetensors import safe_open
 from tqdm import tqdm
 from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
-from morphling._C import tensor_handle
-from morphling.common import EmulatorConfig
+from morphling._C import ArcherTensorHandle, MemoryManagerClient
+from morphling.common import *
 from morphling.utils import get_checkpoint_paths
 
 
@@ -24,70 +24,6 @@ class EmulationEngine(object):
     request_id = 0
     # request_id_flag = False
     config = {}
-
-    @staticmethod
-    def find_tensor_same_size(
-        param_meta_map: Dict[str, dict], size: int
-    ) -> Tuple[int, int]:
-        names_of_size = [
-            name for name, param in param_meta_map.items() if param["size"] == size
-        ]
-        ids_of_size = [param_meta_map[name]["id"] for name in names_of_size]
-        ids_of_size = np.array(ids_of_size, dtype=np.uint32)
-        return ids_of_size
-
-    @staticmethod
-    def compute_shm_offsets(
-        param_meta_map: Dict[str, dict]
-    ) -> Tuple[int, Dict[str, int]]:
-        unique_sizes_counter = Counter(
-            [param["size"] for param in param_meta_map.values()]
-        )
-        shm_mem_size = sum(
-            [size + 4 * count for size, count in unique_sizes_counter.items()]
-        )
-
-        shm_mem_size_cum = np.cumsum(
-            [size + 4 * count for size, count in unique_sizes_counter.items()]
-        )
-        shm_mem_size_cum = shm_mem_size_cum - shm_mem_size_cum[0]
-        shm_mem_offsets = dict(zip(unique_sizes_counter.keys(), shm_mem_size_cum))
-        shm_mem_offsets = {k: int(v) for k, v in shm_mem_offsets.items()}
-
-        return shm_mem_size, shm_mem_offsets
-
-    @staticmethod
-    def compute_pin_offsets(
-        param_meta_map: Dict[str, dict]
-    ) -> Tuple[int, Dict[str, int]]:
-        pin_mem_size = sum(
-            [meta["size"] for _, meta in param_meta_map.items()]
-        )
-        offset = 0
-        pin_mem_offsets = {}
-        for name, meta in param_meta_map.items():
-            pin_mem_offsets[name] = offset
-            offset += meta["size"]
-        return pin_mem_size, pin_mem_offsets
-
-    @staticmethod
-    def update_shm_offsets(
-        param_meta_map: Dict[str, dict]
-    ) -> Tuple[int, Dict[str, int]]:
-        _, shm_mem_offsets = EmulationEngine.compute_shm_offsets(param_meta_map)
-        unique_sizes_counter = Counter(
-            [param["size"] for param in param_meta_map.values()]
-        )
-        for size, count in unique_sizes_counter.items():
-            # find all tensor name and id with the same size
-            names_of_size = [
-                name for name, param in param_meta_map.items() if param["size"] == size
-            ]
-
-            for i, name in enumerate(names_of_size):
-                param_meta_map[name]["shm_offset"] = shm_mem_offsets[size] + i * 4
-
-        return param_meta_map
 
     def __init__(self, config: PretrainedConfig):
 
@@ -134,7 +70,7 @@ class EmulationEngine(object):
         os.makedirs(self.checkpoint, exist_ok=True)
 
         self.emulator_config = config
-        self.tensor_handle = tensor_handle(config.ckpt_path)
+        self.ArcherTensorHandle = ArcherTensorHandle(config.ckpt_path)
 
         return self
 
@@ -270,7 +206,7 @@ class EmulationEngine(object):
                 self.dtype_cls = self.config.torch_dtype
 
                 if (
-                    not self.tensor_handle.is_tensor_index_initialized()
+                    not self.ArcherTensorHandle.is_tensor_index_initialized()
                     or not os.path.exists(param_meta_map_file)
                 ):
                     print(
@@ -303,7 +239,7 @@ class EmulationEngine(object):
                         gc.collect()
                         torch.cuda.empty_cache()
 
-                    EmulationEngine.update_shm_offsets(self.param_meta_map)
+                    # update_shm_offsets(self.param_meta_map)
 
                     with open(param_meta_map_file, "w") as f:
                         json.dump(self.param_meta_map, f)
@@ -340,6 +276,15 @@ class EmulationEngine(object):
                             ]
                             self.param_meta_map.pop(name_without_prefix)
                     param.ar_id = self.param_meta_map.get(name, None)
+
+
+                self.client = MemoryManagerClient()
+                param_shm_map = self.client.get_model_param()
+
+                for name, param in model.named_parameters(recurse=True):
+                    if name not in param_shm_map:
+                        continue
+                    self.client.set_tensor_shm(param.data, name)
 
                 return model
 
@@ -400,19 +345,22 @@ class EmulationEngine(object):
                 param = state_dict[param_name]
                 param_id = self._generate_param_id()
 
-                file_offset = self.tensor_handle.offload_tensor(param, param_id)
+                file_offset = self.ArcherTensorHandle.offload_tensor(param, param_id)
 
                 self.param_meta_map[param_name] = {
                     "id": param_id,
                     "size": param.numel() * param.element_size(),
-                    "shm_offset": -1,
+                    # "shm_offset": -1,
                     "file_offset": file_offset,
                     "shape": tuple(param.shape),
                     "stride": tuple(param.stride()),
                     "dtype": str(param.dtype),
                 }
 
-            # if not self.tensor_handle.is_tensor_offloaded(self.param_meta_map[param_name]["id"]):
+            # if not self.ArcherTensorHandle.is_tensor_offloaded(self.param_meta_map[param_name]["id"]):
 
         gc.collect()
         torch.cuda.empty_cache()
+
+
+

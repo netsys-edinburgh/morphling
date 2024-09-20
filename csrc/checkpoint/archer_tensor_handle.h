@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include <torch/extension.h>
+#include <torch/torch.h>
 
 #include "archer_prio_aio_handle.h"
 #include "archer_tensor_index.h"

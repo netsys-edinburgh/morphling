@@ -10,7 +10,7 @@
 #include <iostream>
 #include <vector>
 
-#include "csrc/memory/simd_copy.cpp"
+#include "memory/simd_copy.cpp"
 
 #define MEM_SIZE 1024ULL * 1024 * 1024 * 4
 

@@ -6,6 +6,7 @@ import io
 import os
 import subprocess
 import sys
+from distutils.command.build import build as _build
 from pathlib import Path
 from typing import Dict
 
@@ -100,6 +101,7 @@ class CMakeExtension(Extension):
     def __init__(self, name: str, cmake_lists_dir: str = ".", **kwa) -> None:
         super().__init__(name, sources=[], **kwa)
         self.cmake_lists_dir = os.path.abspath(cmake_lists_dir)
+        self.target_type = kwa.get('target_type', 'shared')
 
 
 # Adapted from https://github.com/vllm-project/vllm/blob/a1242324c99ff8b1e29981006dfb504da198c7c3/setup.py
@@ -141,10 +143,28 @@ class cmake_build_ext(build_ext):
             # Default build tool to whatever cmake picks.
             build_tool = []
 
+        if 'TEST' in os.environ and os.environ['TEST'] == '1':
+            cmake_args.append('-DBUILD_TESTS=ON')
+        else:
+            cmake_args.append('-DBUILD_TESTS=OFF')
+
         subprocess.check_call(
             ["cmake", ext.cmake_lists_dir, *build_tool, *cmake_args],
             cwd=self.build_temp,
         )
+
+        if 'TEST' in os.environ and os.environ['TEST'] == '1':
+            # get folder names under self.build_temp/test/cpp/CmakeFiles
+            # and pass them to ninja
+            test_folder = os.path.join(self.build_temp, 'tests', "cpp")
+
+            with open(os.path.join(test_folder, 'CTestTestfile.cmake'), 'r') as f:
+                content = f.readlines()
+                for line in content:
+                    if 'add_test(' in line:
+                        # add_test([=[test_shared_pin_memory]=], get test_shared_pin_memory
+                        test_name = line.strip().split('add_test([=[')[-1].split(']=]')[0]
+                        subprocess.check_call(['ninja', '-C', self.build_temp, test_name])
 
     def build_extensions(self) -> None:
         # Ensure that CMake is present and working
@@ -169,12 +189,23 @@ class cmake_build_ext(build_ext):
                 ".",
                 "--target",
                 ext_target_name,
-                "-j",
-                # str(num_jobs)
+                "-j", str(num_jobs),
             ]
 
             subprocess.check_call(["cmake", *build_args], cwd=self.build_temp)
             print(self.build_temp, ext_target_name)
+
+    def get_ext_filename(self, ext_name):
+        """
+        Override to manage both shared libraries (.so) and executables.
+        """
+        for ext in self.extensions:
+            if ext.name == ext_name and ext.target_type == 'executable':
+                # For executables, return the name directly without suffixes
+                ext_target_name = ext_name.replace(".", "/") #TODO: fix this
+                return ext_target_name
+        # Default behavior for shared libraries
+        return super().get_ext_filename(ext_name)
 
 
 class BuildPackageProtos(Command):
@@ -214,6 +245,7 @@ class CustomInstall(install):
     def run(self):
         self.run_command("build_ext")
         self.run_command("build_package_protos")
+
         super().run()
 
 class CustomBuild(sdist):
@@ -231,7 +263,6 @@ class CustomBdistWheel(bdist_wheel):
         self.run_command("build_package_protos")
         super().run()
 
-
 cmdclass = {
     "build_ext": cmake_build_ext,
     "build_package_protos": BuildPackageProtos,
@@ -244,11 +275,13 @@ setup(
     name="morphling",
     version="0.0.1",
     ext_modules=[
-        CMakeExtension(name="morphling._C"),
+        CMakeExtension(name="morphling._C", target_type='shared'),
+        CMakeExtension(name="morphling.morphling_server", target_type='executable'),
     ],
     entry_points={
         "console_scripts": [
-            "emulator=morphling.entrypoint.emulator:main",
+            "morphling_emulator=morphling.entrypoint.emulator:main",
+            "morphling_device_config=morphling.entrypoint.generate_device_config:main",
         ],
     },
     install_requires=install_requires,
@@ -257,7 +290,7 @@ setup(
     extras_require=extras,
     packages=find_packages(),
     package_data={
-        "morphling": ["py.typed", "*.so"],
+        "morphling": ["py.typed", "*.so", "morphling_server"],
     },
     include_package_data=True,
     cmdclass=cmdclass,
