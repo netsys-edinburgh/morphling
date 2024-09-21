@@ -33,7 +33,7 @@ struct TorchCachingAllocator : public torch::Allocator {
 class ReplaceTorchAllocatorOnLoad {
  public:
   ReplaceTorchAllocatorOnLoad() {
-    // InitCachingAllocator(MemoryType::PIN_SHM);
+    InitCachingAllocator(MemoryType::PIN_SHM);
     torch_caching_allocator_ = new TorchCachingAllocator();
     LOG_DEBUG("Replace torch allocator with caching allocator");
     torch::SetAllocator(torch::DeviceType::CPU, torch_caching_allocator_);

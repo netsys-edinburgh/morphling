@@ -249,6 +249,7 @@ file(GLOB MEMORY_SRC "csrc/memory/*.cpp")
 file(GLOB UTILS_SRC "csrc/utils/*.cpp")
 file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
 file(GLOB SCHEDULER_SRC "csrc/scheduler/*.cpp")
+file(GLOB PYTHON_SRC "csrc/python/*.cpp")
 
 add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
 target_link_libraries(morphling_interceptor PUBLIC
@@ -267,10 +268,10 @@ target_include_directories(morphling_interceptor PUBLIC "csrc" ${CUDA_INCLUDE_DI
 message(STATUS "rttr_SOURCE_DIR: ${rttr_SOURCE_DIR}")
 message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
 
-add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs} ${SCHEDULER_SRC} ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC})
+add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs} ${SCHEDULER_SRC} ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC})
 add_dependencies(morphling_server generate_proto_files)
 target_link_libraries(morphling_server PRIVATE
-  gflags::gflags
+  gflags::gflags fmt
   ${_PROTOBUF_LIBPROTOBUF}
   grpc++ grpc++_reflection
   libspdlog.so
@@ -311,11 +312,11 @@ set(MORPHLING_EXT_SRC
   ${UTILS_SRC}
   ${hw_proto_srcs}
   ${hw_grpc_srcs}
-  "csrc/python/checkpoint_py.cpp"
+  ${PYTHON_SRC}
 )
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
-  uuid Threads::Threads
+  uuid Threads::Threads fmt
   libspdlog.so rttr_core
   grpc++ grpc++_reflection
   morphling_interceptor

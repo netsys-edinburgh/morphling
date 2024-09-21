@@ -14,7 +14,8 @@ from safetensors import safe_open
 from tqdm import tqdm
 from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
-from morphling._C import ArcherTensorHandle, MemoryManagerClient
+from morphling._C import (ArcherTensorHandle, MemoryManagerClient,
+                          set_tensor_shm)
 from morphling.common import *
 from morphling.utils import get_checkpoint_paths
 
@@ -280,11 +281,14 @@ class EmulationEngine(object):
 
                 self.client = MemoryManagerClient()
                 param_shm_map = self.client.get_model_param()
+                print(f"param_shm_map: {param_shm_map}")
 
                 for name, param in model.named_parameters(recurse=True):
                     if name not in param_shm_map:
+                        print(f"param {name} not found in param_shm_map")
                         continue
-                    self.client.set_tensor_shm(param.data, name)
+                    shm_name, shm_size = param_shm_map[name]
+                    set_tensor_shm(param.data, shm_name, shm_size)
 
                 return model
 

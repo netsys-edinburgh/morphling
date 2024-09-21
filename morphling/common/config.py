@@ -9,6 +9,10 @@ from transformers import HfArgumentParser
 
 from morphling.common.types_and_defs import *
 
+KB = 1024
+MB = 1024 * KB
+GB = 1024 * MB
+
 SYMBOLS = {
     "customary": ("B", "K", "M", "G", "T", "P", "E", "Z", "Y"),
     "customary_ext": (
@@ -173,13 +177,13 @@ class DeviceConfig:
 
 @dataclass
 class EmulatorConfig:
-    gpu_memory: Union[int, float] = field(
-        default=0.9,
-        metadata={"help": "Can be a float in the range [0, 1] or an integer in GB"},
+    gpu_memory: int = field(
+        default=10,
+        metadata={"help": "an integer in GB"},
     )
-    cpu_memory: Union[int, float] = field(
-        default=0.5,
-        metadata={"help": "Can be a float in the range [0, 1] or an integer in GB"},
+    cpu_memory: int = field(
+        default=20,
+        metadata={"help": "an integer in GB"},
     )
     ckpt_path: str = field(
         default="checkpoints",
@@ -189,35 +193,38 @@ class EmulatorConfig:
         default=50051,
         metadata={"help": "The port to listen to the incoming requests"},
     )
-    listen_addr: str = field(
+    listen_ip: str = field(
         default="localhost",
         metadata={"help": "The address to listen to the incoming requests"},
     )
+    debug: bool = field(
+        default=False,
+        metadata={"help": "Enable debug mode"},
+    )
 
     def __post_init__(self):
-        if self.gpu_memory < 0 or self.gpu_memory > 1:
-            raise ValueError("gpu_memory should be a float in the range [0, 1]")
-        if self.cpu_memory < 0 or self.cpu_memory > 1:
-            raise ValueError("cpu_memory should be a float in the range [0, 1]")
 
-        total_gpu_memory = int(
-            torch.cuda.get_device_properties(0).total_memory / 1024**3
-        )
-        total_cpu_memory = int(psutil.virtual_memory().total / 1024**3)
+        # total_gpu_memory = int(
+        #     torch.cuda.get_device_properties(0).total_memory / 1024**3
+        # )
+        # total_cpu_memory = int(psutil.virtual_memory().total / 1024**3)
 
-        if isinstance(self.gpu_memory, float):
-            self.gpu_memory = int(total_gpu_memory * self.gpu_memory)
+        # if isinstance(self.gpu_memory, float):
+        #     self.gpu_memory = int(total_gpu_memory * self.gpu_memory)
 
-        if isinstance(self.cpu_memory, float):
-            self.cpu_memory = int(total_cpu_memory * self.cpu_memory)
+        # if isinstance(self.cpu_memory, float):
+        #     self.cpu_memory = int(total_cpu_memory * self.cpu_memory)
 
-        if self.gpu_memory > total_gpu_memory:
-            raise ValueError(f"gpu_memory should not exceed {total_gpu_memory} GB")
-        if self.cpu_memory > total_cpu_memory:
-            raise ValueError(f"cpu_memory should not exceed {total_cpu_memory} GB")
+        # if self.gpu_memory > total_gpu_memory:
+        #     raise ValueError(f"gpu_memory should not exceed {total_gpu_memory} GB")
+        # if self.cpu_memory > total_cpu_memory:
+        #     raise ValueError(f"cpu_memory should not exceed {total_cpu_memory} GB")
+
+        self.gpu_memory *= GB
+        self.cpu_memory *= GB
 
         os.environ["MORPHLING_CKPT_PATH"] = self.ckpt_path
-        os.environ["MORPHLING_GPU_SIZE"] = self.gpu_memory
+        os.environ["MORPHLING_GPU_SIZE"] = str(self.gpu_memory)
 
         param_meta_map_file = os.path.join(self.ckpt_path, "param_meta_map.json")
 
@@ -227,8 +234,8 @@ class EmulatorConfig:
         shm_mem_size, shm_mem_offsets = compute_shm_offsets(param_meta_map)
         pin_mem_size, pin_mem_offsets = compute_pin_offsets(param_meta_map)
 
-        os.environ["MORPHLING_PIN_SIZE"] = pin_mem_size
-        os.environ["MORPHLING_SHM_SIZE"] = self.cpu_memory - pin_mem_size
+        os.environ["MORPHLING_PIN_SIZE"] = str(pin_mem_size)
+        os.environ["MORPHLING_SHM_SIZE"] = str(self.cpu_memory - pin_mem_size)
 
         assert (
             self.cpu_memory > pin_mem_size
