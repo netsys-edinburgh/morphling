@@ -6,13 +6,18 @@
 #include "common/types_and_defs.h"
 #include "utils/json_reader.h"
 #include "utils/logger.h"
+#include "utils/progress_bar.h"
 
 CheckpointHandle::CheckpointHandle(const std::filesystem::path& prefix)
     : prefix_(prefix), prio_aio_handle_(prefix), allocator_(nullptr) {
+  InitCachingAllocator(MemoryType::PIN_SHM);
   buffer_ = nullptr;
   auto param_meta_map_file = prefix / PARAM_META_FILE;
-  auto json_reader = JsonReader<ParamMeta>(prefix.string());
+  auto json_reader = JsonReader<ParamMeta>(param_meta_map_file.string());
   param_meta_map_ = json_reader.ParseIntoMap();
+
+  LOG_DEBUG("param_meta_map_file: {}, size {}", param_meta_map_file.c_str(),
+            param_meta_map_.size());
 }
 
 std::filesystem::path CheckpointHandle::GetFilePathByID(
@@ -37,17 +42,17 @@ void CheckpointHandle::ReadCheckpoint() {
 
   auto [pin_mem_size, pin_mem_offsets] = ComputePinOffsets();
 
-  LOG_FATAL_IF(pin_mem_size != file_size,
-               "Pin memory size {} does not match file size {}", pin_mem_size,
-               file_size);
+  LOG_FATAL_IF(pin_mem_size != file_size, "Pin memory size {} != file size {}",
+               pin_mem_size, file_size);
+  // LOG_FATAL_IF(buffer_ != nullptr, "Buffer is not null, should only load
+  // once");
 
-  LOG_FATAL_IF(buffer_ != nullptr, "Buffer is not null, should only load once");
-
-  std::call_once(flag_, [&]() {
-    allocator_ =
-        std::make_unique<CachingAllocator>(pin_mem_size, MemoryType::PIN_SHM);
-    // buffer_ = allocator_->Allocate(pin_mem_size);
-  });
+  // std::call_once(flag_, [&]() {
+  //   allocator_ =
+  //       std::make_unique<CachingAllocator>(pin_mem_size,
+  //       MemoryType::PIN_SHM);
+  //   // buffer_ = allocator_->Allocate(pin_mem_size);
+  // });
 
   tensor_index_.Deserialize(index_filename.c_str());
 
@@ -56,6 +61,7 @@ void CheckpointHandle::ReadCheckpoint() {
     name_id_map[param_name] = param_meta.id;
   }
 
+  float count = 0;
   for (auto& [name, buffer_offset] : pin_mem_offsets) {
     auto id = name_id_map[name];
     auto tensor_meta = tensor_index_[id];
@@ -65,13 +71,23 @@ void CheckpointHandle::ReadCheckpoint() {
     auto num_bytes = tensor_meta.size;
 
     param_filename = GetFilePathByID(file_id);
-    void* buffer = allocator_->Allocate(num_bytes);
-    param_shm_map_[name] = {allocator_->GetShmName(buffer), num_bytes};
+    void* buffer = kCachingAllocator->Allocate(num_bytes);
+    auto shm_name = kCachingAllocator->GetShmName(buffer);
+    param_shm_map_[name] = {.id = -1 /* not used */,
+                            .ptr = buffer,
+                            .size = num_bytes,
+                            .name = shm_name};
+
     prio_aio_handle_.Read(param_filename, buffer, false, num_bytes,
                           file_offset);
     // prio_aio_handle_.Read(param_filename, (char*)buffer_ + buffer_offset,
     // false,
     //                       num_bytes, file_offset);
+    count += num_bytes;
+    showProgressBar(count / pin_mem_size, "Reading checkpoint ");
+    // LOG_DEBUG("Read param: {}, id: {}, size: {}, file_id: {}, file_offset:
+    // {}",
+    //           name, id, num_bytes, file_id, file_offset);
   }
 }
 
@@ -118,12 +134,14 @@ std::tuple<uint64_t, std::unordered_map<std::string, size_t>>
 CheckpointHandle::ComputePinOffsets() {
   std::unordered_map<std::string, size_t> pin_mem_offsets;
   size_t pin_mem_size = 0;
-  size_t current_offset = 0;
+  // size_t current_offset = 0;
 
   for (const auto& [param_name, param_meta] : param_meta_map_) {
-    pin_mem_offsets[param_name] = current_offset;
-    current_offset += param_meta.size;
+    pin_mem_offsets[param_name] = pin_mem_size;
+    // current_offset += param_meta.size;
     pin_mem_size += param_meta.size;
+    LOG_DEBUG("param_name: {}, size: {}, offset: {}", param_name,
+              param_meta.size, pin_mem_offsets[param_name]);
   }
 
   return {pin_mem_size, pin_mem_offsets};

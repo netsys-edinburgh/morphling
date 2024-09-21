@@ -9,22 +9,26 @@
 #include "archer_prio_aio_handle.h"
 #include "archer_tensor_index.h"
 #include "memory/caching_allocator.h"
+#include "utils/json_reader.h"
 #include "utils/noncopyable.h"
-struct ParamMeta {
-  uint32_t id;
-  size_t size;
-  // size_t shm_offset;
-  size_t file_offset;
-};
 
-// Register the struct with RTTR
-RTTR_REGISTRATION {
-  rttr::registration::class_<ParamMeta>("ParamMeta")
-      .property("id", &ParamMeta::id)
-      .property("size", &ParamMeta::size)
-      // .property("shm_offset", &ParamMeta::shm_offset)
-      .property("file_offset", &ParamMeta::file_offset);
-}
+// /* Specialize fmt::formatter for ParamMeta with rttr support */
+// template <>
+// struct fmt::formatter<ParamMeta> {
+//   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+//   template <typename FormatContext>
+//   auto format(const ParamMeta& p, FormatContext& ctx) {
+//     // use rttr to get the property names
+//     auto prop_names = rttr::type::get<ParamMeta>().get_properties();
+//     std::string prop_str;
+//     for (auto& prop : prop_names) {
+//       prop_str += fmt::format("{}={}, ", prop.get_name().to_string(),
+//                               prop.get_value(p).to_string());
+//     }
+//     return format_to(ctx.out(), "{{{}}}", prop_str);
+//   }
+// };
 
 typedef std::unordered_map<std::string, ParamMeta> ParamMetaMap;
 
@@ -34,6 +38,7 @@ class CheckpointHandle : public noncopyable {
   ~CheckpointHandle() = default;
 
   void ReadCheckpoint();
+  ParamShmMap GetParamShmMap() const { return param_shm_map_; }
 
  private:
   std::filesystem::path GetFilePathByID(uint32_t file_id) const;

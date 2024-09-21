@@ -1,23 +1,46 @@
-import argparse
-import json
 import os
-from collections import Counter
-from multiprocessing import shared_memory
+import subprocess
+import sys
 
-import numpy as np
-import torch
 from transformers import HfArgumentParser
 
-from morphling._C import CheckpointHandle
-from morphling.common import *
-from morphling.runtime import EmulationEngine
+import morphling
+from morphling.common import EmulatorConfig
 
+KB = 1024
+MB = 1024 * KB
+GB = 1024 * MB
 
 def main():
-    parser = HfArgumentParser((EmulatorConfig, ))
-    args = parser.parse_args()[0]
+    parser = HfArgumentParser((EmulatorConfig,))
+    args = parser.parse_args()
 
     print(args)
+
+    print(morphling.__path__[0])
+
+    server_executable = os.path.join(morphling.__path__[0], "morphling_server")
+    checkpoint_path = args.ckpt_path
+    listen_address = f"{args.listen_ip}:{args.listen_port}"
+
+    env = os.environ.copy()
+    env["MORPHLING_SERVER_ADDRESS"] = listen_address
+    env["MORPHLING_GPU_SIZE"] = str(args.gpu_memory * GB)
+    env["MORPHLING_PIN_SIZE"] = str(args.cpu_memory * GB)
+
+    if args.debug:
+        env["SPDLOG_LEVEL"] = "DEBUG"
+
+    sys.exit(
+        subprocess.call(
+            [
+                server_executable,
+                "--listen", listen_address,
+                "--path", checkpoint_path,
+            ],
+            env=env,
+        )
+    )
 
     # param_meta_map_file = os.path.join(args.ckpt_path, "param_meta_map.json")
 
@@ -60,7 +83,6 @@ def main():
     #         offset=shm_mem_offsets[size] + size - count * 4,
     #     )
     #     tmp[:] = ids_of_size[:]
-
 
     # pin_mem_size, pin_mem_offsets = compute_pin_offsets(param_meta_map)
     # name_id_map = {}

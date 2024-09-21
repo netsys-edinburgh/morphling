@@ -9,22 +9,24 @@
 #include "utils/logger.h"
 #include "utils/noncopyable.h"
 
-#define SET_SHM_INFO_REPEAT(request, ptr)           \
-  do {                                              \
-    auto* info = request.add_##ptr##_info();        \
-    auto size = kCachingAllocator->GetShmSize(ptr); \
-    auto name = kCachingAllocator->GetShmName(ptr); \
-    info->set_size(size);                           \
-    info->set_name(name);                           \
+#define SET_SHM_INFO_REPEAT(request, ptr)                           \
+  do {                                                              \
+    auto* info = request.add_##ptr##_info();                        \
+    auto size = kCachingAllocator->GetShmSize(ptr);                 \
+    auto name = kCachingAllocator->GetShmName(ptr);                 \
+    info->set_size(size);                                           \
+    info->set_name(name);                                           \
+    LOG_DEBUG("Set {} info: size: {}, name: {}", #ptr, size, name); \
   } while (0);
 
-#define SET_SHM_INFO(request, ptr)                  \
-  do {                                              \
-    auto* info = request.mutable_##ptr##_info();    \
-    auto size = kCachingAllocator->GetShmSize(ptr); \
-    auto name = kCachingAllocator->GetShmName(ptr); \
-    info->set_size(size);                           \
-    info->set_name(name);                           \
+#define SET_SHM_INFO(request, ptr)                                  \
+  do {                                                              \
+    auto* info = request.mutable_##ptr##_info();                    \
+    auto size = kCachingAllocator->GetShmSize(ptr);                 \
+    auto name = kCachingAllocator->GetShmName(ptr);                 \
+    info->set_size(size);                                           \
+    info->set_name(name);                                           \
+    LOG_DEBUG("Set {} info: size: {}, name: {}", #ptr, size, name); \
   } while (0);
 
 class MemoryManagerClient : public noncopyable {
@@ -41,7 +43,9 @@ class MemoryManagerClient : public noncopyable {
     stub_ = morphling::MemoryManager::NewStub(channel);
   }
 
-  ParamShmMap GetModelParam();
+  // return <param_name, <shm_name, size>>, need explicit for python types
+  std::unordered_map<std::string, std::tuple<std::string, size_t>>
+  GetModelParam();
   void ScheduleGemmSync(void* a, void* b, void* c, void* task);
 
   // void SetTensorShm(torch::Tensor& tensor, const std::string& name);
