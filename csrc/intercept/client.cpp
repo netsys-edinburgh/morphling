@@ -43,11 +43,11 @@ MemoryManagerClient::GetModelParam() {
     auto size = param.size();
     auto param_name = param.param_name();
 
-    void* ptr = OpenSharedMemory(shm_name.c_str(), size);
+    // void* ptr = OpenSharedMemory(shm_name.c_str(), size);
     // param_map[param_name] = {
     //     .id = -1, .ptr = ptr, .size = size, .name = shm_name};
     param_map[param_name] = std::make_tuple(shm_name, size);
-    shm_map_[param_name] = ptr;
+    // shm_map_[param_name] = ptr;
   }
 
   return param_map;

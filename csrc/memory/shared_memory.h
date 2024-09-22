@@ -11,6 +11,7 @@
 
 void* OpenSharedMemory(const char* name, size_t size);
 void CloseSharedMemory(void* ptr, size_t size);
+void* AttachSharedMemory(const char* name, size_t size);
 
 struct ShmDeleter {
   void operator()(void* ptr) const { CloseSharedMemory(ptr, size); }

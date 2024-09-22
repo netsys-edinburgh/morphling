@@ -62,6 +62,7 @@ void CheckpointHandle::ReadCheckpoint() {
   }
 
   float count = 0;
+  std::unordered_map<std::string, int> filenames;
   for (auto& [name, buffer_offset] : pin_mem_offsets) {
     auto id = name_id_map[name];
     auto tensor_meta = tensor_index_[id];
@@ -71,6 +72,15 @@ void CheckpointHandle::ReadCheckpoint() {
     auto num_bytes = tensor_meta.size;
 
     param_filename = GetFilePathByID(file_id);
+
+    if (filenames.find(param_filename) == filenames.end()) {
+      int fd = open(param_filename.c_str(), O_RDONLY);
+      filenames[param_filename] = fd;
+    }
+    int fd = filenames[param_filename];
+
+    size_t aligned_bytes = (num_bytes + 4095) & ~4095;
+
     void* buffer = kCachingAllocator->Allocate(num_bytes);
     auto shm_name = kCachingAllocator->GetShmName(buffer);
     param_shm_map_[name] = {.id = -1 /* not used */,
@@ -78,11 +88,27 @@ void CheckpointHandle::ReadCheckpoint() {
                             .size = num_bytes,
                             .name = shm_name};
 
-    prio_aio_handle_.Read(param_filename, buffer, false, num_bytes,
-                          file_offset);
-    // prio_aio_handle_.Read(param_filename, (char*)buffer_ + buffer_offset,
-    // false,
-    //                       num_bytes, file_offset);
+    void* temp_buffer = aligned_alloc(4096, aligned_bytes);
+    // read using pread
+    int ret = pread(fd, temp_buffer, aligned_bytes, file_offset);
+    LOG_FATAL_IF(ret == -1, "pread failed: errno {}, message {}", errno,
+                 strerror(errno));
+    // check if temp_buffer contains all zeros
+    bool is_zero = true;
+    for (size_t i = 0; i < num_bytes; i++) {
+      if (((char*)temp_buffer)[i] != 0) {
+        is_zero = false;
+        break;
+      }
+    }
+    LOG_FATAL_IF(
+        is_zero,
+        "Read all zeros, file: {}, offset: {}, size: {}, aligned_size: {}",
+        param_filename.c_str(), file_offset, num_bytes, aligned_bytes);
+    memcpy(buffer, temp_buffer, num_bytes);
+
+    // prio_aio_handle_.Read(param_filename, buffer, false, num_bytes,
+    //                       file_offset);
     count += num_bytes;
     showProgressBar(count / pin_mem_size, "Reading checkpoint ");
     // LOG_DEBUG("Read param: {}, id: {}, size: {}, file_id: {}, file_offset:
