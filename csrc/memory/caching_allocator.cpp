@@ -97,13 +97,13 @@ void* CachingAllocator::AllocCudaMemory(size_t bytes) {
   return ptr;
 }
 void* CachingAllocator::AllocPinMemory(size_t bytes) {
-  // void* ptr = aligned_alloc(4096, bytes);
-  // int ret = mlock(ptr, bytes);
-  // LOG_FATAL_IF(ret != 0, "mlock failed: errno {}, message {}", errno,
-  //              strerror(errno));
-  // cudaHostRegister(ptr, bytes, cudaHostRegisterDefault);
-  void* ptr;
-  cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault);
+  void* ptr = aligned_alloc(4096, bytes);
+  int ret = mlock(ptr, bytes);
+  LOG_FATAL_IF(ret != 0, "mlock failed: errno {}, message {}", errno,
+               strerror(errno));
+  cudaHostRegister(ptr, bytes, cudaHostRegisterDefault);
+  // void* ptr;
+  // cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault);
   return ptr;
 }
 void* CachingAllocator::AllocShmMemory(size_t bytes) {
