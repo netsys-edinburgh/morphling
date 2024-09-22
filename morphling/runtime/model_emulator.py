@@ -14,7 +14,8 @@ from safetensors import safe_open
 from tqdm import tqdm
 from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
-from morphling._C import ArcherTensorHandle, MemoryManagerClient
+from morphling._C import (ArcherTensorHandle, MemoryManagerClient,
+                          set_tensor_shm)
 from morphling.common import *
 from morphling.utils import get_checkpoint_paths
 
@@ -140,12 +141,12 @@ class EmulationEngine(object):
                 cls.param_real_shape = {}
                 for name, param in cls.named_parameters(recurse=False):
                     cls.param_real_shape[name] = param.shape
-                    param.data = torch.zeros(1, dtype=param.dtype, device=param.device)
+                    param.data = torch.empty(param.shape, dtype=param.dtype, device=param.device)
                     # self.model_create_counter.update(1)
 
                 for name, buf in cls.named_buffers(recurse=False):
                     cls.param_real_shape[name] = buf.shape
-                    buf.data = torch.zeros(1, dtype=buf.dtype, device=buf.device)
+                    buf.data = torch.empty(param.shape, dtype=buf.dtype, device=buf.device)
                     # self.model_create_counter.update(1)
 
             return archer_param_init
@@ -280,11 +281,19 @@ class EmulationEngine(object):
 
                 self.client = MemoryManagerClient()
                 param_shm_map = self.client.get_model_param()
+                print(f"param_shm_map: {param_shm_map}")
 
                 for name, param in model.named_parameters(recurse=True):
                     if name not in param_shm_map:
+                        print(f"param {name} not found in param_shm_map")
                         continue
-                    self.client.set_tensor_shm(param.data, name)
+                    shm_name, shm_size = param_shm_map[name]
+                    tensor = torch.empty(param.data.shape, dtype=param.data.dtype)
+                    set_tensor_shm(tensor, shm_name, shm_size)
+                    param.data = tensor
+                    # print(f"set tensor {name} to shm {shm_name} with size {shm_size}", param.data.size())
+                    assert ~(torch.isclose(param.data, torch.zeros_like(param.data)).all() == True), f"param {name} is zero {param}"
+                    # print(f"param {name} is not zero {param}")
 
                 return model
 

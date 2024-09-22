@@ -3,8 +3,11 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <vector>
 
-#define PARAM_META_FILE "param_meta.json"
+#include "rttr_registration.h"
+
+#define PARAM_META_FILE "param_meta_map.json"
 #define BUFFER_SHM_NAME "/emulator_shm_buffer"
 #define PARAM_SHM_NAME "/emulator_shm_param"
 #define ALIGNMENT 512
@@ -15,8 +18,7 @@ typedef std::size_t NodeID;
 typedef std::uint64_t GraphID;
 typedef std::uint64_t RequestID;
 
-typedef std::unordered_map<std::string, std::tuple<std::string, size_t>>
-    ParamShmMap;
+typedef std::unordered_map<std::string, ShmMeta> ParamShmMap;
 
 #define KB 1024
 #define MB (KB * KB)

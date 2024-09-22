@@ -18,15 +18,18 @@ message ShmInfo {
 }
 
 message ScheduleGemmRequest {
-    string task_id = 1;
-    repeated ShmInfo a_info = 2;
-    repeated ShmInfo b_info = 3;
-    repeated ShmInfo c_info = 4;
-    ShmInfo task_info = 5;
+    // string task_id = 1;
+    uint32 device_id = 2;
+    uint32 sync_stage = 3;
+    repeated ShmInfo a_info = 10;
+    repeated ShmInfo b_info = 11;
+    repeated ShmInfo c_info = 12;
+    ShmInfo task_info = 13;
 }
 
 message ScheduleGemmResponse {
     Response rsp = 1;
+    uint64 virtual_ts = 10;
 }
 
 message ModelParamRequest {

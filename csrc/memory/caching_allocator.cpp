@@ -17,7 +17,7 @@ std::unique_ptr<CachingAllocator> kCachingAllocator = nullptr;
 
 void* CachingAllocator::Allocate(const size_t bytes) {
   std::lock_guard<std::mutex> guard(mutex_);
-  LOG_DEBUG("Try Allocate: size: {}, used: {}", bytes, used_bytes_);
+  // LOG_DEBUG("Try Allocate: size: {}, used: {}", bytes, used_bytes_);
   const auto& it = available_map_.find(bytes);
   void* ptr = nullptr;
   if (it == available_map_.end() || it->second.empty()) {
@@ -39,7 +39,7 @@ void* CachingAllocator::Allocate(const size_t bytes) {
 
 void CachingAllocator::Free(void* ptr) {
   std::lock_guard<std::mutex> guard(mutex_);
-  LOG_DEBUG("Try Free: {:p}", ptr);
+  // LOG_DEBUG("Try Free: {:p}", ptr);
   const auto& it = allocation_map_.find(ptr);
   LOG_FATAL_IF(it == allocation_map_.end(),
                "Attempted to free unallocated memory {:p}", ptr);
@@ -63,7 +63,7 @@ void CachingAllocator::FreeCached() {
 }
 
 void* CachingAllocator::AllocateAndCache(const size_t bytes) {
-  LOG_DEBUG("AllocateAndCache: size: {}, used: {}", bytes, used_bytes_);
+  // LOG_DEBUG("AllocateAndCache: size: {}, used: {}", bytes, used_bytes_);
   if (allocated_bytes_ + bytes > max_bytes_) {
     FreeCached();
     LOG_FATAL_IF(allocated_bytes_ + bytes > max_bytes_,
@@ -97,13 +97,13 @@ void* CachingAllocator::AllocCudaMemory(size_t bytes) {
   return ptr;
 }
 void* CachingAllocator::AllocPinMemory(size_t bytes) {
-  // void* ptr = aligned_alloc(4096, bytes);
-  // int ret = mlock(ptr, bytes);
-  // LOG_FATAL_IF(ret != 0, "mlock failed: errno {}, message {}", errno,
-  //              strerror(errno));
-  // cudaHostRegister(ptr, bytes, cudaHostRegisterDefault);
-  void* ptr;
-  cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault);
+  void* ptr = aligned_alloc(4096, bytes);
+  int ret = mlock(ptr, bytes);
+  LOG_FATAL_IF(ret != 0, "mlock failed: errno {}, message {}", errno,
+               strerror(errno));
+  cudaHostRegister(ptr, bytes, cudaHostRegisterDefault);
+  // void* ptr;
+  // cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault);
   return ptr;
 }
 void* CachingAllocator::AllocShmMemory(size_t bytes) {
@@ -111,18 +111,22 @@ void* CachingAllocator::AllocShmMemory(size_t bytes) {
   void* ptr = shmat(shm_id, nullptr, 0);
   LOG_FATAL_IF(ptr == (void*)-1, "shmat failed: errno {}, message {}", errno,
                strerror(errno));
-  shm_id_map_[ptr] = {shm_id, ptr, bytes};
+  shm_id_map_[ptr] = {shm_id, ptr, bytes, ""};
   return ptr;
 }
 void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
   // generate uuid string
   ShmMeta shm_meta;
-  uuid_t bin_uuid;
-  uuid_generate_random(bin_uuid);
-  uuid_unparse(bin_uuid, shm_meta.name + 1);
-  shm_meta.name[0] = '/';  // shm_open requires the first char to be '/'
+  shm_meta.name.reserve(38);
+  uuid_t uuid;
+  uuid_generate(uuid);
+  char uuid_str[37];
+  uuid_unparse(uuid, uuid_str);
+  shm_meta.name = "/emulator_shm_" + std::string(uuid_str);
 
-  int shm_fd = shm_open(shm_meta.name, O_CREAT | O_RDWR, 0666);
+  LOG_DEBUG("shm_meta name: {}", shm_meta.name);
+
+  int shm_fd = shm_open(shm_meta.name.c_str(), O_CREAT | O_RDWR, 0666);
   LOG_FATAL_IF(shm_fd == -1, "shm_open failed: errno {}, message {}", errno,
                strerror(errno));
   LOG_FATAL_IF(ftruncate(shm_fd, bytes) == -1,
@@ -147,7 +151,9 @@ void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
   shm_meta.ptr = buf;
   shm_meta.size = aligned_bytes;
   shm_id_map_[buf] = shm_meta;
-  return buf;
+  LOG_DEBUG("shm_meta: {}", shm_meta);
+
+  return shm_addr;
 }
 
 void CachingAllocator::FreeMemory(void* ptr) {
