@@ -33,6 +33,7 @@ struct ShmMeta {
   void* ptr;
   size_t size;
   std::string name;
+  bool is_remote = false;
 };
 
 struct ParamMeta {

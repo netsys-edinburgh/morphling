@@ -22,17 +22,25 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         // deleter does nothing since memory is managed by emulator shared
         // memory
         // check if ptr bytes are all zeros
-        bool is_zero = true;
-        for (size_t i = 0; i < size; i++) {
-          if (((char*)ptr)[i] != 0) {
-            is_zero = false;
-            break;
-          }
-        }
-        LOG_FATAL_IF(
-            is_zero,
-            "Read all zeros, file: {}, offset: {}, size: {}, aligned_size: {}",
-            name.c_str(), 0, size, size);
+        //    bool is_zero = true;
+        //    for (size_t i = 0; i < size; i++) {
+        //      if (((char*)ptr)[i] != 0) {
+        //        is_zero = false;
+        //        break;
+        //      }
+        //    }
+        //    LOG_FATAL_IF(
+        //        is_zero,
+        //        "Read all zeros, file: {}, offset: {}, size: {}, aligned_size:
+        //        {}", name.c_str(), 0, size, size);
+        ShmMeta meta{
+            .id = -1,
+            .ptr = ptr,
+            .size = size,
+            .name = name,
+            .is_remote = true,
+        };
+        kCachingAllocator->InsertShmMeta(meta);
         LOG_DEBUG("Set tensor shm: name: {}, size: {}, ptr: {}", name, size,
                   ptr);
         tensor.set_data(torch::from_blob(ptr, tensor.sizes(), tensor.strides(),

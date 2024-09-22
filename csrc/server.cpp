@@ -95,7 +95,6 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
     LOG_FATAL_IF(size == nullptr, "MORPHLING_GPU_SIZE is not set");
     auto bytes = std::stoull(size);
 
-    // InitCachingAllocator(MemoryType::PIN_SHM);
     checkpoint_handle_ = std::make_unique<CheckpointHandle>(storage_path);
     checkpoint_handle_->ReadCheckpoint();
 
@@ -186,7 +185,6 @@ int main(int argc, char** argv) {
                "Checkpoint path does not exist {}", ckpt_path.string());
 
   RunServer(FLAGS_listen, FLAGS_path);
-  // InitCachingAllocator(MemoryType::PIN_SHM);
 
   // auto param_meta_map_file = ckpt_path / PARAM_META_FILE;
   // auto json_reader = JsonReader<ParamMeta>(ckpt_path.string());

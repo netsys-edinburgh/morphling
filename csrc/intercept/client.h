@@ -9,24 +9,22 @@
 #include "utils/logger.h"
 #include "utils/noncopyable.h"
 
-#define SET_SHM_INFO_REPEAT(request, ptr)                           \
-  do {                                                              \
-    auto* info = request.add_##ptr##_info();                        \
-    auto size = kCachingAllocator->GetShmSize(ptr);                 \
-    auto name = kCachingAllocator->GetShmName(ptr);                 \
-    info->set_size(size);                                           \
-    info->set_name(name);                                           \
-    LOG_DEBUG("Set {} info: size: {}, name: {}", #ptr, size, name); \
+#define SET_SHM_INFO_REPEAT(request, ptr)                                     \
+  do {                                                                        \
+    auto* info = request.add_##ptr##_info();                                  \
+    auto meta = kCachingAllocator->FindShmMetaByRange(ptr);                   \
+    info->set_size(meta.size);                                                \
+    info->set_name(meta.name);                                                \
+    LOG_DEBUG("Set {} info: size: {}, name: {}", #ptr, meta.size, meta.name); \
   } while (0);
 
-#define SET_SHM_INFO(request, ptr)                                  \
-  do {                                                              \
-    auto* info = request.mutable_##ptr##_info();                    \
-    auto size = kCachingAllocator->GetShmSize(ptr);                 \
-    auto name = kCachingAllocator->GetShmName(ptr);                 \
-    info->set_size(size);                                           \
-    info->set_name(name);                                           \
-    LOG_DEBUG("Set {} info: size: {}, name: {}", #ptr, size, name); \
+#define SET_SHM_INFO(request, ptr)                                            \
+  do {                                                                        \
+    auto* info = request.mutable_##ptr##_info();                              \
+    auto meta = kCachingAllocator->FindShmMetaByRange(ptr);                   \
+    info->set_size(meta.size);                                                \
+    info->set_name(meta.name);                                                \
+    LOG_DEBUG("Set {} info: size: {}, name: {}", #ptr, meta.size, meta.name); \
   } while (0);
 
 class MemoryManagerClient : public noncopyable {

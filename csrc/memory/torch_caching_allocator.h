@@ -12,13 +12,7 @@ struct TorchCachingAllocator : public torch::Allocator {
   }
 
   void copy_data(void* dest, const void* src, size_t count) const override {
-    // if (type_ == MemoryType::CUDA) {
-    //   cudaMemcpy(dest, src, count, cudaMemcpyDeviceToDevice);
-    // } else if (type_ == MemoryType::PIN_SHM) {
-    //   cudaMemcpy(dest, src, count, cudaMemcpyHostToHost);
-    // } else {
-    //   memcpy(dest, src, count);
-    // }
+    LOG_DEBUG("Copy data from {:p} to {:p}, size: {}", src, dest, count);
     memcpy(dest, src, count);
   }
 
@@ -35,7 +29,7 @@ class ReplaceTorchAllocatorOnLoad {
   ReplaceTorchAllocatorOnLoad() {
     InitCachingAllocator(MemoryType::PIN_SHM);
     torch_caching_allocator_ = new TorchCachingAllocator();
-    LOG_DEBUG("Replace torch allocator with caching allocator");
+    LOG_INFO("Replace torch allocator with caching allocator");
     torch::SetAllocator(torch::DeviceType::CPU, torch_caching_allocator_);
     LOG_DEBUG("Torch allocator replaced");
   }
@@ -45,4 +39,4 @@ class ReplaceTorchAllocatorOnLoad {
 };
 
 // Create a static instance of this class
-static ReplaceTorchAllocatorOnLoad kReplaceTorchAllocatorOnLoad;
+extern ReplaceTorchAllocatorOnLoad kReplaceTorchAllocatorOnLoad;

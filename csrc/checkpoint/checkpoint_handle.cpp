@@ -82,7 +82,8 @@ void CheckpointHandle::ReadCheckpoint() {
     size_t aligned_bytes = (num_bytes + 4095) & ~4095;
 
     void* buffer = kCachingAllocator->Allocate(num_bytes);
-    auto shm_name = kCachingAllocator->GetShmName(buffer);
+    auto shm_meta = kCachingAllocator->FindShmMetaByRange(buffer);
+    auto shm_name = shm_meta.name;
     param_shm_map_[name] = {.id = -1 /* not used */,
                             .ptr = buffer,
                             .size = num_bytes,
