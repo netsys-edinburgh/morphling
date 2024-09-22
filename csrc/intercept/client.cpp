@@ -14,12 +14,12 @@ void MemoryManagerClient::ScheduleGemmSync(void* a, void* b, void* c,
   SET_SHM_INFO_REPEAT(request, c)
   SET_SHM_INFO(request, task)
 
-  char uuid_str[37];
-  uuid_t bin_uuid;
-  uuid_generate_random(bin_uuid);
-  uuid_unparse(bin_uuid, uuid_str);
+  // char uuid_str[37];
+  // uuid_t bin_uuid;
+  // uuid_generate_random(bin_uuid);
+  // uuid_unparse(bin_uuid, uuid_str);
 
-  request.set_task_id(uuid_str);
+  // request.set_task_id(uuid_str);
 
   morphling::ScheduleGemmResponse response;
   grpc::ClientContext context;
@@ -30,19 +30,24 @@ void MemoryManagerClient::ScheduleGemmSync(void* a, void* b, void* c,
                response.rsp().message().c_str());
 }
 
-ParamShmMap MemoryManagerClient::GetModelParam() {
+std::unordered_map<std::string, std::tuple<std::string, size_t>>
+MemoryManagerClient::GetModelParam() {
   morphling::ModelParamRequest request;
   morphling::ModelParamResponse response;
   grpc::ClientContext context;
   stub_->GetModelParam(&context, request, &response);
 
-  ParamShmMap param_map;
+  std::unordered_map<std::string, std::tuple<std::string, size_t>> param_map;
   for (const auto& param : response.param_info()) {
     auto shm_name = param.shm_name();
     auto size = param.size();
     auto param_name = param.param_name();
-    param_map[param_name] = {shm_name, size};
-    shm_map_[param_name] = OpenSharedMemory(shm_name.c_str(), size);
+
+    // void* ptr = OpenSharedMemory(shm_name.c_str(), size);
+    // param_map[param_name] = {
+    //     .id = -1, .ptr = ptr, .size = size, .name = shm_name};
+    param_map[param_name] = std::make_tuple(shm_name, size);
+    // shm_map_[param_name] = ptr;
   }
 
   return param_map;

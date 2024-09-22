@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "common/types_and_defs.h"
+#include "memory/shared_memory.h"
 #include "utils/logger.h"
 #include "utils/noncopyable.h"
 
@@ -38,14 +39,6 @@ void TorchFreeCtx(void* ctx);
 // work as an offset manager for the memory pool
 class CachingAllocator : public noncopyable {
  public:
-  struct ShmMeta {
-    int id;
-    void* ptr;
-    size_t size;
-    char name[38];
-  };
-
- public:
   explicit CachingAllocator(size_t bytes, MemoryType type, int device_id = -1);
   virtual ~CachingAllocator();
 
@@ -60,27 +53,21 @@ class CachingAllocator : public noncopyable {
   int GetShmId(void* ptr) {
     std::lock_guard<std::mutex> guard(mutex_);
     const auto& it = shm_id_map_.find(ptr);
-    if (it == shm_id_map_.end()) {
-      return -1;
-    }
+    LOG_FATAL_IF(it == shm_id_map_.end(), "Cannot find shm id {:p}", ptr);
     return it->second.id;
   }
 
   std::string GetShmName(void* ptr) {
     std::lock_guard<std::mutex> guard(mutex_);
     const auto& it = shm_id_map_.find(ptr);
-    if (it == shm_id_map_.end()) {
-      return "";
-    }
+    LOG_FATAL_IF(it == shm_id_map_.end(), "Cannot find shm name {:p}", ptr);
     return it->second.name;
   }
 
   size_t GetShmSize(void* ptr) {
     std::lock_guard<std::mutex> guard(mutex_);
     const auto& it = shm_id_map_.find(ptr);
-    if (it == shm_id_map_.end()) {
-      return 0;
-    }
+    LOG_FATAL_IF(it == shm_id_map_.end(), "Cannot find shm size {:p}", ptr);
     return it->second.size;
   }
 

@@ -22,6 +22,9 @@ using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
 using grpc::Status;
+using morphling::ModelParamRequest;
+using morphling::ModelParamResponse;
+using morphling::Response;
 using morphling::ScheduleGemmRequest;
 using morphling::ScheduleGemmResponse;
 
@@ -92,6 +95,10 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
     LOG_FATAL_IF(size == nullptr, "MORPHLING_GPU_SIZE is not set");
     auto bytes = std::stoull(size);
 
+    // InitCachingAllocator(MemoryType::PIN_SHM);
+    checkpoint_handle_ = std::make_unique<CheckpointHandle>(storage_path);
+    checkpoint_handle_->ReadCheckpoint();
+
     worker_pool_ = std::make_unique<GPUWorkerPool>(
         bytes, SchedulingPolicyType::kRoundRobinGemm);
   }
@@ -115,9 +122,24 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
     return Status::OK;
   }
 
+  Status GetModelParam(ServerContext* context,
+                       const morphling::ModelParamRequest* request,
+                       morphling::ModelParamResponse* response) override {
+    auto param_shm_map = checkpoint_handle_->GetParamShmMap();
+    for (const auto& [param_name, shm_info] : param_shm_map) {
+      auto* param = response->add_param_info();
+      param->set_param_name(param_name);
+      param->set_shm_name(shm_info.name);
+      param->set_size(shm_info.size);
+    }
+
+    LOG_INFO("GetModelParam: {}", response->param_info_size());
+    return Status::OK;
+  }
+
  private:
   std::unique_ptr<GPUWorkerPool> worker_pool_;
-  std::unique_ptr<CachingAllocator> allocator_;
+  std::unique_ptr<CheckpointHandle> checkpoint_handle_;
 };
 
 void RunServer(const std::string& server_address,
@@ -134,7 +156,7 @@ void RunServer(const std::string& server_address,
   LOG_INFO("Server listening on {}", server_address);
 
   // set env var MORPHLING_SERVER_ADDRESS
-  setenv("MORPHLING_SERVER_ADDRESS", server_address.c_str(), 1);
+  // setenv("MORPHLING_SERVER_ADDRESS", server_address.c_str(), 1);
 
   server->Wait();
 }
