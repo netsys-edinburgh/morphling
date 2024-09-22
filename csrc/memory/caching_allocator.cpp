@@ -14,6 +14,7 @@
 #include "utils/logger.h"
 
 std::unique_ptr<CachingAllocator> kCachingAllocator = nullptr;
+std::once_flag kInitCachingAllocatorFlag;
 
 void* CachingAllocator::Allocate(const size_t bytes) {
   std::lock_guard<std::mutex> guard(mutex_);
@@ -49,6 +50,57 @@ void CachingAllocator::Free(void* ptr) {
   allocation_map_.erase(it);
   LOG_DEBUG("Free: {:p}, size: {}, used: {}", ptr, alloc_size, used_bytes_);
 }
+
+void CachingAllocator::InsertShmMeta(ShmMeta meta) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  shm_id_map_[meta.ptr] = meta;
+}
+
+ShmMeta CachingAllocator::FindShmMetaByRange(void* ptr) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  {
+    auto it = shm_id_map_.find(ptr);
+    if (it != shm_id_map_.end()) {
+      return it->second;
+    }
+  }
+  for (const auto& it : shm_id_map_) {
+    if (it.first <= ptr && ptr < it.first + it.second.size) {
+      LOG_WARN_IF(it.first != ptr,
+                  "FindShmMetaByRange not exact: expected {:p}, got {:p}", ptr,
+                  it.first);
+      return it.second;
+    }
+  }
+  LOG_FATAL("Cannot find shm meta by range {:p}", ptr);
+  return {};
+}
+
+// int CachingAllocator::GetShmId(void* ptr) {
+//   std::lock_guard<std::mutex> guard(mutex_);
+//   // const auto& it = shm_id_map_.find(ptr);
+//   // LOG_FATAL_IF(it == shm_id_map_.end(), "Cannot find shm id {:p}", ptr);
+//   auto meta = FindShmMetaByRange(ptr);
+//   return meta.id;
+//   // return it->second.id;
+// }
+
+// std::string CachingAllocator::GetShmName(void* ptr) {
+//   std::lock_guard<std::mutex> guard(mutex_);
+//   auto meta = FindShmMetaByRange(ptr);
+//   // const auto& it = shm_id_map_.find(ptr);
+//   // LOG_FATAL_IF(it == shm_id_map_.end(), "Cannot find shm name {:p}", ptr);
+//   return meta.name;
+// }
+
+// size_t CachingAllocator::GetShmSize(void* ptr) {
+//   std::lock_guard<std::mutex> guard(mutex_);
+//   auto meta = FindShmMetaByRange(ptr);
+//   size_t remain_size = meta.size - (ptr - meta.ptr);
+//   // const auto& it = shm_id_map_.find(ptr);
+//   // LOG_FATAL_IF(it == shm_id_map_.end(), "Cannot find shm size {:p}", ptr);
+//   return remain_size;
+// }
 
 void CachingAllocator::FreeCached() {
   for (const auto& it : available_map_) {
@@ -117,14 +169,13 @@ void* CachingAllocator::AllocShmMemory(size_t bytes) {
 void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
   // generate uuid string
   ShmMeta shm_meta;
-  shm_meta.name.reserve(38);
   uuid_t uuid;
   uuid_generate(uuid);
   char uuid_str[37];
   uuid_unparse(uuid, uuid_str);
   shm_meta.name = "/emulator_shm_" + std::string(uuid_str);
 
-  LOG_DEBUG("shm_meta name: {}", shm_meta.name);
+  // LOG_DEBUG("shm_meta name: {}", shm_meta.name);
 
   int shm_fd = shm_open(shm_meta.name.c_str(), O_CREAT | O_RDWR, 0666);
   LOG_FATAL_IF(shm_fd == -1, "shm_open failed: errno {}, message {}", errno,
@@ -147,10 +198,13 @@ void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
   LOG_FATAL_IF(shm_addr == MAP_FAILED, "mmap failed: errno {}, message {}",
                errno, strerror(errno));
 
+  LOG_FATAL_IF(shm_addr != buf, "mmap failed: expected addr: {:p}, got {:p}",
+               buf, shm_addr);
+
   shm_meta.id = shm_fd;
-  shm_meta.ptr = buf;
+  shm_meta.ptr = shm_addr;
   shm_meta.size = aligned_bytes;
-  shm_id_map_[buf] = shm_meta;
+  shm_id_map_[shm_addr] = shm_meta;
   LOG_DEBUG("shm_meta: {}", shm_meta);
 
   return shm_addr;
@@ -184,8 +238,14 @@ void CachingAllocator::FreeShmMemory(void* ptr) {
   shm_id_map_.erase(ptr);
 }
 void CachingAllocator::FreePinShmMemory(void* ptr) {
-  // LOG_DEBUG("free pin shm: addr: {:p}, bytes", ptr, shm_id_map_[ptr].size);
-  munmap(ptr, shm_id_map_[ptr].size);
+  auto meta = FindShmMetaByRange(ptr);
+  auto shm_name = meta.name;
+  auto size = meta.size;
+  auto id = meta.id;
+
+  LOG_DEBUG("FreePinShmMemory: addr: {:p}, name: {}, size: {}", ptr, shm_name,
+            size);
+  munmap(ptr, size);
   // shm_unlink(shm_id_map_[ptr].name);
   close(shm_id_map_[ptr].id);
   FreePinMemory(ptr);

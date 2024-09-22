@@ -45,7 +45,6 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
 }
 
 void TaskExecution(const GemmArgsPtr& args) {
-  InitCachingAllocator(MemoryType::PIN_SHM);
   InitMemoryManagerClient();
   size_t task_size = sizeof(GemmArgs);
   void* task_buffer = kCachingAllocator->Allocate(task_size);
