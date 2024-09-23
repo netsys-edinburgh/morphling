@@ -251,12 +251,12 @@ file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
 file(GLOB SCHEDULER_SRC "csrc/scheduler/*.cpp")
 file(GLOB PYTHON_SRC "csrc/python/*.cpp")
 
-add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
-target_link_libraries(morphling_interceptor PUBLIC
-  CUDA::cudart Threads::Threads
-  libspdlog.so grpc++ grpc++_reflection
-)
-target_include_directories(morphling_interceptor PUBLIC "csrc" ${CUDA_INCLUDE_DIRS})
+# add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
+# target_link_libraries(morphling_interceptor PUBLIC
+#   CUDA::cudart Threads::Threads
+#   libspdlog.so grpc++ grpc++_reflection
+# )
+# target_include_directories(morphling_interceptor PUBLIC "csrc" ${CUDA_INCLUDE_DIRS})
 
 # add_library(morphling STATIC ${UTILS_SRC} ${CHECKPOINT_SRC})
 # target_link_libraries(morphling PUBLIC
@@ -312,14 +312,14 @@ set(MORPHLING_EXT_SRC
   ${UTILS_SRC}
   ${hw_proto_srcs}
   ${hw_grpc_srcs}
-  ${PYTHON_SRC}
+  "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
   libspdlog.so rttr_core
   grpc++ grpc++_reflection
-  morphling_interceptor
+  # morphling_interceptor
 )
 define_gpu_extension_target(
   _C
@@ -332,24 +332,24 @@ define_gpu_extension_target(
   WITH_SOABI
 )
 
-# set(MORPHLING_INTERCEPTOR_SRC
-# ${INTERCEPT_SRC}
-# "csrc/python/intercept_py.cpp"
-# )
-# set(MORPHLING_INTERCEPTOR_LIB
-# mkl_rt grpc++ grpc++_reflection
-# libspdlog.so
-# )
-# define_gpu_extension_target(
-# morphling_interceptor
-# DESTINATION morphling
-# LANGUAGE ${MORPHLING_GPU_LANG}
-# SOURCES ${MORPHLING_EXT_SRC}
-# COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
-# ARCHITECTURES ${MORPHLING_GPU_ARCHES}
-# LIBRARIES ${MORPHLING_EXT_LIB}
-# WITH_SOABI
-# )
+set(MORPHLING_INTERCEPTOR_SRC
+${INTERCEPT_SRC}
+"csrc/python/intercept_py.cpp"
+)
+set(MORPHLING_INTERCEPTOR_LIB
+mkl_rt grpc++ grpc++_reflection
+libspdlog.so uuid
+)
+define_gpu_extension_target(
+_intercept
+DESTINATION morphling
+LANGUAGE ${MORPHLING_GPU_LANG}
+SOURCES ${MORPHLING_EXT_SRC}
+COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+LIBRARIES ${MORPHLING_EXT_LIB}
+WITH_SOABI
+)
 
 # set(MORPHLING_ALLOCATOR_SRC
 # ${MEMORY_SRC}
