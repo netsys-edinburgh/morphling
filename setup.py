@@ -283,6 +283,7 @@ setup(
             "morphling_emulator=morphling.entrypoint.emulator:main",
             "morphling_device_config=morphling.entrypoint.generate_device_config:main",
             "morphling_server=morphling.entrypoint.server:main",
+            "morphling_cmd=morphling.entrypoint.cmdline:main",
         ],
     },
     install_requires=install_requires,

@@ -104,9 +104,16 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
   Status ScheduleGemmSync(ServerContext* context,
                           const ScheduleGemmRequest* request,
                           ScheduleGemmResponse* response) override {
-    GemmArgsPtr args = std::make_unique<GemmArgs>();
-    args.reset(reinterpret_cast<GemmArgs*>(OpenSharedMemory(
-        request->task_info().name().c_str(), request->task_info().size())));
+    const char* task_name = request->task_info().name().c_str();
+    size_t task_size = request->task_info().size();
+    // std::shared_ptr<GemmArgs> args_ptr(
+    //     args, std::bind(&CloseSharedMemory, std::placeholders::_1,
+    //     task_size));
+
+    // FIXME: need to free the shared memory after the task is done
+    auto args = AttachSharedMemoryPtr<GemmArgs>(task_name, task_size);
+
+    LOG_DEBUG("ScheduleGemmSync: {}", args->DebugString());
 
     for (int i = 0; i < args->group_size; i++) {
       // read from repeated fields a_info, b_info, c_info
@@ -117,6 +124,12 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
       args->c[i] = (float*)OpenSharedMemory(request->c_info(i).name().c_str(),
                                             request->c_info(i).size());
     }
+
+    LOG_DEBUG("ScheduleGemmSync: EnqueueGemmWithPolicy");
+
+    worker_pool_->EnqueueGemmWithPolicy(args);
+    worker_pool_->WaitAll();
+    LOG_DEBUG("ScheduleGemmSync: done");
 
     return Status::OK;
   }
@@ -154,10 +167,9 @@ void RunServer(const std::string& server_address,
   std::unique_ptr<Server> server(builder.BuildAndStart());
   LOG_INFO("Server listening on {}", server_address);
 
-  // set env var MORPHLING_SERVER_ADDRESS
-  // setenv("MORPHLING_SERVER_ADDRESS", server_address.c_str(), 1);
-
   server->Wait();
+
+  LOG_INFO("Server shutting down");
 }
 
 int main(int argc, char** argv) {

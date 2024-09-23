@@ -42,8 +42,8 @@ void CheckpointHandle::ReadCheckpoint() {
 
   auto [pin_mem_size, pin_mem_offsets] = ComputePinOffsets();
 
-  LOG_FATAL_IF(pin_mem_size != file_size, "Pin memory size {} != file size {}",
-               pin_mem_size, file_size);
+  LOG_WARN_IF(pin_mem_size != file_size, "Pin memory size {} != file size {}",
+              pin_mem_size, file_size);
   // LOG_FATAL_IF(buffer_ != nullptr, "Buffer is not null, should only load
   // once");
 

@@ -8,10 +8,10 @@ from typing import Callable, Dict, Tuple, Type, Union
 
 import numpy as np
 import torch
-import transformers
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from tqdm import tqdm
+from transformers import AutoConfig
 from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
 from morphling._C import (ArcherTensorHandle, MemoryManagerClient,
@@ -19,6 +19,158 @@ from morphling._C import (ArcherTensorHandle, MemoryManagerClient,
 from morphling.common import *
 from morphling.utils import get_checkpoint_paths
 
+
+def do_nothing_decorator(orig_func: Callable) -> Callable:
+    @functools.wraps(orig_func)
+    def do_nothing(*args, **kwargs):
+        pass
+    return do_nothing
+
+def param_init_decorator(orig_param_init: Callable) -> Callable:
+    @functools.wraps(orig_param_init)
+    def empty_param_init(cls, *args, **kwargs):
+        orig_param_init(cls, *args, **kwargs)
+
+        # cls.param_real_shape = {}
+        for name, param in cls.named_parameters(recurse=False):
+            # cls.param_real_shape[name] = param.shape
+            param.data = torch.empty(
+                param.shape, dtype=param.dtype, device=param.device
+            )
+
+        for name, buf in cls.named_buffers(recurse=False):
+            # cls.param_real_shape[name] = buf.shape
+            buf.data = torch.empty(
+                param.shape, dtype=buf.dtype, device=buf.device
+            )
+
+    return empty_param_init
+
+def from_pretrained_decorator(orig_from_pretrained: Callable) -> Callable:
+    @functools.wraps(orig_from_pretrained)
+    def archer_from_pretrained(cls, *args, **kwargs):
+        # print("Creating model from scratch ...")
+        config = AutoConfig.from_pretrained(args[0])
+        model = cls._from_config(config, torch_dtype=torch.float32)
+
+        print(f"Model config: {config}")
+        print(f"Model: {model}")
+
+        client = MemoryManagerClient()
+        param_shm_map = client.get_model_param()
+        print(f"param_shm_map: {param_shm_map}")
+
+        for name, param in model.named_parameters(recurse=True):
+            if name not in param_shm_map:
+                print(f"param {name} not found in param_shm_map")
+                continue
+            shm_name, shm_size = param_shm_map[name]
+            tensor = torch.empty(param.data.shape, dtype=param.data.dtype)
+            set_tensor_shm(tensor, shm_name, shm_size)
+            param.data = tensor
+            # print(f"set tensor {name} to shm {shm_name} with size {shm_size}", param.data.size())
+            assert ~(
+                torch.isclose(param.data, torch.zeros_like(param.data)).all()
+                == True
+            ), f"param {name} is zero {param}"
+            # print(f"param {name} is not zero {param}")
+
+        return model
+
+    return archer_from_pretrained
+
+
+
+
+class InitEmptyModel:
+    def __init__(self, cls: Type[PreTrainedModel]):
+        self.cls = cls
+
+    def __enter__(self):
+        # for all the modules in torch.nn, add post_init method
+        # assert False, torch.nn.modules.__dict__
+        for name, module in torch.nn.modules.__dict__.items():
+            if not isinstance(module, type):
+                continue
+            if not issubclass(module, torch.nn.modules.module.Module):
+                continue
+            if name in [
+                "Module",
+                "Sequential",
+                "ModuleDict",
+                "ModuleList",
+                "ParameterList",
+                "ParameterDict",
+            ]:
+                continue
+            module._old_init = module.__init__
+            module.__init__ = param_init_decorator(module.__init__)
+
+            if hasattr(module, "reset_parameters"):
+                module._old_reset_parameters = module.reset_parameters
+                module.reset_parameters = do_nothing_decorator(module.reset_parameters)
+
+        # self.cls._old_init = self.cls.__init__
+        # self.cls.__init__ = do_nothing_decorator(self.cls.__init__)
+
+        self.cls._old_post_init = self.cls.post_init
+        PreTrainedModel._old_post_init = PreTrainedModel.post_init
+
+        self.cls.post_init = do_nothing_decorator(self.cls.post_init)
+        PreTrainedModel.post_init = do_nothing_decorator(PreTrainedModel.post_init)
+
+        self.cls._old_from_pretrained = self.cls.from_pretrained
+        self.cls.from_pretrained = classmethod(
+            from_pretrained_decorator(self.cls.from_pretrained)
+        )
+
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        # self.cls.__init__ = self.cls._old_init
+        self.cls.post_init = self.cls._old_post_init
+        PreTrainedModel.post_init = PreTrainedModel._old_post_init
+        self.cls.from_pretrained = self.cls._old_from_pretrained
+
+        for name, module in torch.nn.modules.__dict__.items():
+            if not isinstance(module, type):
+                continue
+            if not issubclass(module, torch.nn.modules.module.Module):
+                continue
+            if name in [
+                "Module",
+                "Sequential",
+                "ModuleDict",
+                "ModuleList",
+                "ParameterList",
+                "ParameterDict",
+            ]:
+                continue
+            module.__init__ = module._old_init
+
+            if hasattr(module, "reset_parameters"):
+                module.reset_parameters = module._old_reset_parameters
+
+
+    # @staticmethod
+    # def set_model_param(model):
+    #     client = MemoryManagerClient()
+    #     param_shm_map = client.get_model_param()
+    #     print(f"param_shm_map: {param_shm_map}")
+
+    #     for name, param in model.named_parameters(recurse=True):
+    #         if name not in param_shm_map:
+    #             print(f"param {name} not found in param_shm_map")
+    #             continue
+    #         shm_name, shm_size = param_shm_map[name]
+    #         tensor = torch.empty(param.data.shape, dtype=param.data.dtype)
+    #         set_tensor_shm(tensor, shm_name, shm_size)
+    #         param.data = tensor
+    #         # print(f"set tensor {name} to shm {shm_name} with size {shm_size}", param.data.size())
+    #         assert ~(
+    #             torch.isclose(param.data, torch.zeros_like(param.data)).all()
+    #             == True
+    #         ), f"param {name} is zero {param}"
+    #         # print(f"param {name} is not zero {param}")
 
 class EmulationEngine(object):
     param_id = 0
@@ -141,12 +293,16 @@ class EmulationEngine(object):
                 cls.param_real_shape = {}
                 for name, param in cls.named_parameters(recurse=False):
                     cls.param_real_shape[name] = param.shape
-                    param.data = torch.empty(param.shape, dtype=param.dtype, device=param.device)
+                    param.data = torch.empty(
+                        param.shape, dtype=param.dtype, device=param.device
+                    )
                     # self.model_create_counter.update(1)
 
                 for name, buf in cls.named_buffers(recurse=False):
                     cls.param_real_shape[name] = buf.shape
-                    buf.data = torch.empty(param.shape, dtype=buf.dtype, device=buf.device)
+                    buf.data = torch.empty(
+                        param.shape, dtype=buf.dtype, device=buf.device
+                    )
                     # self.model_create_counter.update(1)
 
             return archer_param_init
@@ -278,7 +434,6 @@ class EmulationEngine(object):
                             self.param_meta_map.pop(name_without_prefix)
                     param.ar_id = self.param_meta_map.get(name, None)
 
-
                 self.client = MemoryManagerClient()
                 param_shm_map = self.client.get_model_param()
                 print(f"param_shm_map: {param_shm_map}")
@@ -292,7 +447,10 @@ class EmulationEngine(object):
                     set_tensor_shm(tensor, shm_name, shm_size)
                     param.data = tensor
                     # print(f"set tensor {name} to shm {shm_name} with size {shm_size}", param.data.size())
-                    assert ~(torch.isclose(param.data, torch.zeros_like(param.data)).all() == True), f"param {name} is zero {param}"
+                    assert ~(
+                        torch.isclose(param.data, torch.zeros_like(param.data)).all()
+                        == True
+                    ), f"param {name} is zero {param}"
                     # print(f"param {name} is not zero {param}")
 
                 return model
@@ -370,6 +528,3 @@ class EmulationEngine(object):
 
         gc.collect()
         torch.cuda.empty_cache()
-
-
-

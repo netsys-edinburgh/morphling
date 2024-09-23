@@ -93,11 +93,28 @@ struct GemmArgs {
   float* c[MAX_GEMM_DIM];
   int ldc[MAX_GEMM_DIM];
   int group_size;  // FIXME: we do not deal with group with different sizes
+
+  std::string DebugString() const {
+    std::string str = "GemmArgs: ";
+    for (int i = 0; i < group_size; i++) {
+      str += "transa: " + std::string(1, transa[i]) + ", ";
+      str += "transb: " + std::string(1, transb[i]) + ", ";
+      str += "m: " + std::to_string(m[i]) + ", ";
+      str += "n: " + std::to_string(n[i]) + ", ";
+      str += "k: " + std::to_string(k[i]) + ", ";
+      str += "alpha: " + std::to_string(alpha[i]) + ", ";
+      str += "lda: " + std::to_string(lda[i]) + ", ";
+      str += "ldb: " + std::to_string(ldb[i]) + ", ";
+      str += "beta: " + std::to_string(beta[i]) + ", ";
+      str += "ldc: " + std::to_string(ldc[i]) + ", ";
+    }
+    return str;
+  }
 };
 
 typedef std::unique_ptr<GemmArgs> GemmArgsPtr;
 
-std::tuple<size_t, size_t, size_t> CalculateTaskSizes(const GemmArgsPtr& args);
+std::tuple<size_t, size_t, size_t> CalculateTaskSizes(const GemmArgs* args);
 
 // bool CheckBufferOffloaded(const void* buffer, size_t size);
 

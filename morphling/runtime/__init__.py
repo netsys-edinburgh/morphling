@@ -1,1 +1,1 @@
-from .model_emulator import EmulationEngine
+from .model_emulator import EmulationEngine, InitEmptyModel

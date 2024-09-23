@@ -41,7 +41,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             .is_remote = true,
         };
         kCachingAllocator->InsertShmMeta(meta);
-        LOG_DEBUG("Set tensor shm: name: {}, size: {}, ptr: {}", name, size,
+        LOG_DEBUG("set_tensor_shm: name: {}, size: {}, ptr: {}", name, size,
                   ptr);
         tensor.set_data(torch::from_blob(ptr, tensor.sizes(), tensor.strides(),
                                          DoNothingDeleter<void>{},
