@@ -24,7 +24,7 @@ class WorkerBase : public noncopyable {
       std::lock_guard<std::mutex> lock(mutex_);
       quit_ = true;
     }
-    cv_.notify_one();
+    cv_.notify_all();
     worker_.join();
   }
 
@@ -32,8 +32,9 @@ class WorkerBase : public noncopyable {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       tasks_.emplace_back(std::move(t));
+      task_count_++;
     }
-    cv_.notify_one();
+    cv_.notify_all();
   }
 
   virtual void Run() {
@@ -50,7 +51,15 @@ class WorkerBase : public noncopyable {
       lock.unlock();
 
       task();
+      task_count_--;
+      cv_.notify_all();
     }
+  }
+
+  void WaitTaskDone() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv_.wait(lock,
+             [this] { return (tasks_.empty() && task_count_ == 0) || quit_; });
   }
 
  protected:
@@ -59,4 +68,5 @@ class WorkerBase : public noncopyable {
   bool quit_ = false;
   std::thread worker_;
   std::deque<Task> tasks_;
+  std::atomic_int task_count_{0};
 };

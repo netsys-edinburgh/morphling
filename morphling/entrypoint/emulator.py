@@ -42,6 +42,8 @@ def main():
         )
     )
 
+    print("Emulator exited")
+
     # param_meta_map_file = os.path.join(args.ckpt_path, "param_meta_map.json")
 
     # with open(param_meta_map_file, "r") as f:

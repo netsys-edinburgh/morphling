@@ -20,14 +20,42 @@ typedef std::uint64_t RequestID;
 
 typedef std::unordered_map<std::string, ShmMeta> ParamShmMap;
 
-#define KB 1024
-#define MB (KB * KB)
-#define GB (KB * KB * KB)
+// #define KB 1024
+// #define MB (KB * KB)
+// #define GB (KB * KB * KB)
+
+constexpr size_t KB = 1024;
+constexpr size_t MB = KB * KB;
+constexpr size_t GB = KB * KB * KB;
 
 template <typename T>
 struct DoNothingDeleter {
   void operator()(T* ptr) const {}
 };
+
+constexpr size_t operator"" _KB(unsigned long long val) { return val * KB; }
+constexpr size_t operator"" _MB(unsigned long long val) { return val * MB; }
+constexpr size_t operator"" _GB(unsigned long long val) { return val * GB; }
+
+// A constexpr function to convert any pointer (const or non-const) to void*
+template <typename T>
+constexpr void* pointer_to_void(T* ptr) {
+  return const_cast<void*>(reinterpret_cast<const void*>(
+      ptr));  // Cast to void* while preserving constness
+}
+
+// // Overload for const pointers
+// template <typename T>
+// constexpr const void* pointer_to_void(const T* ptr) {
+//   return static_cast<const void*>(ptr);  // Cast to const void*
+// }
+
+// A constexpr function to convert any const T* pointer to void*
+template <typename T>
+constexpr void* pointer_to_void(const T* ptr) {
+  return const_cast<void*>(reinterpret_cast<const void*>(
+      ptr));  // Cast to void* while preserving constness
+}
 
 // Helper macros to generate enum and string mappings
 #define ENUM_ENTRY_COMMA(value, EnumType) value,
