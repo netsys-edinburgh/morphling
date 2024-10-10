@@ -310,6 +310,7 @@ set(MORPHLING_EXT_SRC
   ${CHECKPOINT_SRC}
   ${MEMORY_SRC}
   ${UTILS_SRC}
+  ${INTERCEPT_SRC}
   ${hw_proto_srcs}
   ${hw_grpc_srcs}
   "csrc/python/checkpoint_py.cpp"
@@ -319,7 +320,6 @@ set(MORPHLING_EXT_LIB
   uuid Threads::Threads fmt
   libspdlog.so rttr_core
   grpc++ grpc++_reflection
-  # morphling_interceptor
 )
 define_gpu_extension_target(
   _C
@@ -332,24 +332,28 @@ define_gpu_extension_target(
   WITH_SOABI
 )
 
-set(MORPHLING_INTERCEPTOR_SRC
-${INTERCEPT_SRC}
-"csrc/python/intercept_py.cpp"
-)
-set(MORPHLING_INTERCEPTOR_LIB
-mkl_rt grpc++ grpc++_reflection
-libspdlog.so uuid
-)
-define_gpu_extension_target(
-_intercept
-DESTINATION morphling
-LANGUAGE ${MORPHLING_GPU_LANG}
-SOURCES ${MORPHLING_EXT_SRC}
-COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
-ARCHITECTURES ${MORPHLING_GPU_ARCHES}
-LIBRARIES ${MORPHLING_EXT_LIB}
-WITH_SOABI
-)
+# set(MORPHLING_INTERCEPTOR_SRC
+# ${INTERCEPT_SRC}
+# ${MEMORY_SRC}
+# ${UTILS_SRC}
+# ${hw_proto_srcs}
+# ${hw_grpc_srcs}
+# "csrc/python/intercept_py.cpp"
+# )
+# set(MORPHLING_INTERCEPTOR_LIB
+# mkl_rt grpc++ grpc++_reflection rttr_core
+# libspdlog.so uuid
+# )
+# define_gpu_extension_target(
+# _intercept
+# DESTINATION morphling
+# LANGUAGE ${MORPHLING_GPU_LANG}
+# SOURCES ${MORPHLING_INTERCEPTOR_SRC}
+# COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+# ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+# LIBRARIES ${MORPHLING_INTERCEPTOR_LIB}
+# WITH_SOABI
+# )
 
 # set(MORPHLING_ALLOCATOR_SRC
 # ${MEMORY_SRC}

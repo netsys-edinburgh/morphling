@@ -128,14 +128,21 @@ GPUWorkerPool::~GPUWorkerPool() {
   }
 }
 
-void GPUWorkerPool::EnqueueGemmWithPolicy(std::shared_ptr<GemmArgs> args) {
+void GPUWorkerPool::EnqueueGemmWithPolicy(const std::string& task_id,
+                                          std::shared_ptr<GemmArgs> args) {
   auto [gpu_id, priority] = scheduler_->Schedule(args.get());
   auto task = std::bind(&GPUWorker::RunCublasGemm, workers_[gpu_id], args);
-  workers_[gpu_id]->AddTask(task);
+  workers_[gpu_id]->AddTask(task_id, task);
 }
 
 void GPUWorkerPool::WaitAll() {
   for (auto& worker : workers_) {
     worker->WaitTaskDone();
+  }
+}
+
+void GPUWorkerPool::Wait(const std::string& task_id) {
+  for (auto& worker : workers_) {
+    worker->WaitTaskDone(task_id);
   }
 }

@@ -106,14 +106,14 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
                           ScheduleGemmResponse* response) override {
     const char* task_name = request->task_info().name().c_str();
     size_t task_size = request->task_info().size();
-    // std::shared_ptr<GemmArgs> args_ptr(
-    //     args, std::bind(&CloseSharedMemory, std::placeholders::_1,
-    //     task_size));
+    std::string task_id = request->task_id();
+
+    LOG_DEBUG("ScheduleGemmSync: {}, {}, {}", task_id, task_name, task_size);
 
     // FIXME: need to free the shared memory after the task is done
     auto args = AttachSharedMemoryPtr<GemmArgs>(task_name, task_size);
 
-    LOG_DEBUG("ScheduleGemmSync: {}", args->DebugString());
+    LOG_DEBUG("ScheduleGemmSync: {},  {}", task_id, args->DebugString());
 
     for (int i = 0; i < args->group_size; i++) {
       // read from repeated fields a_info, b_info, c_info
@@ -125,11 +125,11 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
                                             request->c_info(i).size());
     }
 
-    LOG_DEBUG("ScheduleGemmSync: EnqueueGemmWithPolicy");
+    LOG_DEBUG("ScheduleGemmSync: EnqueueGemmWithPolicy {}", task_id);
 
-    worker_pool_->EnqueueGemmWithPolicy(args);
-    worker_pool_->WaitAll();
-    LOG_DEBUG("ScheduleGemmSync: done");
+    worker_pool_->EnqueueGemmWithPolicy(task_id, args);
+    worker_pool_->Wait(task_id);
+    LOG_DEBUG("ScheduleGemmSync: done. {}", task_id);
 
     return Status::OK;
   }

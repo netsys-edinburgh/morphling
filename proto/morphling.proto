@@ -18,7 +18,7 @@ message ShmInfo {
 }
 
 message ScheduleGemmRequest {
-    // string task_id = 1;
+    string task_id = 1;
     uint32 device_id = 2;
     uint32 sync_stage = 3;
     repeated ShmInfo a_info = 10;

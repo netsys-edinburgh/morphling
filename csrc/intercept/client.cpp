@@ -1,7 +1,6 @@
 #include "client.h"
 
-#include <uuid/uuid.h>
-
+#include "common/generator.h"
 #include "memory/shared_memory.h"
 
 std::unique_ptr<MemoryManagerClient> kMemoryManagerClient = nullptr;
@@ -14,19 +13,18 @@ void MemoryManagerClient::ScheduleGemmSync(void* a, void* b, void* c,
   SET_SHM_INFO_REPEAT(request, c)
   SET_SHM_INFO(request, task)
 
-  // char uuid_str[37];
-  // uuid_t bin_uuid;
-  // uuid_generate_random(bin_uuid);
-  // uuid_unparse(bin_uuid, uuid_str);
+  auto task_id = GenUUID();
+  request.set_task_id(task_id);
 
-  // request.set_task_id(uuid_str);
+  LOG_DEBUG("ScheduleGemmSync: task_id: {}", task_id);
 
   morphling::ScheduleGemmResponse response;
   grpc::ClientContext context;
   auto status = stub_->ScheduleGemmSync(&context, request, &response);
 
-  LOG_FATAL_IF(!status.ok(), "Failed to schedule gemm task");
-  LOG_FATAL_IF(response.rsp().code() != 0, "Failed to schedule gemm task: %s",
+  LOG_FATAL_IF(!status.ok(), "Failed to schedule gemm task {}", task_id);
+  LOG_FATAL_IF(response.rsp().code() != 0,
+               "Failed to schedule gemm task: {} {}", task_id,
                response.rsp().message().c_str());
 }
 

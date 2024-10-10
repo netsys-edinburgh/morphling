@@ -4,14 +4,13 @@ from dataclasses import dataclass, field
 import numpy as np
 from transformers import HfArgumentParser, set_seed
 
+from morphling.common import DeviceConfig, EnhancedJSONEncoder
 from morphling.common.config import SYMBOLS, bytes2human, human2bytes
 
 
 @dataclass
 class DeviceConfigArguments:
     num_devices: int = field(default=256, metadata={"help": "Number of devices"})
-    batch_size: int = field(default=128, metadata={"help": "Batch size"})
-    seq_length: int = field(default=1024, metadata={"help": "Sequence length"})
     flops_lb: str = field(
         default=5e12, metadata={"help": "Lower bound of device FLOPS"}
     )
@@ -148,17 +147,18 @@ if __name__ == "__main__":
     # save the device config
     meta_list = []
     for id in range(args.num_devices):
-        meta = {
-            "id": id,
-            "flops": int(args.device_flops[id]),
-            "memory": int(args.device_mem[id]),
-            "ul_bw": int(args.ul_bw[id]),
-            "dl_bw": int(args.dl_bw[id]),
-            "ul_lat": int(args.ul_lat[id]),
-            "dl_lat": int(args.dl_lat[id]),
-        }
-
+        meta = DeviceConfig(
+            rank=id,
+            flops=int(args.device_flops[id]),
+            memory=int(args.device_mem[id]),
+            ul_bw=float(args.ul_bw[id]),
+            dl_bw=float(args.dl_bw[id]),
+            ul_lat=float(args.ul_lat[id]),
+            dl_lat=float(args.dl_lat[id]),
+            ip="localhost",
+            port=39500 + id,
+        )
         meta_list.append(meta)
 
     with open(args.output, "w") as f:
-        json.dump(meta_list, f, indent=4)
+        json.dump(meta_list, f, indent=4, cls=EnhancedJSONEncoder)
