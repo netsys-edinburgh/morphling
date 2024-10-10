@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import logging
 from dataclasses import dataclass, field
@@ -132,26 +133,34 @@ def human2bytes(s):
         prefix[s] = 1 << (i + 1) * 10
     return int(num * prefix[letter])
 
+@dataclass
+class TrainigConfig:
+    batch_size: int = field(default=128, metadata={"help": "Batch size"})
+    seq_length: int = field(default=1024, metadata={"help": "Sequence length"})
+    model: str = field(default="gpt2", metadata={"help": "Model name"})
 
 @dataclass
 class DeviceConfig:
-    flops: str = field(
+    rank: int
+    ip: str
+    port: int
+    flops: int = field(
         default="1e12",
         metadata={"help": "The number of FLOPs of the device, support customary units"},
     )
-    memory: str = field(
+    memory: int = field(
         default="1e12",
         metadata={
             "help": "The memory size in bytes of the device, support customary units"
         },
     )
-    ul_bw: str = field(
+    ul_bw: float = field(
         default="1e12",
         metadata={
             "help": "The uplink bandwidth in bytes of the device, support customary units"
         },
     )
-    dl_bw: str = field(
+    dl_bw: float = field(
         default="1e12",
         metadata={
             "help": "The downlink bandwidth in bytes of the device, support customary units"
@@ -168,11 +177,18 @@ class DeviceConfig:
         metadata={"help": "The downlink latency of the device"},
     )
 
-    def __post_init__(self):
-        self.flops = human2bytes(self.flops)
-        self.memory = human2bytes(self.memory)
-        self.ul_bw = human2bytes(self.ul_bw)
-        self.dl_bw = human2bytes(self.dl_bw)
+    # def __post_init__(self):
+    #     self.flops = human2bytes(self.flops)
+    #     self.memory = human2bytes(self.memory)
+    #     self.ul_bw = human2bytes(self.ul_bw)
+    #     self.dl_bw = human2bytes(self.dl_bw)
+
+
+class EnhancedJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if dataclasses.is_dataclass(o):
+            return dataclasses.asdict(o)
+        return super().default(o)
 
 
 @dataclass

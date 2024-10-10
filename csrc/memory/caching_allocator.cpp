@@ -8,8 +8,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <uuid/uuid.h>
 
+#include "common/generator.h"
 #include "common/types_and_defs.h"
 #include "utils/logger.h"
 
@@ -167,13 +167,8 @@ void* CachingAllocator::AllocShmMemory(size_t bytes) {
   return ptr;
 }
 void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
-  // generate uuid string
   ShmMeta shm_meta;
-  uuid_t uuid;
-  uuid_generate(uuid);
-  char uuid_str[37];
-  uuid_unparse(uuid, uuid_str);
-  shm_meta.name = "/emulator_shm_" + std::string(uuid_str);
+  shm_meta.name = "/emulator_shm_" + GenUUID();
 
   // LOG_DEBUG("shm_meta name: {}", shm_meta.name);
 

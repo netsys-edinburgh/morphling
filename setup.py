@@ -276,7 +276,7 @@ setup(
     version="0.0.1",
     ext_modules=[
         CMakeExtension(name="morphling._C", target_type='shared'),
-        CMakeExtension(name="morphling._intercept", target_type='shared'),
+        # CMakeExtension(name="morphling._intercept", target_type='shared'),
         CMakeExtension(name="morphling.morphling_server", target_type='executable'),
     ],
     entry_points={

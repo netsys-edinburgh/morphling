@@ -65,8 +65,10 @@ class GPUWorkerPool : public noncopyable {
 
   DELETE_COPY_AND_ASSIGN(GPUWorkerPool);
 
-  void EnqueueGemmWithPolicy(std::shared_ptr<GemmArgs> args);
+  void EnqueueGemmWithPolicy(const std::string& task_id,
+                             std::shared_ptr<GemmArgs> args);
   void WaitAll();
+  void Wait(const std::string& task_id);
 
  private:
   std::vector<std::shared_ptr<GPUWorker>> workers_;

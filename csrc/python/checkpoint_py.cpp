@@ -53,8 +53,4 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def(py::init<>())
       .def("get_model_param", &MemoryManagerClient::GetModelParam,
            "Get model parameter from server");
-  //   py::class_<CheckpointHandle>(m, "CheckpointHandle")
-  //       .def(py::init<const std::string&>())
-  //       .def("read_checkpoint", &CheckpointHandle::ReadCheckpoint,
-  //            "Read checkpoint from disk");
 }

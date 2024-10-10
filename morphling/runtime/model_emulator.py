@@ -16,6 +16,7 @@ from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
 from morphling._C import (ArcherTensorHandle, MemoryManagerClient,
                           set_tensor_shm)
+# from morphling._intercept import MemoryManagerClient
 from morphling.common import *
 from morphling.utils import get_checkpoint_paths
 
@@ -78,9 +79,6 @@ def from_pretrained_decorator(orig_from_pretrained: Callable) -> Callable:
         return model
 
     return archer_from_pretrained
-
-
-
 
 class InitEmptyModel:
     def __init__(self, cls: Type[PreTrainedModel]):
