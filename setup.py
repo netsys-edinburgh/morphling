@@ -283,6 +283,7 @@ setup(
         "console_scripts": [
             "morphling_emulator=morphling.entrypoint.emulator:main",
             "morphling_device_config=morphling.entrypoint.generate_device_config:main",
+            "morphling_device=morphling.entrypoint.run_device:main",
             "morphling_server=morphling.entrypoint.server:main",
             "morphling_cmd=morphling.entrypoint.cmdline:main",
         ],
