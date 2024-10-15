@@ -142,8 +142,8 @@ class TrainigConfig:
 @dataclass
 class DeviceConfig:
     rank: int
-    ip: str
-    port: int
+    # ip: str
+    # port: int
     flops: int = field(
         default="1e12",
         metadata={"help": "The number of FLOPs of the device, support customary units"},
