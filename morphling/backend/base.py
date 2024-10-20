@@ -1,9 +1,13 @@
 from abc import ABC, abstractmethod
 
+import torch
+
 
 class BaseBackend(ABC):
     @abstractmethod
-    def on_response(self, message):
+    def dispatch_matmul(
+        self, mat_a: torch.Tensor, mat_b: torch.Tensor, block_size: int
+    ):
         pass
 
 

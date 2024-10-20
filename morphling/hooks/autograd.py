@@ -1,11 +1,43 @@
 import functools
+from typing import List, Union
 
 import numpy as np
 import torch
 
+from morphling.backend import BaseBackend
 from morphling.common import get_logger
 
 logger = get_logger()
+_backend: BaseBackend = None
+
+HOOK_TYPES = [
+    "linear",
+    "layer_norm",
+    "softmax",
+    "add",
+    "divide",
+    "subtract",
+    "matmul",
+    "relu",
+    "gelu",
+    "dropout",
+]
+
+
+def apply_hooks(types: Union[str, List[str]]):
+    if isinstance(types, list):
+        for t in types:
+            if t not in HOOK_TYPES:
+                raise ValueError(f"Unsupported hook type: {t}")
+
+        if t == "linear":
+            torch.nn.functional.linear = LinearFunction.apply
+            torch.Tensor.__matmul__ = LinearFunction.apply
+            torch.bmm = LinearFunction.apply
+            torch.matmul = LinearFunction.apply
+
+        else:
+            raise NotImplementedError(f"Hook type {t} is not implemented yet")
 
 
 # custom autograd function for linear layer
@@ -20,7 +52,8 @@ class LinearFunction(torch.autograd.Function):
         # output = input.mm(weight.t())
         logger.debug(f"input shape: {input.shape}")
         logger.debug(f"weight shape: {weight.shape}")
-        output = torch.as_tensor(np.matmul(input, weight))
+        # output = torch.as_tensor(np.matmul(input, weight))
+        output = _backend.dispatch_matmul(input, weight)
         if bias is not None:
             output += bias.unsqueeze(0).expand_as(output)
         return output
@@ -35,13 +68,19 @@ class LinearFunction(torch.autograd.Function):
         logger.debug(f"weight shape: {weight.shape}")
         if ctx.needs_input_grad[0]:
             # grad_input = grad_output.mm(weight)
-            grad_input = torch.as_tensor(
-                np.matmul(grad_output, weight.transpose(-2, -1))
+            # grad_input = torch.as_tensor(
+            #     np.matmul(grad_output, weight.transpose(-2, -1))
+            # )
+            grad_input = _backend.dispatch_matmul(
+                grad_output, weight.transpose(-2, -1)
             )
         if ctx.needs_input_grad[1]:
             # grad_weight = grad_output.t().mm(input)
-            grad_weight = torch.as_tensor(
-                np.matmul(grad_output.transpose(-2, -1), input)
+            # grad_weight = torch.as_tensor(
+            #     np.matmul(grad_output.transpose(-2, -1), input)
+            # ).transpose(-2, -1)
+            grad_weight = _backend.dispatch_matmul(
+                grad_output.transpose(-2, -1), input
             ).transpose(-2, -1)
         if bias is not None and ctx.needs_input_grad[2]:
             grad_bias = grad_output.sum(0)

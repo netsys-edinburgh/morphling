@@ -9,6 +9,20 @@ from morphling.common.config import SYMBOLS, bytes2human, human2bytes
 
 
 @dataclass
+class ModelConfigArguments:
+    model_name: str = field(
+        default="facebook/opt-125m", metadata={"help": "Huggingface model name"}
+    )
+    batch_size: int = field(default=128, metadata={"help": "Batch size"})
+    seq_length: int = field(default=1024, metadata={"help": "Sequence length"})
+    backend: str = field(
+        default="rabbitmq",
+        metadata={"help": "The backend to use for the device"},
+    )
+    block_size: int = field(default=128, metadata={"help": "Block size"})
+
+
+@dataclass
 class DeviceConfigArguments:
     num_devices: int = field(
         default=256, metadata={"help": "Number of devices"}
@@ -52,7 +66,7 @@ class DeviceConfigArguments:
         default="1G", metadata={"help": "Lower bound of device memory"}
     )
     mem_ub: str = field(
-        default="100G", metadata={"help": "Upper bound of device memory"}
+        default="10G", metadata={"help": "Upper bound of device memory"}
     )
 
     seed: int = field(default=42, metadata={"help": "Random seed"})
