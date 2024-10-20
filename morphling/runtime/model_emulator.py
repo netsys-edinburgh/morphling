@@ -14,8 +14,8 @@ from tqdm import tqdm
 from transformers import AutoConfig
 from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
-from morphling._C import (ArcherTensorHandle, MemoryManagerClient,
-                          set_tensor_shm)
+from morphling._C import ArcherTensorHandle, MemoryManagerClient, set_tensor_shm
+
 # from morphling._intercept import MemoryManagerClient
 from morphling.common import *
 from morphling.utils import get_checkpoint_paths
@@ -25,7 +25,9 @@ def do_nothing_decorator(orig_func: Callable) -> Callable:
     @functools.wraps(orig_func)
     def do_nothing(*args, **kwargs):
         pass
+
     return do_nothing
+
 
 def param_init_decorator(orig_param_init: Callable) -> Callable:
     @functools.wraps(orig_param_init)
@@ -46,6 +48,7 @@ def param_init_decorator(orig_param_init: Callable) -> Callable:
             )
 
     return empty_param_init
+
 
 def from_pretrained_decorator(orig_from_pretrained: Callable) -> Callable:
     @functools.wraps(orig_from_pretrained)
@@ -80,6 +83,7 @@ def from_pretrained_decorator(orig_from_pretrained: Callable) -> Callable:
 
     return archer_from_pretrained
 
+
 class InitEmptyModel:
     def __init__(self, cls: Type[PreTrainedModel]):
         self.cls = cls
@@ -106,7 +110,9 @@ class InitEmptyModel:
 
             if hasattr(module, "reset_parameters"):
                 module._old_reset_parameters = module.reset_parameters
-                module.reset_parameters = do_nothing_decorator(module.reset_parameters)
+                module.reset_parameters = do_nothing_decorator(
+                    module.reset_parameters
+                )
 
         # self.cls._old_init = self.cls.__init__
         # self.cls.__init__ = do_nothing_decorator(self.cls.__init__)
@@ -115,13 +121,14 @@ class InitEmptyModel:
         PreTrainedModel._old_post_init = PreTrainedModel.post_init
 
         self.cls.post_init = do_nothing_decorator(self.cls.post_init)
-        PreTrainedModel.post_init = do_nothing_decorator(PreTrainedModel.post_init)
+        PreTrainedModel.post_init = do_nothing_decorator(
+            PreTrainedModel.post_init
+        )
 
         self.cls._old_from_pretrained = self.cls.from_pretrained
         self.cls.from_pretrained = classmethod(
             from_pretrained_decorator(self.cls.from_pretrained)
         )
-
 
     def __exit__(self, exc_type, exc_value, traceback):
         # self.cls.__init__ = self.cls._old_init
@@ -148,7 +155,6 @@ class InitEmptyModel:
             if hasattr(module, "reset_parameters"):
                 module.reset_parameters = module._old_reset_parameters
 
-
     # @staticmethod
     # def set_model_param(model):
     #     client = MemoryManagerClient()
@@ -170,6 +176,7 @@ class InitEmptyModel:
     #         ), f"param {name} is zero {param}"
     #         # print(f"param {name} is not zero {param}")
 
+
 class EmulationEngine(object):
     param_id = 0
     request_id = 0
@@ -177,7 +184,6 @@ class EmulationEngine(object):
     config = {}
 
     def __init__(self, config: PretrainedConfig):
-
         self.config = config
 
         model_name_or_path = config._name_or_path
@@ -200,9 +206,10 @@ class EmulationEngine(object):
         self.ckpt_files = checkpoint_paths
 
     def init(
-        self, cls: Type[PreTrainedModel], config: Union[str, Dict, EmulatorConfig]
+        self,
+        cls: Type[PreTrainedModel],
+        config: Union[str, Dict, EmulatorConfig],
     ):
-
         self.cls = cls
         self.param_meta_map = {}
         self.tensor_id_map = {}
@@ -226,9 +233,7 @@ class EmulationEngine(object):
         return self
 
     def __enter__(self):
-
         def do_nothing_decorator(orig_func: Callable) -> Callable:
-
             @functools.wraps(orig_func)
             def do_nothing(*args, **kwargs):
                 pass
@@ -244,37 +249,40 @@ class EmulationEngine(object):
             return archer_post_init
 
         def torch_index_select_decorator(orig_torch_index_select: Callable):
-
             @functools.wraps(orig_torch_index_select)
             def archer_torch_index_select(input, dim, index):
-                return orig_torch_index_select(input, dim, index.to(input.device)).to(
-                    "cuda:0"
-                )
+                return orig_torch_index_select(
+                    input, dim, index.to(input.device)
+                ).to("cuda:0")
 
             return archer_torch_index_select
 
         def apply_to_model_decorator(orig_apply_to_model: Callable) -> Callable:
-
             @functools.wraps(orig_apply_to_model)
             def archer_apply_to_model(cls, fn):
                 for name, param in cls.named_parameters(recurse=True):
                     if name not in self.param_meta_map:
                         continue
                     param.data = torch.zeros(
-                        1, dtype=param.dtype, device=param.device, pin_memory=True
+                        1,
+                        dtype=param.dtype,
+                        device=param.device,
+                        pin_memory=True,
                     )
 
                 for name, buffer in cls.named_buffers(recurse=True):
                     if name not in self.param_meta_map:
                         continue
                     buffer.data = torch.zeros(
-                        1, dtype=buffer.dtype, device=buffer.device, pin_memory=True
+                        1,
+                        dtype=buffer.dtype,
+                        device=buffer.device,
+                        pin_memory=True,
                     )
 
             return archer_apply_to_model
 
         def init_decorator(orig_init: Callable) -> Callable:
-
             @functools.wraps(orig_init)
             def archer_init(cls, config, *args, **kwargs):
                 # self.config = config
@@ -283,7 +291,6 @@ class EmulationEngine(object):
             return archer_init
 
         def param_init_decorator(orig_param_init: Callable) -> Callable:
-
             @functools.wraps(orig_param_init)
             def archer_param_init(cls, *args, **kwargs):
                 orig_param_init(cls, *args, **kwargs)
@@ -308,13 +315,17 @@ class EmulationEngine(object):
         self.cls._old_init = self.cls.__init__
         self.cls.__init__ = init_decorator(self.cls._old_init)
 
-        torch.nn.modules.module.Module._old_apply = torch.nn.modules.module.Module.apply
+        torch.nn.modules.module.Module._old_apply = (
+            torch.nn.modules.module.Module.apply
+        )
         torch.nn.modules.module.Module.apply = apply_to_model_decorator(
             torch.nn.modules.module.Module._old_apply
         )
 
         torch._old_index_select = torch.index_select
-        torch.index_select = torch_index_select_decorator(torch._old_index_select)
+        torch.index_select = torch_index_select_decorator(
+            torch._old_index_select
+        )
         torch.Tensor._old_index_select = torch.Tensor.index_select
         torch.Tensor.index_select = torch_index_select_decorator(
             torch.Tensor._old_index_select
@@ -323,7 +334,9 @@ class EmulationEngine(object):
         self.cls._old_post_init = self.cls.post_init
         self.cls.post_init = post_init_decorator(self.cls._old_post_init)
         PreTrainedModel._old_post_init = PreTrainedModel.post_init
-        PreTrainedModel.post_init = post_init_decorator(PreTrainedModel._old_post_init)
+        PreTrainedModel.post_init = post_init_decorator(
+            PreTrainedModel._old_post_init
+        )
 
         # for all the modules in torch.nn, add post_init method
         # assert False, torch.nn.modules.__dict__
@@ -346,10 +359,13 @@ class EmulationEngine(object):
 
             if hasattr(module, "reset_parameters"):
                 module._old_reset_parameters = module.reset_parameters
-                module.reset_parameters = do_nothing_decorator(module.reset_parameters)
+                module.reset_parameters = do_nothing_decorator(
+                    module.reset_parameters
+                )
 
-        def from_pretrained_decorator(orig_from_pretrained: Callable) -> Callable:
-
+        def from_pretrained_decorator(
+            orig_from_pretrained: Callable,
+        ) -> Callable:
             @functools.wraps(orig_from_pretrained)
             def archer_from_pretrained(cls, *args, **kwargs):
                 # print("Creating model from scratch ...")
@@ -365,18 +381,24 @@ class EmulationEngine(object):
                     or not os.path.exists(param_meta_map_file)
                 ):
                     print(
-                        "Creating model from scratch ...", self.ckpt_files, flush=True
+                        "Creating model from scratch ...",
+                        self.ckpt_files,
+                        flush=True,
                     )
 
                     self.cls.__init__ = self.cls._old_init
 
                     empty_state_dict = {}
                     for ckpt in tqdm(
-                        self.ckpt_files, desc="Loading checkpoint files", smoothing=0
+                        self.ckpt_files,
+                        desc="Loading checkpoint files",
+                        smoothing=0,
                     ):
                         state_dict = {}
                         if "safetensors" in ckpt:
-                            with safe_open(ckpt, framework="pt", device="cpu") as f:
+                            with safe_open(
+                                ckpt, framework="pt", device="cpu"
+                            ) as f:
                                 for k in f.keys():
                                     state_dict[k] = f.get_tensor(k)
                         else:
@@ -406,14 +428,21 @@ class EmulationEngine(object):
                     with open(param_meta_map_file, "r") as f:
                         self.param_meta_map = json.load(f)
 
-                is_flash_attn_available = kwargs.get("is_flash_attn_available", False)
+                is_flash_attn_available = kwargs.get(
+                    "is_flash_attn_available", False
+                )
 
-                if self.dtype_cls is torch.bfloat16 or self.dtype_cls is torch.float16:
+                if (
+                    self.dtype_cls is torch.bfloat16
+                    or self.dtype_cls is torch.float16
+                ):
                     model = cls._from_config(
                         self.config,
                         torch_dtype=self.dtype_cls,
                         attn_implementation=(
-                            "flash_attention_2" if is_flash_attn_available else "eager"
+                            "flash_attention_2"
+                            if is_flash_attn_available
+                            else "eager"
                         ),
                     )
                 else:
@@ -424,7 +453,9 @@ class EmulationEngine(object):
                 for name, param in model.named_parameters(recurse=True):
                     # remove base_model_prefix from self.param_meta_map
                     if name.startswith(base_model_prefix):
-                        name_without_prefix = name[(len(base_model_prefix) + 1) :]
+                        name_without_prefix = name[
+                            (len(base_model_prefix) + 1) :
+                        ]
                         if name_without_prefix in self.param_meta_map:
                             self.param_meta_map[name] = self.param_meta_map[
                                 name_without_prefix
@@ -441,12 +472,16 @@ class EmulationEngine(object):
                         print(f"param {name} not found in param_shm_map")
                         continue
                     shm_name, shm_size = param_shm_map[name]
-                    tensor = torch.empty(param.data.shape, dtype=param.data.dtype)
+                    tensor = torch.empty(
+                        param.data.shape, dtype=param.data.dtype
+                    )
                     set_tensor_shm(tensor, shm_name, shm_size)
                     param.data = tensor
                     # print(f"set tensor {name} to shm {shm_name} with size {shm_size}", param.data.size())
                     assert ~(
-                        torch.isclose(param.data, torch.zeros_like(param.data)).all()
+                        torch.isclose(
+                            param.data, torch.zeros_like(param.data)
+                        ).all()
                         == True
                     ), f"param {name} is zero {param}"
                     # print(f"param {name} is not zero {param}")
@@ -464,10 +499,11 @@ class EmulationEngine(object):
 
     # clean up initialization hooks
     def __exit__(self, exc_type, exc_value, traceback):
-
         self.cls.__init__ = self.cls._old_init
         self.cls.from_pretrained = self.cls._old_from_pretrained
-        torch.nn.modules.module.Module.apply = torch.nn.modules.module.Module._old_apply
+        torch.nn.modules.module.Module.apply = (
+            torch.nn.modules.module.Module._old_apply
+        )
         torch.index_select = torch._old_index_select
         torch.Tensor.index_select = torch.Tensor._old_index_select
 
@@ -510,7 +546,9 @@ class EmulationEngine(object):
                 param = state_dict[param_name]
                 param_id = self._generate_param_id()
 
-                file_offset = self.ArcherTensorHandle.offload_tensor(param, param_id)
+                file_offset = self.ArcherTensorHandle.offload_tensor(
+                    param, param_id
+                )
 
                 self.param_meta_map[param_name] = {
                     "id": param_id,

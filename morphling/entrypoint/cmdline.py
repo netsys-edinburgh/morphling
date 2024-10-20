@@ -14,7 +14,6 @@ from morphling.utils import get_checkpoint_paths
 
 
 def save_model(model_name_or_path, output_path, dtype, force=False):
-
     if os.path.exists(model_name_or_path):
         checkpoint_paths = get_checkpoint_paths(model_name_or_path)
     else:
@@ -36,7 +35,6 @@ def save_model(model_name_or_path, output_path, dtype, force=False):
 
     if force and os.path.exists(output_path):
         shutil.rmtree(output_path)
-
 
     if not os.path.exists(output_path):
         os.makedirs(output_path)
@@ -108,10 +106,16 @@ def parse_args():
     # Subparser for `save` command
     save_parser = subparsers.add_parser("save", help="Save model checkpoint")
     save_parser.add_argument(
-        "--model", type=str, required=True, help="Model name or path from Huggingface"
+        "--model",
+        type=str,
+        required=True,
+        help="Model name or path from Huggingface",
     )
     save_parser.add_argument(
-        "--output", type=str, required=True, help="Path to save the model checkpoint"
+        "--output",
+        type=str,
+        required=True,
+        help="Path to save the model checkpoint",
     )
     save_parser.add_argument(
         "--force",
@@ -119,7 +123,10 @@ def parse_args():
         help="Force overwrite the output directory if it exists",
     )
     save_parser.add_argument(
-        "--dtype", type=str, default="float32", help="Data type to save the model"
+        "--dtype",
+        type=str,
+        default="float32",
+        help="Data type to save the model",
     )
 
     return parser.parse_args()

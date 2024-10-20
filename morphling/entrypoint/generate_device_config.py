@@ -10,25 +10,29 @@ from morphling.common.config import SYMBOLS, bytes2human, human2bytes
 
 @dataclass
 class DeviceConfigArguments:
-    num_devices: int = field(default=256, metadata={"help": "Number of devices"})
+    num_devices: int = field(
+        default=256, metadata={"help": "Number of devices"}
+    )
     flops_lb: str = field(
-        default=5e12, metadata={"help": "Lower bound of device FLOPS"}
+        default="5T", metadata={"help": "Lower bound of device FLOPS"}
     )
     flops_ub: str = field(
-        default=7e12, metadata={"help": "Upper bound of device FLOPS"}
+        default="7T", metadata={"help": "Upper bound of device FLOPS"}
     )
     ul_bw_lb: str = field(
-        default=5e6, metadata={"help": "Lower bound of device uplink bandwidth (B/s)"}
+        default="5M",
+        metadata={"help": "Lower bound of device uplink bandwidth (B/s)"},
     )
     ul_bw_ub: str = field(
-        default=10e6, metadata={"help": "Upper bound of device uplink bandwidth (B/s)"}
+        default="10M",
+        metadata={"help": "Upper bound of device uplink bandwidth (B/s)"},
     )
     dl_bw_lb: str = field(
-        default=10e6,
+        default="10M",
         metadata={"help": "Lower bound of device downlink bandwidth (B/s)"},
     )
     dl_bw_ub: str = field(
-        default=100e6,
+        default="100M",
         metadata={"help": "Upper bound of device downlink bandwidth (B/s)"},
     )
     ul_latency_lb: float = field(
@@ -44,13 +48,21 @@ class DeviceConfigArguments:
         default=0.5, metadata={"help": "Upper bound of device downlink latency"}
     )
 
-    mem_lb: str = field(default=1e9, metadata={"help": "Lower bound of device memory"})
-    mem_ub: str = field(default=1e11, metadata={"help": "Upper bound of device memory"})
+    mem_lb: str = field(
+        default="1G", metadata={"help": "Lower bound of device memory"}
+    )
+    mem_ub: str = field(
+        default="100G", metadata={"help": "Upper bound of device memory"}
+    )
 
     seed: int = field(default=42, metadata={"help": "Random seed"})
 
-    straggler_ratio: float = field(default=-1, metadata={"help": "Straggler ratio"})
-    straggler_num: int = field(default=-1, metadata={"help": "Number of stragglers"})
+    straggler_ratio: float = field(
+        default=-1, metadata={"help": "Straggler ratio"}
+    )
+    straggler_num: int = field(
+        default=-1, metadata={"help": "Number of stragglers"}
+    )
     straggler_ul_scale: float = field(
         default=0.1, metadata={"help": "Straggler uplink scale"}
     )
@@ -66,7 +78,6 @@ class DeviceConfigArguments:
     )
 
     def __post_init__(self):
-
         # convert the human-readable units to bytes
         self.flops_lb = human2bytes(self.flops_lb)
         self.flops_ub = human2bytes(self.flops_ub)
@@ -95,30 +106,37 @@ class DeviceConfigArguments:
         ), "Upper bound of device downlink latency must be greater than lower bound"
 
         set_seed(42)
-        self.device_flops = (
-            np.random.rand(self.num_devices) * (self.flops_ub - self.flops_lb)
-            + self.flops_lb
+        self.device_flops = np.random.randint(
+            self.flops_lb, self.flops_ub, self.num_devices
         )
-        self.ul_bw = np.random.randint(self.ul_bw_lb, self.ul_bw_ub, self.num_devices)
-        self.dl_bw = np.random.randint(self.dl_bw_lb, self.dl_bw_ub, self.num_devices)
-        self.device_mem = np.random.randint(self.mem_lb, self.mem_ub, self.num_devices)
+        self.ul_bw = np.random.randint(
+            self.ul_bw_lb, self.ul_bw_ub, self.num_devices
+        )
+        self.dl_bw = np.random.randint(
+            self.dl_bw_lb, self.dl_bw_ub, self.num_devices
+        )
+        self.device_mem = np.random.randint(
+            self.mem_lb, self.mem_ub, self.num_devices
+        )
         self.ul_lat = np.zeros(self.num_devices)
         self.dl_lat = np.zeros(self.num_devices)
 
-        self.byte_size = 2
-        self.num_tokens = self.batch_size * self.seq_length
+        # self.byte_size = 2
+        # self.num_tokens = self.batch_size * self.seq_length
 
-        self.device_flops = self.device_flops / 1000  # TFLOPS / ms
-        self.ul_bw = self.ul_bw / 1000  # MB / ms
-        self.dl_bw = self.dl_bw / 1000  # MB / ms
-        self.ul_lat = self.ul_lat * 1000  # ms
-        self.dl_lat = self.dl_lat * 1000  # ms
+        # self.device_flops = self.device_flops / 1000  # TFLOPS / ms
+        # self.ul_bw = self.ul_bw / 1000  # MB / ms
+        # self.dl_bw = self.dl_bw / 1000  # MB / ms
+        # self.ul_lat = self.ul_lat * 1000  # ms
+        # self.dl_lat = self.dl_lat * 1000  # ms
 
         # straggler_ratio and straggler_num can only be one of them positive
         # assert self.straggler_ratio >= 0 or self.straggler_num >= 0, "Only one of straggler_ratio and straggler_num can be positive"
         self.num_stragglers = 0
         if self.straggler_ratio > 0:
-            self.num_stragglers = int(np.ceil(self.num_devices * self.straggler_ratio))
+            self.num_stragglers = int(
+                np.ceil(self.num_devices * self.straggler_ratio)
+            )
         if self.straggler_num > 0:
             self.num_stragglers = self.straggler_num
         print(
@@ -135,7 +153,8 @@ class DeviceConfigArguments:
                 self.dl_bw[self.straggler_idx] * self.straggler_dl_scale
             )
             self.device_flops[self.straggler_idx] = (
-                self.device_flops[self.straggler_idx] * self.straggler_flops_scale
+                self.device_flops[self.straggler_idx]
+                * self.straggler_flops_scale
             )
 
 
@@ -155,8 +174,6 @@ if __name__ == "__main__":
             dl_bw=float(args.dl_bw[id]),
             ul_lat=float(args.ul_lat[id]),
             dl_lat=float(args.dl_lat[id]),
-            ip="localhost",
-            port=39500 + id,
         )
         meta_list.append(meta)
 

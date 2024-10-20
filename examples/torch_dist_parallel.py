@@ -6,8 +6,12 @@ import os
 import torch
 import torch.distributed as dist
 from torch.distributed.optim import DistributedOptimizer
-from torch.distributed.pipelining import (PipelineStage, ScheduleGPipe,
-                                          SplitPoint, pipeline)
+from torch.distributed.pipelining import (
+    PipelineStage,
+    ScheduleGPipe,
+    SplitPoint,
+    pipeline,
+)
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import SGD
 from torch.utils.data import DataLoader
@@ -18,7 +22,9 @@ rank = int(os.environ["RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 # device = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
 device = torch.device("cpu")
-torch.distributed.init_process_group(rank=rank, world_size=world_size, backend="gloo", init_method="env://")
+torch.distributed.init_process_group(
+    rank=rank, world_size=world_size, backend="gloo", init_method="env://"
+)
 
 print(f"rank = {rank}, world_size = {world_size}, device = {device}")
 
@@ -35,7 +41,8 @@ print(f"model.state_dict() = {state_dict.keys()}")
 tokenizer = AutoTokenizer.from_pretrained(args.model)
 tokenizer.pad_token = tokenizer.eos_token
 mb_prompts = (
-    "How do you", "I like to",
+    "How do you",
+    "I like to",
 )  # microbatch size = 2
 
 # Cut model by equal number of layers per rank
@@ -56,10 +63,18 @@ print("Pipeline stage created")
 
 # Run time inputs
 full_batch_prompts = (
-    "How do you", "I like to", "Can I help", "You need to",
-    "The weather is", "I found a", "What is your", "You are so",
+    "How do you",
+    "I like to",
+    "Can I help",
+    "You need to",
+    "The weather is",
+    "I found a",
+    "What is your",
+    "You are so",
 )  # full batch size = 8
-inputs = tokenizer(full_batch_prompts, return_tensors="pt", padding=True).to(device)
+inputs = tokenizer(full_batch_prompts, return_tensors="pt", padding=True).to(
+    device
+)
 
 # Attach to a schedule
 # number of microbatches = 8 // 2 = 4

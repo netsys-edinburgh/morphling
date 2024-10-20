@@ -83,6 +83,8 @@ for f in functions:
     setattr(torch, f, torch_decorator(func, f))
 
 inputs = torch.zeros((1, 1), dtype=torch.long)
-output = model.generate(inputs, do_sample=True, max_length=50, pad_token_id=50256)
+output = model.generate(
+    inputs, do_sample=True, max_length=50, pad_token_id=50256
+)
 
 # print(output)

@@ -25,23 +25,33 @@ from typing import Dict, Optional, Union
 
 import torch
 from accelerate import dispatch_model, init_empty_weights
+
 # from accelerate.hooks import add_hook_to_module
 from accelerate.utils import set_module_tensor_to_device
-from serverless_llm_store._C import (allocate_cuda_memory,
-                                     get_cuda_memory_handles,
-                                     get_device_uuid_map, restore_tensors,
-                                     save_tensors)
+from serverless_llm_store._C import (
+    allocate_cuda_memory,
+    get_cuda_memory_handles,
+    get_device_uuid_map,
+    restore_tensors,
+    save_tensors,
+)
 from serverless_llm_store.client import SllmStoreClient
 from serverless_llm_store.device_map_utils import (
-    DeviceMapType, _compute_device_placement_from_map,
-    _compute_device_placement_from_map_fast, _expand_tensor_name,
-    _transform_device_map_to_dict)
+    DeviceMapType,
+    _compute_device_placement_from_map,
+    _compute_device_placement_from_map_fast,
+    _expand_tensor_name,
+    _transform_device_map_to_dict,
+)
 from serverless_llm_store.logger import init_logger
-from serverless_llm_store.utils import (calculate_device_memory,
-                                        calculate_tensor_device_offsets,
-                                        dtype_byte_size, get_no_split_modules,
-                                        get_tied_no_split_modules,
-                                        send_module_buffers_to_device)
+from serverless_llm_store.utils import (
+    calculate_device_memory,
+    calculate_tensor_device_offsets,
+    dtype_byte_size,
+    get_no_split_modules,
+    get_tied_no_split_modules,
+    send_module_buffers_to_device,
+)
 from torch import nn
 from transformers import AutoConfig, AutoModelForCausalLM, GenerationConfig
 
@@ -71,7 +81,13 @@ def save_dict(model_state_dict: Dict[str, torch.Tensor], model_path: str):
     tensor_index = {}
     for name, param in model_state_dict.items():
         # name: offset, size
-        tensor_index[name] = (tensor_offsets[name], tensor_data_index[name][1], tuple(param.shape), tuple(param.stride()), str(param.dtype))
+        tensor_index[name] = (
+            tensor_offsets[name],
+            tensor_data_index[name][1],
+            tuple(param.shape),
+            tuple(param.stride()),
+            str(param.dtype),
+        )
 
     # save tensor index
     with open(os.path.join(model_path, "tensor_index.json"), "w") as f:
@@ -156,5 +172,3 @@ def save_model(model: nn.Module, model_path: str):
     tied_no_split_modules = get_tied_no_split_modules(model, no_split_modules)
     with open(os.path.join(model_path, "tied_no_split_modules.json"), "w") as f:
         json.dump(tied_no_split_modules, f)
-
-
