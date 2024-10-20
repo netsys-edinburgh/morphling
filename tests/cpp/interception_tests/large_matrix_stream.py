@@ -5,10 +5,14 @@ import torch
 
 # Set up logging
 log_file = "matrix_comparison.log"
-logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s %(message)s')
+logging.basicConfig(
+    filename=log_file, level=logging.INFO, format="%(asctime)s %(message)s"
+)
+
 
 def compare_matrices(mat1, mat2, epsilon=1e-6):
     return np.allclose(mat1.cpu().numpy(), mat2, atol=epsilon)
+
 
 size = 2000
 
@@ -46,4 +50,6 @@ for i in range(n_iterations):
     logging.info(f"\n{C_intercepted[:3, :3]}")
     logging.info("\n")
 
-logging.info(f"Number of discrepancies found: {discrepancies} out of {n_iterations} iterations")
+logging.info(
+    f"Number of discrepancies found: {discrepancies} out of {n_iterations} iterations"
+)

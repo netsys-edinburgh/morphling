@@ -28,7 +28,17 @@ SYMBOLS = {
         "iotta",
     ),
     "iec": ("Bi", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"),
-    "iec_ext": ("byte", "kibi", "mebi", "gibi", "tebi", "pebi", "exbi", "zebi", "yobi"),
+    "iec_ext": (
+        "byte",
+        "kibi",
+        "mebi",
+        "gibi",
+        "tebi",
+        "pebi",
+        "exbi",
+        "zebi",
+        "yobi",
+    ),
 }
 
 
@@ -111,6 +121,15 @@ def human2bytes(s):
           ...
       ValueError: can't interpret '12 foo'
     """
+
+    # if string contains all numbers, return as int
+    if s.isdigit():
+        return int(s)
+
+    # if string contains all numbers and a dot, return as float
+    if s.replace(".", "", 1).isdigit():
+        return float(s)
+
     init = s
     num = ""
     while s and s[0:1].isdigit() or s[0:1] == ".":
@@ -133,11 +152,13 @@ def human2bytes(s):
         prefix[s] = 1 << (i + 1) * 10
     return int(num * prefix[letter])
 
+
 @dataclass
 class TrainigConfig:
     batch_size: int = field(default=128, metadata={"help": "Batch size"})
     seq_length: int = field(default=1024, metadata={"help": "Sequence length"})
     model: str = field(default="gpt2", metadata={"help": "Model name"})
+
 
 @dataclass
 class DeviceConfig:
@@ -146,7 +167,9 @@ class DeviceConfig:
     # port: int
     flops: int = field(
         default="1e12",
-        metadata={"help": "The number of FLOPs of the device, support customary units"},
+        metadata={
+            "help": "The number of FLOPs of the device, support customary units"
+        },
     )
     memory: int = field(
         default="1e12",
@@ -219,7 +242,6 @@ class EmulatorConfig:
     )
 
     def __post_init__(self):
-
         # total_gpu_memory = int(
         #     torch.cuda.get_device_properties(0).total_memory / 1024**3
         # )
@@ -242,7 +264,9 @@ class EmulatorConfig:
         os.environ["MORPHLING_CKPT_PATH"] = self.ckpt_path
         os.environ["MORPHLING_GPU_SIZE"] = str(self.gpu_memory)
 
-        param_meta_map_file = os.path.join(self.ckpt_path, "param_meta_map.json")
+        param_meta_map_file = os.path.join(
+            self.ckpt_path, "param_meta_map.json"
+        )
 
         with open(param_meta_map_file, "r") as f:
             param_meta_map = json.load(f)

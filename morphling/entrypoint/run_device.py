@@ -1,8 +1,14 @@
+import asyncio
 import os
 import subprocess
+import threading
 import time
+import uuid
 from argparse import REMAINDER, ArgumentParser
 
+import redis
+
+from morphling.backend import AutoWorker
 from morphling.common import bytes2human, human2bytes
 
 
@@ -44,18 +50,37 @@ def main():
         help="The downlink latency of the device",
     )
 
-    # positional
     parser.add_argument(
-        "user_script",
+        "--redis_host",
         type=str,
-        help="The full path to the single GPU user "
-        "program/script to be launched in parallel, "
-        "followed by all the arguments for the "
-        "user script",
+        default="localhost:6379",
+        help="The host and port of the redis server",
+    )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="rabbitmq",
+        help="The backend to use for the device",
+        choices=["rabbitmq"],  # more to be added later
+    )
+    parser.add_argument(
+        "--emulation",
+        action="store_true",
+        help="Enable emulation mode",
     )
 
-    # rest from the user program
-    parser.add_argument("user_script_args", nargs=REMAINDER)
+    # # positional
+    # parser.add_argument(
+    #     "user_script",
+    #     type=str,
+    #     help="The full path to the single GPU user "
+    #     "program/script to be launched in parallel, "
+    #     "followed by all the arguments for the "
+    #     "user script",
+    # )
+
+    # # rest from the user program
+    # parser.add_argument("user_script_args", nargs=REMAINDER)
 
     args = parser.parse_args()
     print(args)
@@ -66,20 +91,57 @@ def main():
     args.ul_bw = human2bytes(args.ul_bw)
     args.dl_bw = human2bytes(args.dl_bw)
 
-    # create env variables
-    env = os.environ.copy()
-    env["MORPHLING_FLOPS"] = str(args.flops)
-    env["MORPHLING_MEMORY"] = str(args.memory)
-    env["MORPHLING_UL_BW"] = str(args.ul_bw)
-    env["MORPHLING_DL_BW"] = str(args.dl_bw)
-    env["MORPHLING_UL_LAT"] = str(args.ul_lat)
-    env["MORPHLING_DL_LAT"] = str(args.dl_lat)
+    # connect to redis
+    host, port = args.redis_host.split(":")
+    redis_connector = redis.Redis(host=host, port=port)
 
-    # run the user script with the env
-    cmd = ["python", args.user_script] + args.user_script_args
+    device_uuid = str(uuid.uuid4())
+    device_info = {
+        "flops": args.flops,
+        "memory": args.memory,
+        "ul_bw": args.ul_bw,
+        "dl_bw": args.dl_bw,
+        "ul_lat": args.ul_lat,
+        "dl_lat": args.dl_lat,
+    }
 
-    print(f"Running user script: {cmd} with env: {env}")
-    subprocess.run(cmd, env=env)
+    # FIXME: subject to change as we do not trust the device to do its own measurement
+    # 1. latency and bandwidth are measured by the server
+    # 2. server send random number matrix multiplication tasks to the device to measure flops, results needs to be matched.
+
+    # device reconnect is considered new device
+    print(f"Registering device {device_uuid} with info {device_info}")
+    redis_connector.hmset(device_uuid, mapping=device_info)
+    redis_connector.expire(device_uuid, 5)
+
+    # use threading to timer to refresh ttl
+    threading.Timer(5, lambda: redis_connector.expire("devices", 5)).start()
+
+    async def main():
+        loop = asyncio.get_event_loop()
+        worker = AutoWorker.from_name(
+            args.backend, device_uuid, loop, emulation=args.emulation
+        )
+        await worker.connect()
+        await worker.start_consuming()
+
+    asyncio.run(main())
+
+    # # create env variables
+    # env = os.environ.copy()
+    # env["MORPHLING_FLOPS"] = str(args.flops)
+    # env["MORPHLING_MEMORY"] = str(args.memory)
+    # env["MORPHLING_UL_BW"] = str(args.ul_bw)
+    # env["MORPHLING_DL_BW"] = str(args.dl_bw)
+    # env["MORPHLING_UL_LAT"] = str(args.ul_lat)
+    # env["MORPHLING_DL_LAT"] = str(args.dl_lat)
+
+    # # run the user script with the env
+    # cmd = ["python", args.user_script] + args.user_script_args
+
+    # print(f"Running user script: {cmd} with env: {env}")
+    # subprocess.run(cmd, env=env)
+
 
 if __name__ == "__main__":
     main()

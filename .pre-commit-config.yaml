@@ -21,11 +21,14 @@ repos:
     -   id: requirements-txt-fixer
     -   id: trailing-whitespace
 
--   repo: https://github.com/pycqa/isort
-    rev: 5.13.2
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.6.9
     hooks:
-    - id: isort
-      name: isort (python)
+    -   id: ruff
+        args: [--fix]
+    -   id: ruff-format
+        # args: [--check]
 
 -   repo: https://gitlab.com/daverona/pre-commit/cpp
     rev: 0.8.0

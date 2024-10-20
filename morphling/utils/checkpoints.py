@@ -46,15 +46,25 @@ def get_checkpoint_paths(checkpoint: Union[str, os.PathLike]):
             checkpoint_files = [checkpoint]
     elif os.path.isdir(checkpoint):
         # check if the whole state dict is present
-        potential_state_bin = [f for f in os.listdir(checkpoint) if f == WEIGHTS_NAME]
-        potential_state_safetensor = [f for f in os.listdir(checkpoint) if f == SAFE_WEIGHTS_NAME]
+        potential_state_bin = [
+            f for f in os.listdir(checkpoint) if f == WEIGHTS_NAME
+        ]
+        potential_state_safetensor = [
+            f for f in os.listdir(checkpoint) if f == SAFE_WEIGHTS_NAME
+        ]
         if len(potential_state_bin) == 1:
-            checkpoint_files = [os.path.join(checkpoint, potential_state_bin[0])]
+            checkpoint_files = [
+                os.path.join(checkpoint, potential_state_bin[0])
+            ]
         elif len(potential_state_safetensor) == 1:
-            checkpoint_files = [os.path.join(checkpoint, potential_state_safetensor[0])]
+            checkpoint_files = [
+                os.path.join(checkpoint, potential_state_safetensor[0])
+            ]
         else:
             # otherwise check for sharded checkpoints
-            potential_index = [f for f in os.listdir(checkpoint) if f.endswith(".index.json")]
+            potential_index = [
+                f for f in os.listdir(checkpoint) if f.endswith(".index.json")
+            ]
             if len(potential_index) == 0:
                 raise ValueError(
                     f"{checkpoint} is not a folder containing a `.index.json` file or a {WEIGHTS_NAME} or a {SAFE_WEIGHTS_NAME} file"
@@ -79,6 +89,8 @@ def get_checkpoint_paths(checkpoint: Union[str, os.PathLike]):
         if "weight_map" in index:
             index = index["weight_map"]
         checkpoint_files = sorted(list(set(index.values())))
-        checkpoint_files = [os.path.join(checkpoint_folder, f) for f in checkpoint_files]
+        checkpoint_files = [
+            os.path.join(checkpoint_folder, f) for f in checkpoint_files
+        ]
 
     return checkpoint_files

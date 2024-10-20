@@ -35,10 +35,14 @@ class LinearFunction(torch.autograd.Function):
         logger.debug(f"weight shape: {weight.shape}")
         if ctx.needs_input_grad[0]:
             # grad_input = grad_output.mm(weight)
-            grad_input = torch.as_tensor(np.matmul(grad_output, weight.transpose(-2,-1)))
+            grad_input = torch.as_tensor(
+                np.matmul(grad_output, weight.transpose(-2, -1))
+            )
         if ctx.needs_input_grad[1]:
             # grad_weight = grad_output.t().mm(input)
-            grad_weight = torch.as_tensor(np.matmul(grad_output.transpose(-2,-1), input)).transpose(-2,-1)
+            grad_weight = torch.as_tensor(
+                np.matmul(grad_output.transpose(-2, -1), input)
+            ).transpose(-2, -1)
         if bias is not None and ctx.needs_input_grad[2]:
             grad_bias = grad_output.sum(0)
 
@@ -109,6 +113,7 @@ class AddFunction(torch.autograd.Function):
             grad_other = grad_output
 
         return grad_input, grad_other
+
 
 # custom autograd function for divide
 class DivideFunction(torch.autograd.Function):
@@ -210,6 +215,7 @@ class GeLUFunction(torch.autograd.Function):
             grad_input = grad_output * torch.nn.functional.gelu(input, True)
 
         return grad_input
+
 
 # custom autograd function for dropout
 class DropoutFunction(torch.autograd.Function):

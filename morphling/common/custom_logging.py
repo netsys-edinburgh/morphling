@@ -38,8 +38,12 @@ class EventTimeLogger:
             dependent_events = [
                 event for event in last_events if event not in self.event_timers
             ]
-            max_time = max([self.event_timers[event] for event in dependent_events])
-            max_event = max(dependent_events, key=lambda x: self.event_timers[x])
+            max_time = max(
+                [self.event_timers[event] for event in dependent_events]
+            )
+            max_event = max(
+                dependent_events, key=lambda x: self.event_timers[x]
+            )
             self.event_timers[event] = max_time + elapsed
             start_time = max_time
         else:

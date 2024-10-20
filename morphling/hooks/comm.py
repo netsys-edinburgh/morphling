@@ -16,4 +16,5 @@ def collective_decorator(func):
 
     return wrapper
 
+
 torch.nn.Linear = p2p_decorator(torch.nn.Linear)

@@ -11,13 +11,13 @@ class Net(nn.Module):
     def forward(self, x):
         return self.fc(x)
 
+
 model = Net()
 optimizer = SGD(model.parameters(), lr=0.1)
-torch.save(optimizer, 'optimizer.pt')
+torch.save(optimizer, "optimizer.pt")
 
 # run one training step
 optimizer.zero_grad()
 output = model(torch.randn(1, 1))
 output.backward()
 optimizer.step()
-

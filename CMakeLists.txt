@@ -268,7 +268,9 @@ file(GLOB PYTHON_SRC "csrc/python/*.cpp")
 message(STATUS "rttr_SOURCE_DIR: ${rttr_SOURCE_DIR}")
 message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
 
-add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs} ${SCHEDULER_SRC} ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC})
+add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs}
+  ${SCHEDULER_SRC} ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC}
+)
 add_dependencies(morphling_server generate_proto_files)
 target_link_libraries(morphling_server PRIVATE
   gflags::gflags fmt
@@ -281,6 +283,19 @@ target_link_libraries(morphling_server PRIVATE
   ${TORCH_LIBRARIES}
 )
 target_include_directories(morphling_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
+
+# add_executable(morphling_worker_server "csrc/worker_server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs})
+# add_dependencies(morphling_worker_server generate_proto_files)
+# target_link_libraries(morphling_worker_server PRIVATE
+#   gflags::gflags fmt
+#   ${_PROTOBUF_LIBPROTOBUF}
+#   grpc++ grpc++_reflection
+#   libspdlog.so
+#   uuid
+# )
+# target_include_directories(morphling_worker_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
+
+
 
 # Supported NVIDIA architectures.
 set(CUDA_SUPPORTED_ARCHS "7.0;7.5;8.0;8.6;8.9;9.0")
