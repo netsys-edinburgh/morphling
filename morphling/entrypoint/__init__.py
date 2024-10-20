@@ -1,1 +1,1 @@
-from .generate_device_config import DeviceConfigArguments
+from .generate_device_config import DeviceConfigArguments, ModelConfigArguments

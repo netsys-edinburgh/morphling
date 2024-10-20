@@ -1,3 +1,4 @@
+from .base import BaseBackend
 from .rabbitmq import RabbitMQBackend, RabbitMQWorker
 
 
