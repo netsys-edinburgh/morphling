@@ -4,6 +4,7 @@ import asyncio
 import os
 import subprocess
 
+import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser
 
 from morphling import set_backend
@@ -65,11 +66,25 @@ if __name__ == "__main__":
     input_ids = tokenizer(input_text, return_tensors="pt")
     print(input_ids)
 
+    ref_model = model.to("cuda:0")
+    ref_input_ids = input_ids.to("cuda:0")
+    ref_outputs = ref_model(**input_ids).logits
+    # ref_outputs = [out.cpu() for out in ref_outputs if isinstance(out, torch.Tensor)]
+
     apply_hooks("linear")
 
-    outputs = model(**input_ids)
+    outputs = model(**input_ids).logits
+    # print(outputs)
+    # outputs = [out for out in outputs if isinstance(out, torch.Tensor)]
+    # print(outputs[0])
 
-    print(outputs)
+    # all elements needs to be close
+    for ref, out in zip(ref_outputs, outputs):
+        assert torch.allclose(
+            ref, out, atol=1e-6
+        ), f"Outputs are not close!, max diff: {torch.max(torch.abs(ref - out))}"
+
+    print("All outputs are close!")
 
 
 # morphling_device_config --num_devices 4 --output build/device_config.json
