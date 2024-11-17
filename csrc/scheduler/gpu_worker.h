@@ -23,6 +23,11 @@
 #define CUDA_TRANS_OP(trans) \
   (trans == 'N' || trans == 'n') ? CUBLAS_OP_N : CUBLAS_OP_T
 
+class GPUWorkerThread {
+ public:
+  explicit GPUWorkerThread(int type);
+};
+
 class GPUWorker : public WorkerBase, std::enable_shared_from_this<GPUWorker> {
  public:
   explicit GPUWorker(int gpu_id, size_t size);

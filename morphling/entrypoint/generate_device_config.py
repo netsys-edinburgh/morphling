@@ -21,6 +21,8 @@ class ModelConfigArguments:
     )
     block_size: int = field(default=128, metadata={"help": "Block size"})
 
+    log_level: str = field(default="info", metadata={"help": "Log level"})
+
 
 @dataclass
 class DeviceConfigArguments:

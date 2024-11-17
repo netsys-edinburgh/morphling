@@ -1,4 +1,6 @@
-from .base import BaseBackend
+from morphling._Msg import AMQPBackend, AMQPWorker, MQTTServer, MQTTWorker
+
+from .base import BaseBackend, MatMulRequestMessage, MatMulResponseMessage
 from .rabbitmq import RabbitMQBackend, RabbitMQWorker
 
 
@@ -9,6 +11,12 @@ class AutoBackend:
         if name == "rabbitmq":
             print("Using RabbitMQ backend")
             return RabbitMQBackend(*args, **kwargs)
+        elif name == "amqp":
+            print("Using AMQP backend")
+            return AMQPBackend(args[0], args[1])
+        elif name == "mqtt":
+            print("Using MQTT backend")
+            return MQTTServer()
         else:
             raise ValueError(f"Unknown backend: {name}")
 
@@ -19,5 +27,11 @@ class AutoWorker:
         if name == "rabbitmq":
             print("Using RabbitMQ worker")
             return RabbitMQWorker(*args, **kwargs)
+        elif name == "amqp":
+            print("Using AMQP worker")
+            return AMQPWorker(args[0], args[1])
+        elif name == "mqtt":
+            print("Using MQTT worker")
+            return MQTTWorker(args[0])
         else:
             raise ValueError(f"Unknown worker: {name}")
