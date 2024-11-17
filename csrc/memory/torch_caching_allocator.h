@@ -32,7 +32,7 @@ class ReplaceTorchAllocatorOnLoad {
       torch_caching_allocator_ = new TorchCachingAllocator();
       LOG_INFO("Replace torch allocator with caching allocator");
       torch::SetAllocator(torch::DeviceType::CPU, torch_caching_allocator_);
-      LOG_DEBUG("Torch allocator replaced");
+      LOG_INFO("Torch allocator replaced");
     });
   }
 

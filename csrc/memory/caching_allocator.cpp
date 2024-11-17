@@ -34,7 +34,7 @@ void* CachingAllocator::Allocate(const size_t bytes) {
   }
   used_bytes_ += bytes;
   allocation_map_[ptr] = bytes;
-  LOG_DEBUG("Allocate: {:p}, size: {}, used: {}", ptr, bytes, used_bytes_);
+  // LOG_DEBUG("Allocate: {:p}, size: {}, used: {}", ptr, bytes, used_bytes_);
   return ptr;
 }
 
@@ -48,7 +48,7 @@ void CachingAllocator::Free(void* ptr) {
   available_map_[alloc_size].push_back(ptr);
   used_bytes_ -= alloc_size;
   allocation_map_.erase(it);
-  LOG_DEBUG("Free: {:p}, size: {}, used: {}", ptr, alloc_size, used_bytes_);
+  // LOG_DEBUG("Free: {:p}, size: {}, used: {}", ptr, alloc_size, used_bytes_);
 }
 
 void CachingAllocator::InsertShmMeta(ShmMeta meta) {
@@ -200,7 +200,7 @@ void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
   shm_meta.ptr = shm_addr;
   shm_meta.size = aligned_bytes;
   shm_id_map_[shm_addr] = shm_meta;
-  LOG_DEBUG("shm_meta: {}", shm_meta);
+  // LOG_DEBUG("shm_meta: {}", shm_meta);
 
   return shm_addr;
 }
@@ -238,8 +238,8 @@ void CachingAllocator::FreePinShmMemory(void* ptr) {
   auto size = meta.size;
   auto id = meta.id;
 
-  LOG_DEBUG("FreePinShmMemory: addr: {:p}, name: {}, size: {}", ptr, shm_name,
-            size);
+  // LOG_DEBUG("FreePinShmMemory: addr: {:p}, name: {}, size: {}", ptr,
+  // shm_name, size);
   munmap(ptr, size);
   // shm_unlink(shm_id_map_[ptr].name);
   close(shm_id_map_[ptr].id);

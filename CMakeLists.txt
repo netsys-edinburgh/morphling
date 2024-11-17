@@ -39,6 +39,8 @@ message(STATUS "CMAKE_BINARY_DIR: ${CMAKE_BINARY_DIR}")
 set(BUILD_UNIT_TESTS OFF)
 set(BUILD_EXAMPLES OFF)
 
+set(BUILD_SHARED_LIBS ON)
+
 # # BLT Support Flags
 # set(ENABLE_CUDA ON)
 # set(ENABLE_OPENMP ON)
@@ -84,7 +86,22 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/gabime/spdlog.git
   GIT_TAG v1.14.1
 )
-FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags)
+FetchContent_Declare(
+  rabbitmq
+  GIT_REPOSITORY https://github.com/alanxz/rabbitmq-c.git
+  GIT_TAG v0.14.0
+)
+FetchContent_Declare(
+  mosquitto
+  GIT_REPOSITORY https://github.com/eclipse-mosquitto/mosquitto.git
+  GIT_TAG v2.0.20
+)
+FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags rabbitmq mosquitto)
+
+# if(NOT rabbitmq_POPULATED)
+#     FetchContent_Populate(rabbitmq)
+#     add_subdirectory(${rabbitmq_SOURCE_DIR} ${rabbitmq_BINARY_DIR})
+# endif()
 
 set(gRPC_INSTALL ON) # Install gRPC for TARGET_FILE
 
@@ -219,6 +236,7 @@ add_custom_command(
   COMMAND ${_PROTOBUF_PROTOC}
   ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
   --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+  --python_out "${CMAKE_CURRENT_BINARY_DIR}"
   -I "${hw_proto_path}"
   --plugin=protoc-gen-grpc=${_GRPC_CPP_PLUGIN_EXECUTABLE}
   "${hw_proto}"
@@ -230,7 +248,6 @@ add_custom_command(
 include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Python3_INCLUDE_DIRS}
-
   ${CONDA_PREFIX_PATH}/include
   ${rttr_SOURCE_DIR}/src
   ${rttr_BINARY_DIR}/src
@@ -238,6 +255,9 @@ include_directories(
   ${grpc_SOURCE_DIR}/include
   ${protobuf_SOURCE_DIR}/src
   ${spdlog_SOURCE_DIR}/include
+  ${rabbitmq_SOURCE_DIR}/include
+  ${rabbitmq_BINARY_DIR}/include
+  ${mosquitto_SOURCE_DIR}/include
 )
 
 link_directories(
@@ -250,6 +270,7 @@ file(GLOB UTILS_SRC "csrc/utils/*.cpp")
 file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
 file(GLOB SCHEDULER_SRC "csrc/scheduler/*.cpp")
 file(GLOB PYTHON_SRC "csrc/python/*.cpp")
+file(GLOB BACKEND_SRC "csrc/backend/*.cpp")
 
 # add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
 # target_link_libraries(morphling_interceptor PUBLIC
@@ -268,8 +289,12 @@ file(GLOB PYTHON_SRC "csrc/python/*.cpp")
 message(STATUS "rttr_SOURCE_DIR: ${rttr_SOURCE_DIR}")
 message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
 
+# set (MORPHLING_EXT_INCLUDE_DIRS
+
+# )
+
 add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs}
-  ${SCHEDULER_SRC} ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC}
+  "csrc/scheduler/gpu_worker.cpp" ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC}
 )
 add_dependencies(morphling_server generate_proto_files)
 target_link_libraries(morphling_server PRIVATE
@@ -281,6 +306,7 @@ target_link_libraries(morphling_server PRIVATE
   CUDA::cublas CUDA::cudart
   libpython${Python_VERSION}.so
   ${TORCH_LIBRARIES}
+  rabbitmq
 )
 target_include_directories(morphling_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
 
@@ -331,11 +357,15 @@ set(MORPHLING_EXT_SRC
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
+  # ${TORCH_LIBRARIES}
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
   libspdlog.so rttr_core
   grpc++ grpc++_reflection
+  rabbitmq
 )
+
+message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
 define_gpu_extension_target(
   _C
   DESTINATION morphling
@@ -344,6 +374,34 @@ define_gpu_extension_target(
   COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
   ARCHITECTURES ${MORPHLING_GPU_ARCHES}
   LIBRARIES ${MORPHLING_EXT_LIB}
+  # INCLUDE_DIRECTORIES ${MORPHLING_EXT_INCLUDE_DIRS}
+  WITH_SOABI
+)
+
+
+set(MORPHLING_MSG_SRC
+  ${BACKEND_SRC}
+  "csrc/scheduler/amqp_dispatcher.cpp"
+  "csrc/scheduler/amqp_worker.cpp"
+  "csrc/python/client_py.cpp"
+  "csrc/utils/logger.cpp"
+)
+set(MORPHLING_EXT_LIB
+  torch ${torch_python_LIBRARY}
+  uuid Threads::Threads fmt rttr_core
+  rabbitmq libmosquitto
+  libspdlog.so
+)
+
+define_gpu_extension_target(
+  _Msg
+  DESTINATION morphling
+  LANGUAGE ${MORPHLING_GPU_LANG}
+  SOURCES ${MORPHLING_MSG_SRC}
+  COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+  ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+  LIBRARIES ${MORPHLING_EXT_LIB}
+  # INCLUDE_DIRECTORIES ${MORPHLING_EXT_INCLUDE_DIRS}
   WITH_SOABI
 )
 

@@ -33,6 +33,9 @@ struct DoNothingDeleter {
   void operator()(T* ptr) const {}
 };
 
+#define GETENV(name, default_value) \
+  (std::getenv(name) ? std::getenv(name) : default_value)
+
 constexpr size_t operator"" _KB(unsigned long long val) { return val * KB; }
 constexpr size_t operator"" _MB(unsigned long long val) { return val * MB; }
 constexpr size_t operator"" _GB(unsigned long long val) { return val * GB; }

@@ -8,7 +8,6 @@ from argparse import REMAINDER, ArgumentParser
 
 import redis
 
-from morphling.backend import AutoWorker
 from morphling.common import bytes2human, human2bytes
 
 
@@ -61,7 +60,7 @@ def main():
         type=str,
         default="rabbitmq",
         help="The backend to use for the device",
-        choices=["rabbitmq"],  # more to be added later
+        choices=["rabbitmq", "amqp"],  # more to be added later
     )
     parser.add_argument(
         "--emulation",
@@ -83,7 +82,7 @@ def main():
     # parser.add_argument("user_script_args", nargs=REMAINDER)
 
     args = parser.parse_args()
-    print(args)
+    print(args, flush=True)
 
     # human to bytes
     args.flops = human2bytes(args.flops)
@@ -97,6 +96,7 @@ def main():
 
     device_uuid = str(uuid.uuid4())
     device_info = {
+        "uuid": device_uuid,
         "flops": args.flops,
         "memory": args.memory,
         "ul_bw": args.ul_bw,
@@ -110,22 +110,35 @@ def main():
     # 2. server send random number matrix multiplication tasks to the device to measure flops, results needs to be matched.
 
     # device reconnect is considered new device
-    print(f"Registering device {device_uuid} with info {device_info}")
+    print(
+        f"Registering device {device_uuid} with info {device_info}", flush=True
+    )
     redis_connector.hmset(device_uuid, mapping=device_info)
     redis_connector.expire(device_uuid, 5)
 
     # use threading to timer to refresh ttl
     threading.Timer(5, lambda: redis_connector.expire("devices", 5)).start()
 
-    async def main():
-        loop = asyncio.get_event_loop()
-        worker = AutoWorker.from_name(
-            args.backend, device_uuid, loop, emulation=args.emulation
-        )
-        await worker.connect()
-        await worker.start_consuming()
+    if args.emulation:
+        # enable interception of torch.mm
+        print("Enabling interception of torch.mm")
+        import torch
 
-    asyncio.run(main())
+        import morphling._C
+    from morphling.backend import AutoWorker
+
+    if args.backend == "rabbitmq":
+
+        async def main():
+            loop = asyncio.get_event_loop()
+            worker = AutoWorker.from_name(args.backend, device_info, loop)
+            await worker.connect()
+            await worker.start_consuming()
+
+        asyncio.run(main())
+    elif args.backend == "amqp":
+        worker = AutoWorker.from_name(args.backend, "localhost", 32)
+        worker.handle_req()
 
     # # create env variables
     # env = os.environ.copy()

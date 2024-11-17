@@ -25,10 +25,11 @@ HOOK_TYPES = [
 
 
 def apply_hooks(types: Union[str, List[str]]):
-    if isinstance(types, list):
-        for t in types:
-            if t not in HOOK_TYPES:
-                raise ValueError(f"Unsupported hook type: {t}")
+    if isinstance(types, str):
+        types = [types]
+    for t in types:
+        if t not in HOOK_TYPES:
+            raise ValueError(f"Unsupported hook type: {t}")
 
         if t == "linear":
             torch.nn.functional.linear = LinearFunction.apply
@@ -36,6 +37,16 @@ def apply_hooks(types: Union[str, List[str]]):
             torch.bmm = LinearFunction.apply
             torch.matmul = LinearFunction.apply
 
+            def forward_decorator(func):
+                def wrapper(self, input):
+                    return LinearFunction.apply(
+                        input, self.weight.t(), self.bias
+                    )
+
+                return wrapper
+
+            torch.nn.Linear.forward = forward_decorator(torch.nn.Linear.forward)
+            print("Linear hook applied")
         else:
             raise NotImplementedError(f"Hook type {t} is not implemented yet")
 
@@ -47,31 +58,31 @@ class LinearFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, input, weight, bias=None):
-        logger.debug("LinearFunction forward")
+        print("LinearFunction forward", input.shape, weight.shape)
         ctx.save_for_backward(input, weight, bias)
         # output = input.mm(weight.t())
-        logger.debug(f"input shape: {input.shape}")
-        logger.debug(f"weight shape: {weight.shape}")
+        # logger.debug(f"input shape: {input.shape}")
+        # logger.debug(f"weight shape: {weight.shape}")
         # output = torch.as_tensor(np.matmul(input, weight))
-        output = _backend.dispatch_matmul(input, weight)
+        output = _backend.sync_dispatch_matmul(input, weight)
         if bias is not None:
             output += bias.unsqueeze(0).expand_as(output)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
-        logger.debug("LinearFunction backward")
+        print("LinearFunction backward")
         input, weight, bias = ctx.saved_tensors
         grad_input = grad_weight = grad_bias = None
-        logger.debug(f"input shape: {input.shape}")
-        logger.debug(f"grad_output shape: {grad_output.shape}")
-        logger.debug(f"weight shape: {weight.shape}")
+        # logger.debug(f"input shape: {input.shape}")
+        # logger.debug(f"grad_output shape: {grad_output.shape}")
+        # logger.debug(f"weight shape: {weight.shape}")
         if ctx.needs_input_grad[0]:
             # grad_input = grad_output.mm(weight)
             # grad_input = torch.as_tensor(
             #     np.matmul(grad_output, weight.transpose(-2, -1))
             # )
-            grad_input = _backend.dispatch_matmul(
+            grad_input = _backend.sync_dispatch_matmul(
                 grad_output, weight.transpose(-2, -1)
             )
         if ctx.needs_input_grad[1]:
@@ -79,7 +90,7 @@ class LinearFunction(torch.autograd.Function):
             # grad_weight = torch.as_tensor(
             #     np.matmul(grad_output.transpose(-2, -1), input)
             # ).transpose(-2, -1)
-            grad_weight = _backend.dispatch_matmul(
+            grad_weight = _backend.sync_dispatch_matmul(
                 grad_output.transpose(-2, -1), input
             ).transpose(-2, -1)
         if bias is not None and ctx.needs_input_grad[2]:

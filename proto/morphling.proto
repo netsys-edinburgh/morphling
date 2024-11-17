@@ -48,6 +48,23 @@ message ModelParamResponse {
     repeated ParamInfo param_info = 2;
 }
 
+
+// Messages used in MQ
+
+message MatMulRequestMessage {
+    uint32 row = 1;
+    uint32 col = 2;
+    repeated uint32 ld = 3;
+    repeated bytes mat = 10;
+}
+
+message MatMulResponseMessage {
+    uint32 row = 1;
+    uint32 col = 2;
+    repeated uint32 ld = 3;
+    bytes mat = 10;
+}
+
 // service WorkerManager {
 //     rpc RegisterWorker (RegisterWorkerRequest) returns (Empty) {}
 //     rpc KeepAlive (KeepAliveRequest) returns (Empty) {}

@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "common/pytorch_defs.h"
+#include "common/pytorch_types.h"
 #include "common/types_and_defs.h"
 #include "utils/noncopyable.h"
 
