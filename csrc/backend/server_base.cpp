@@ -5,9 +5,6 @@ torch::Tensor CreateOutputMatrix(const torch::Tensor& mat_a,
   auto a_shape = mat_a.sizes().vec();
   auto b_shape = mat_b.sizes().vec();
 
-  LOG_DEBUG("Creating output matrix, A shape: {}, B shape: {}", a_shape,
-            b_shape);
-
   // assume b needs to be transposed
   int64_t in_dim = a_shape[a_shape.size() - 2];
   int64_t out_dim = b_shape[b_shape.size() - 2];
@@ -30,10 +27,13 @@ torch::Tensor CreateOutputMatrix(const torch::Tensor& mat_a,
     c_shape.push_back(out_dim);
   }
 
+  LOG_DEBUG(
+      "Creating output matrix, A shape: {}, B shape: {}, Output shape: {}",
+      a_shape, b_shape, c_shape);
+
   auto output_matrix = torch::empty(c_shape);
   // fill with nan
   output_matrix.fill_(std::nan(""));
-  LOG_DEBUG("Output matrix shape: {}", output_matrix.sizes().vec());
 
   return output_matrix;
 }
@@ -91,25 +91,27 @@ MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
   int64_t out_dim = b_shape[b_shape.size() - 2];
 
   int64_t offset_r =
-      (r * block_size + pivot * in_dim * h_dim) * mat_a.element_size();
-  int64_t offset_c =
-      (c * block_size + pivot * out_dim * h_dim) * mat_b.element_size();
+      (r * block_size + pivot * in_dim) * h_dim * mat_a.element_size();
+  int64_t offset_c = (c * block_size +
+                      (mat_b.sizes().vec().size() > 2 ? pivot : 0) * out_dim) *
+                     h_dim * mat_b.element_size();
 
-  fprintf(stderr, "offset_r: %ld, offset_c: %ld, r: %ld, c: %ld, pivot: %ld\n",
-          offset_r, offset_c, r, c, pivot);
-  void* offset_r_ptr = mat_a.data_ptr() + offset_r;
-  void* offset_c_ptr = mat_b.data_ptr() + offset_c;
+  // fprintf(stderr, "offset_r: %ld, offset_c: %ld, r: %ld, c: %ld, pivot:
+  // %ld\n",
+  //         offset_r, offset_c, r, c, pivot);
+  void* offset_r_ptr = (char*)mat_a.data_ptr() + offset_r;
+  void* offset_c_ptr = (char*)mat_b.data_ptr() + offset_c;
 
-  int64_t a_bytes = in_dim * h_dim * mat_a.element_size();
-  int64_t b_bytes = h_dim * out_dim * mat_b.element_size();
+  // int64_t a_bytes = in_dim * h_dim * mat_a.element_size();
+  // int64_t b_bytes = h_dim * out_dim * mat_b.element_size();
 
   int64_t size_r = std::min(block_size, in_dim - r * block_size) * h_dim *
                    mat_a.element_size();
   int64_t size_c = std::min(block_size, out_dim - c * block_size) * h_dim *
                    mat_b.element_size();
 
-  fprintf(stderr, "size_r: %ld, size_c: %ld, a_bytes: %ld, b_bytes: %ld\n",
-          size_r, size_c, a_bytes, b_bytes);
+  // fprintf(stderr, "size_r: %ld, size_c: %ld, a_bytes: %ld, b_bytes: %ld\n",
+  // size_r, size_c, a_bytes, b_bytes);
 
   MatrixPartition partition;
   partition.row = r;
