@@ -35,7 +35,7 @@ def apply_hooks(types: Union[str, List[str]]):
             torch.nn.functional.linear = LinearFunction.apply
             torch.Tensor.__matmul__ = LinearFunction.apply
             torch.bmm = LinearFunction.apply
-            torch.matmul = LinearFunction.apply
+            # torch.matmul = LinearFunction.apply
 
             def forward_decorator(func):
                 def wrapper(self, input):
@@ -64,7 +64,13 @@ class LinearFunction(torch.autograd.Function):
         # logger.debug(f"input shape: {input.shape}")
         # logger.debug(f"weight shape: {weight.shape}")
         # output = torch.as_tensor(np.matmul(input, weight))
-        output = _backend.sync_dispatch_matmul(input, weight)
+
+        # FIXME: this only applies to mqtt backend
+        output = _backend.sync_dispatch_matmul(input, weight.transpose(-2, -1))
+        ref = torch.matmul(input.to("cuda:0"), weight.to("cuda:0")).to("cpu")
+        # validate output
+        # assert torch.allclose(output, ref), f"Output is not close! input shape: {input.shape}, weight shape: {weight.shape}, max diff: {torch.max(torch.abs(output - ref))}"
+
         if bias is not None:
             output += bias.unsqueeze(0).expand_as(output)
         return output

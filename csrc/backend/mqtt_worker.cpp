@@ -63,7 +63,9 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
   auto result = torch::mm(row, col.transpose(0, 1)).to(torch::kCPU);
   auto zeros = torch::zeros_like(result);
 
-  std::cerr << "Result: " << torch::allclose(result, zeros) << std::endl;
+  LOG_FATAL_IF(torch::allclose(result, zeros),
+               "Result is all zero, something went wrong, worker cannot be "
+               "launched as child process");
 
   MatrixPartition response;
   response.row = partition.row;

@@ -13,7 +13,11 @@ from morphling.common import bytes2human, human2bytes
 
 def main():
     parser = ArgumentParser(description="Morphling Emulator Interface")
-
+    parser.add_argument(
+        "--id",
+        type=int,
+        help="The device id",
+    )
     parser.add_argument(
         "--flops",
         type=str,
@@ -60,7 +64,7 @@ def main():
         type=str,
         default="rabbitmq",
         help="The backend to use for the device",
-        choices=["rabbitmq", "amqp"],  # more to be added later
+        choices=["rabbitmq", "amqp", "mqtt"],  # more to be added later
     )
     parser.add_argument(
         "--emulation",
@@ -89,6 +93,8 @@ def main():
     args.memory = human2bytes(args.memory)
     args.ul_bw = human2bytes(args.ul_bw)
     args.dl_bw = human2bytes(args.dl_bw)
+
+    os.environ["MORPHLING_PIN_SIZE"] = str(args.memory)
 
     # connect to redis
     host, port = args.redis_host.split(":")
@@ -139,6 +145,12 @@ def main():
     elif args.backend == "amqp":
         worker = AutoWorker.from_name(args.backend, "localhost", 32)
         worker.handle_req()
+
+    elif args.backend == "mqtt":
+        worker = AutoWorker.from_name(args.backend, f"/morphling/req/{args.id}")
+        worker.start()
+        while True:
+            time.sleep(1)
 
     # # create env variables
     # env = os.environ.copy()

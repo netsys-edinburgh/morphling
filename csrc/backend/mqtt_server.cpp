@@ -60,7 +60,7 @@ torch::Tensor MQTTServer::DispatchMatMul(torch::Tensor& mat_a,
           std::string("/morphling/req/") + std::to_string(count % num_devices_);
 
       Publish(topic, data, size);
-      LOG_DEBUG("Published message to topic {}, count {}", topic, count);
+      // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
       pub_buffer_[count] = data;
     });
     // pub_count_ = (pub_count_++) % num_devices_;

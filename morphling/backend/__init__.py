@@ -16,7 +16,7 @@ class AutoBackend:
             return AMQPBackend(args[0], args[1])
         elif name == "mqtt":
             print("Using MQTT backend")
-            return MQTTServer()
+            return MQTTServer(args[0])
         else:
             raise ValueError(f"Unknown backend: {name}")
 

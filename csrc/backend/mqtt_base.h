@@ -50,12 +50,13 @@ class MQTTBase {
 
   void OnPublish(struct mosquitto* mosq, void* obj, int mid) {
     pub_cb_count_--;
-    fprintf(stderr, "Published message %d\n", mid);
+    // fprintf(stderr, "Published message %d\n", mid);
     if (pub_cb_count_ == 0) {
       LOG_DEBUG("All messages published, clearing buffer");
-      for (auto* ptr : pub_buffer_) {
-        free(ptr);
-      }
+      // for (auto* ptr : pub_buffer_) {
+      //   free(ptr);
+      // }
+      pub_buffer_.clear();
     }
   }
 
@@ -117,8 +118,8 @@ class MQTTBase {
         task = pub_queue_[idx].front();
         pub_queue_[idx].pop_front();
       }
-      LOG_DEBUG("Publishing message {} by {:p} size {}", task.topic,
-                task.payload, task.payloadlen);
+      // LOG_DEBUG("Publishing message {} by {:p} size {}", task.topic,
+      //           task.payload, task.payloadlen);
       // fprintf(stderr, "Publishing message %s, ptr %p, size %d\n",
       //         task.topic.c_str(), task.payload, task.payloadlen);
       int ret = mosquitto_publish(mosq_[idx], NULL, task.topic.c_str(),
