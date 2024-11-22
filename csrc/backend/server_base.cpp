@@ -1,5 +1,37 @@
 #include "server_base.h"
 
+#include <sys/mman.h>
+
+void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
+                         int64_t c, int64_t pivot, int64_t block_size) {
+  // implement torch::index_put_ using memory copy
+  auto* target_ptr = target.data_ptr();
+  auto* mat_ptr = mat.data_ptr();
+
+  auto mat_shape = mat.sizes().vec();
+  auto target_shape = target.sizes().vec();
+
+  auto mat_n_rows = mat_shape[mat_shape.size() - 2];
+  auto mat_n_cols = mat_shape[mat_shape.size() - 1];
+
+  int64_t elem_size = mat.element_size();
+
+  int64_t in_dim = target_shape[target_shape.size() - 2];
+  int64_t out_dim = target_shape[target_shape.size() - 1];
+
+  int64_t offset_r = r * block_size * out_dim * elem_size;
+  int64_t offset_c = c * block_size * elem_size;
+  int64_t target_offset =
+      pivot * in_dim * out_dim * elem_size + offset_r + offset_c;
+
+  for (int i = 0; i < mat_n_rows; ++i) {
+    auto mat_row_offset = i * mat_n_cols * elem_size;
+    auto target_row_offset = target_offset + i * out_dim * elem_size;
+    memcpy((char*)target_ptr + target_row_offset,
+           (char*)mat_ptr + mat_row_offset, mat_n_cols * elem_size);
+  }
+}
+
 torch::Tensor CreateOutputMatrix(const torch::Tensor& mat_a,
                                  const torch::Tensor& mat_b) {
   auto a_shape = mat_a.sizes().vec();
@@ -43,40 +75,53 @@ void UpdateMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
   auto target_shape = target.sizes().vec();
   auto mat_shape = mat.sizes().vec();
 
-  if (target_shape.size() == 2) {
-    // no need to reshape
-    auto offset_r = r * block_size;
-    auto offset_c = c * block_size;
+  // LOG_DEBUG("Updating matrix block, target shape: {}, mat shape: {}",
+  //           target_shape, mat_shape);
 
-    auto end_r = std::min(offset_r + block_size, target_shape[0]);
-    auto end_c = std::min(offset_c + block_size, target_shape[1]);
+  IndexPutMatrixBlock(target, mat, r, c, pivot, block_size);
 
-    target.index_put_({torch::indexing::Slice(offset_r, end_r),
-                       torch::indexing::Slice(offset_c, end_c)},
-                      mat);
-  } else {
-    auto ld = target_shape.size() - 2;
-    auto offset_r = r * block_size;
-    auto offset_c = c * block_size;
+  // if (target_shape.size() == 2) {
+  //   // no need to reshape
+  //   auto offset_r = r * block_size;
+  //   auto offset_c = c * block_size;
 
-    auto end_r =
-        std::min(offset_r + block_size, target_shape[target_shape.size() - 2]);
-    auto end_c =
-        std::min(offset_c + block_size, target_shape[target_shape.size() - 1]);
+  //   auto end_r = std::min(offset_r + block_size, target_shape[0]);
+  //   auto end_c = std::min(offset_c + block_size, target_shape[1]);
 
-    if (ld == 1) {
-      target.index_put_({pivot, torch::indexing::Slice(offset_r, end_r),
-                         torch::indexing::Slice(offset_c, end_c)},
-                        mat);
-    } else {
-      auto ld_combinations = CartesianProduct(
-          std::vector<int64_t>(target_shape.begin(), target_shape.end() - 2));
-      auto ld_vec = torch::tensor(ld_combinations[pivot]);
-      target.index_put_({ld_vec, torch::indexing::Slice(offset_r, end_r),
-                         torch::indexing::Slice(offset_c, end_c)},
-                        mat);
-    }
-  }
+  //   target.index_put_({torch::indexing::Slice(offset_r, end_r),
+  //                      torch::indexing::Slice(offset_c, end_c)},
+  //                     mat);
+  // } else {
+  //   auto num_ld = target_shape.size() - 2;
+  //   auto offset_r = r * block_size;
+  //   auto offset_c = c * block_size;
+
+  //   auto end_r =
+  //       std::min(offset_r + block_size, target_shape[target_shape.size() -
+  //       2]);
+  //   auto end_c =
+  //       std::min(offset_c + block_size, target_shape[target_shape.size() -
+  //       1]);
+
+  //   if (num_ld == 1) {
+  //     LOG_DEBUG(
+  //         "Updating matrix block, offset_r: {}, end_r: {}, offset_c: {}, "
+  //         "end_c: {}",
+  //         offset_r, end_r, offset_c, end_c);
+  //     target.index_put_({pivot, torch::indexing::Slice(offset_r, end_r),
+  //                        torch::indexing::Slice(offset_c, end_c)},
+  //                       mat);
+  //   } else {
+  //     auto ld_combinations = CartesianProduct(
+  //         std::vector<int64_t>(target_shape.begin(), target_shape.end() -
+  //         2));
+  //     auto ld_vec = torch::tensor(ld_combinations[pivot]);
+  //     target.index_put_({ld_vec, torch::indexing::Slice(offset_r, end_r),
+  //                        torch::indexing::Slice(offset_c, end_c)},
+  //                       mat);
+  //   }
+  // }
+  // LOG_DEBUG("Updated matrix block, r: {}, c: {}, pivot: {}", r, c, pivot);
 }
 
 MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
@@ -118,6 +163,7 @@ MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
   partition.col = c;
   partition.h_dim = h_dim;
   partition.pivot = pivot;
+  partition.oid = -1;
   partition.mat.push_back({offset_r_ptr, size_r});
   partition.mat.push_back({offset_c_ptr, size_c});
   // partition.block_size = block_size;
@@ -165,7 +211,7 @@ std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
 }
 
 std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
-  int64_t size = sizeof(int64_t) * 4;
+  int64_t size = sizeof(int64_t) * 5;
   for (const auto& mat : mat) {
     size += std::get<1>(mat) + sizeof(int64_t);
   }
@@ -173,6 +219,11 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
   // fprintf(stderr, "Size: %ld\n", size);
 
   uint8_t* ptr = (uint8_t*)malloc(size);
+  // // pinning the pointer
+  // int ret = mlock(ptr, size);
+  // LOG_FATAL_IF(ret != 0, "Failed to pin memory in serialization, error code:
+  // {}, msg: {}", ret, strerror(errno));
+
   int64_t offset = 0;
   // fprintf(stderr, "Serializing partition: %ld, %ld, %ld\n", row, col, h_dim);
 
@@ -184,9 +235,8 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
   offset += sizeof(int64_t);
   memcpy(ptr + offset, &h_dim, sizeof(int64_t));
   offset += sizeof(int64_t);
-  // memcpy(ptr, &block_size, sizeof(int64_t));
-  // ptr += sizeof(int64_t);
-  // fprintf(stderr, "Mat size: %ld\n", mat.size());
+  memcpy(ptr + offset, &oid, sizeof(int64_t));
+  offset += sizeof(int64_t);
 
   for (const auto& mat : mat) {
     memcpy(ptr + offset, &std::get<1>(mat), sizeof(int64_t));
@@ -205,6 +255,10 @@ void MatrixPartition::Deserialize(const void* data, int64_t size) {
   uint8_t* ptr = (uint8_t*)data;
   int64_t offset = 0;
 
+  // if (mlock(ptr, size) != 0) {
+  //   LOG_FATAL("Failed to pin memory in deserialization");
+  // }
+
   memcpy(&row, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
   memcpy(&col, ptr + offset, sizeof(int64_t));
@@ -213,11 +267,11 @@ void MatrixPartition::Deserialize(const void* data, int64_t size) {
   offset += sizeof(int64_t);
   memcpy(&h_dim, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
-  // memcpy(&block_size, ptr + offset, sizeof(int64_t));
-  // offset += sizeof(int64_t);
+  memcpy(&oid, ptr + offset, sizeof(int64_t));
+  offset += sizeof(int64_t);
 
-  // fprintf(stderr, "Deserialized partition: %ld, %ld, %ld\n", row, col,
-  // h_dim);
+  // fprintf(stderr, "Deserialized partition: %ld, %ld, %ld, %ld, %ld\n", row,
+  //         col, pivot, h_dim, oid);
 
   while (offset < size) {
     int64_t mat_size;

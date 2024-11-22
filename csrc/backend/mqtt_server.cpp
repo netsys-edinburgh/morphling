@@ -8,7 +8,25 @@
 void MQTTServer::OnMessage(struct mosquitto* mosq, void* obj,
                            const struct mosquitto_message* message) {
   // std::cout << "Received message: " << (char*)message->payload << std::endl;
+  auto topic = std::string(message->topic);
+  if (topic.find(MQTT_COMPUTE_TOPIC_RSP) != std::string::npos) {
+    HandleMatMul(message);
+  }
 
+  if (topic.find(MQTT_TIMER_TOPIC_RSP) != std::string::npos) {
+    HandleTimer(message);
+  }
+
+  // // last number after / is the device id
+  // std::string device_id = topic.substr(topic.find_last_of("/") + 1);
+  // bool set = redis_->expire(device_id, 10);  // refresh the key, means device
+  // is alive LOG_FATAL_IF(!set, "Failed to refresh key in redis for device:
+  // {}", device_id);
+}
+
+void MQTTServer::HandleTimer(const struct mosquitto_message* message) {}
+
+void MQTTServer::HandleMatMul(const struct mosquitto_message* message) {
   auto start = std::chrono::high_resolution_clock::now();
   MatrixPartition partition;
   partition.Deserialize(message->payload, message->payloadlen);
@@ -24,23 +42,32 @@ void MQTTServer::OnMessage(struct mosquitto* mosq, void* obj,
   start = std::chrono::high_resolution_clock::now();
   auto output = torch::from_blob(o_ptr, {row_size, col_size},
                                  FLOAT32_TENSOR_OPTIONS(torch::kCPU));
-  // std::cout << "Output: " << output << std::endl;
-  UpdateMatrixBlock(output_, output, partition.row, partition.col,
-                    partition.pivot, block_size_);
+  {
+    std::lock_guard<std::mutex> lock(outputs_mutex_[partition.oid]);
+    UpdateMatrixBlock(outputs_[partition.oid], output, partition.row,
+                      partition.col, partition.pivot, block_size_);
+  }
   end = std::chrono::high_resolution_clock::now();
   LOG_DEBUG("UpdateMatrixBlock time: {}us",
             std::chrono::duration_cast<std::chrono::microseconds>(end - start)
                 .count());
 
-  int nan_count = torch::isnan(output_).sum().item<int64_t>();
-  if (nan_count == 0) {
-    output_cv_.notify_one();
-  }
-  // count the number of nans in the output
-  LOG_DEBUG("Number of NaNs in output: {}, output size: {}", nan_count,
-            output.numel());
+  // int nan_count = torch::isnan(output_).sum().item<int64_t>();
+  // if (nan_count == 0) {
+  //   output_cv_.notify_one();
+  // }
+  // if (rsp_cb_count_.fetch_sub(1) == 1) {
+  //   output_cv_.notify_all();
+  // }
+  rsp_cb_counts_[partition.oid]--;
+  LOG_DEBUG("Number of responses left: {}",
+            rsp_cb_counts_[partition.oid].load());
+  // // count the number of nans in the output
+  // LOG_DEBUG("Number of NaNs in output: {}, output size: {}", nan_count,
+  //           output.numel());
 }
 
+/*
 torch::Tensor MQTTServer::DispatchMatMul(torch::Tensor& mat_a,
                                          torch::Tensor& mat_b) {
   output_ = CreateOutputMatrix(mat_a, mat_b);
@@ -51,27 +78,32 @@ torch::Tensor MQTTServer::DispatchMatMul(torch::Tensor& mat_a,
   // int64_t num_devices = std::stoi(GETENV("NUM_DEVICES", "1"));
   pub_buffer_.resize(partitions.size());
   pub_cb_count_ = partitions.size();
+  rsp_cb_count_ = partitions.size();
   // pub_count_ = 0;
   int64_t count = 0;
+  auto start = std::chrono::high_resolution_clock::now();
   for (auto& partition : partitions) {
-    auto future = std::async(std::launch::async, [this, &partition, count] {
-      auto [data, size] = partition.Serialize();
-      auto topic =
-          std::string("/morphling/req/") + std::to_string(count % num_devices_);
-
-      Publish(topic, data, size);
-      // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-      pub_buffer_[count] = data;
-    });
+    // auto future = std::async(std::launch::async, [this, &partition, count] {
+    auto [data, size] = partition.Serialize();
+    auto topic =
+        std::string("/morphling/req/") + std::to_string(count % num_devices_);
+    Publish(topic, data, size);
+    // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
+    pub_buffer_[count] = data;
+    // });
     // pub_count_ = (pub_count_++) % num_devices_;
     count++;
-    futures.push_back(std::move(future));
+    // futures.push_back(std::move(future));
   }
+  auto end = std::chrono::high_resolution_clock::now();
+  LOG_DEBUG("Publish time: {}us",
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                .count());
 
   // auto start = std::chrono::high_resolution_clock::now();
-  for (auto& f : futures) {
-    f.wait();
-  }
+  // for (auto& f : futures) {
+  //   f.wait();
+  // }
   // auto end = std::chrono::high_resolution_clock::now();
   // std::cerr << "DispatchMatMul time: "
   //           << std::chrono::duration_cast<std::chrono::milliseconds>(end -
@@ -82,15 +114,95 @@ torch::Tensor MQTTServer::DispatchMatMul(torch::Tensor& mat_a,
   // while (std::isnan(output_.sum().item<float>())) {
   //   std::this_thread::sleep_for(std::chrono::milliseconds(100));
   // }
-  auto start = std::chrono::high_resolution_clock::now();
-  std::unique_lock<std::mutex> lock(output_mutex_);
-  output_cv_.wait(lock,
-                  [this] { return !torch::isnan(output_).any().item<bool>(); });
-  auto end = std::chrono::high_resolution_clock::now();
+  start = std::chrono::high_resolution_clock::now();
+  // std::unique_lock<std::mutex> lock(output_mutex_);
+  // output_cv_.wait(lock, [this] {
+  //   bool all_non_nan = !torch::isnan(output_).any().item<bool>();
+  //   int64_t nan_count = torch::isnan(output_).sum().item<int64_t>();
+  //   LOG_DEBUG("All non-nan: {}, number of NaNs: {}", all_non_nan, nan_count);
+  //   return all_non_nan;
+  // });
+  while (rsp_cb_count_ > 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  end = std::chrono::high_resolution_clock::now();
   LOG_DEBUG("Waiting time: {}us",
             std::chrono::duration_cast<std::chrono::microseconds>(end - start)
                 .count());
-  return output_;
+  return outputs_[0];
+}
+*/
+
+torch::Tensor MQTTServer::WaitMatMul(int oid) {
+  auto start = std::chrono::high_resolution_clock::now();
+  while (rsp_cb_counts_[oid] > 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  auto end = std::chrono::high_resolution_clock::now();
+  auto shape = outputs_[oid].sizes().vec();
+  auto wait_time =
+      std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+          .count();
+  LOG_DEBUG("Waiting time: {}us for oid: {}, shape: {}", wait_time, oid, shape);
+
+  uint64_t max_time = 0;
+  for (int i = 0; i < num_devices_; i++) {
+    std::string key = std::to_string(i);
+    auto logical_time = redis_->hget(key, "logical_time");
+    if (!logical_time) {
+      LOG_FATAL("Failed to get logical time from redis for key: {}", key);
+    }
+
+    // convert to uint64_t
+    uint64_t time = std::stoull(*logical_time);
+    max_time = std::max(max_time, time);
+  }
+  // set max time to all devices
+  for (int i = 0; i < num_devices_; i++) {
+    std::string key = std::to_string(i);
+    redis_->hset(key, "logical_time", std::to_string(max_time));
+  }
+  logical_time_ = max_time;
+  real_time_ += wait_time;
+  LOG_INFO("Real time {}us, Logical time: {}us", real_time_.load(),
+           logical_time_.load());
+  mm_count_--;
+  return outputs_[oid];
+}
+
+void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
+                                     torch::Tensor& mat_b) {
+  outputs_[mm_count_].set_data(CreateOutputMatrix(mat_a, mat_b));
+  auto partitions = PartitionMatrices(mat_a, mat_b, block_size_);
+  LOG_DEBUG("Number of partitions: {}", partitions.size());
+
+  std::vector<std::future<void>> futures;
+  // int64_t num_devices = std::stoi(GETENV("NUM_DEVICES", "1"));
+  pub_buffer_.resize(pub_buffer_.size() + partitions.size());
+  pub_cb_count_ += partitions.size();
+  rsp_cb_counts_[mm_count_] = partitions.size();
+
+  int64_t count = 0;
+  auto start = std::chrono::high_resolution_clock::now();
+  for (auto& partition : partitions) {
+    partition.oid = mm_count_;
+    auto [data, size] = partition.Serialize();
+    auto topic = std::string(MQTT_COMPUTE_TOPIC_REQ) +
+                 std::to_string(count % num_devices_);
+    Publish(topic, data, size);
+    // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
+    pub_buffer_[count] = data;
+    // });
+    // pub_count_ = (pub_count_++) % num_devices_;
+    count++;
+    // futures.push_back(std::move(future));
+  }
+  auto end = std::chrono::high_resolution_clock::now();
+  LOG_DEBUG("Publish time: {}us",
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                .count());
+
+  mm_count_++;
 }
 
 void MQTTServer::OnConnect(struct mosquitto* mosq, void* userdata, int result) {
@@ -98,22 +210,30 @@ void MQTTServer::OnConnect(struct mosquitto* mosq, void* userdata, int result) {
     // Connection successful
     int mosq_idx = 0;
     for (size_t i = 0; i < num_devices_; i++) {
-      auto topic = std::string("/morphling/rsp/") + std::to_string(i);
+      auto topic = std::string(MQTT_COMPUTE_TOPIC_RSP) + std::to_string(i);
       int ret =
           mosquitto_subscribe(mosq_[i % num_mosq_], NULL, topic.c_str(), 0);
-      if (ret != MOSQ_ERR_SUCCESS) {
-        LOG_ERROR("Failed to subscribe to topic {}, error code {}", topic, ret);
-      }
+      LOG_FATAL_IF(ret != MOSQ_ERR_SUCCESS,
+                   "Failed to subscribe to topic, error code: {}", ret);
       fprintf(stderr, "Subscribed to topic %s\n", topic.c_str());
+      // topic = std::string(MQTT_TIMER_TOPIC_RSP) + std::to_string(i);
+      // ret = mosquitto_subscribe(mosq_[i % num_mosq_], NULL, topic.c_str(),
+      // 0); LOG_FATAL_IF(ret != MOSQ_ERR_SUCCESS,
+      //              "Failed to subscribe to topic, error code: {}", ret);
+      // fprintf(stderr, "Subscribed to topic %s\n", topic.c_str());
     }
   } else {
-    fprintf(stderr, "Connect failed\n");
+    LOG_FATAL("Connect failed with code {}", result);
   }
 }
 
 MQTTServer::MQTTServer(int64_t block_size)
-    : MQTTBase(), block_size_(block_size) {
-  num_devices_ = std::stoi(GETENV("NUM_DEVICES", "1"));
+    : MQTTBase(),
+      block_size_(block_size),
+      outputs_mutex_(5),
+      rsp_cb_counts_(5) {
+  // num_devices_ = std::stoi(GETENV("NUM_DEVICES", "1"));
+
   for (int i = 0; i < num_mosq_; i++) {
     // auto key = GenUUID();
     struct mosquitto* mosq = mosquitto_new(NULL, clean_session_, this);
@@ -121,8 +241,23 @@ MQTTServer::MQTTServer(int64_t block_size)
     SetUpMosq(mosq);
   }
 
-  Start();
+  // Start();
   InitLogger();
+
+  // no more than 5 MAtMul in parallel
+  outputs_ = std::move(std::vector<torch::Tensor>(5));
+  // rsp_cb_counts_ = std::move(std::vector<std::atomic_ullong>(5));
+  // outputs_mutex_ = std::move(std::vector<std::mutex>(5));
+  for (int i = 0; i < 5; i++) {
+    outputs_[i] = torch::empty({0, 0});
+    rsp_cb_counts_[i] = 0;
+  }
+
+  redis_ = GetRedisConnection();
+
+  // get the number of keys from redis
+  num_devices_ = GetNumKeys(redis_);
+  LOG_INFO("Number of devices registered: {}", num_devices_);
 }
 
 // void MQTTServer::OnPublish(struct mosquitto* mosq, void* obj, int mid) {

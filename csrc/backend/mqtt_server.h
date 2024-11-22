@@ -10,7 +10,10 @@ class MQTTServer : public MQTTBase {
   MQTTServer(int64_t block_size = 32);
   ~MQTTServer() = default;
 
-  torch::Tensor DispatchMatMul(torch::Tensor& mat_a, torch::Tensor& mat_b);
+  // torch::Tensor DispatchMatMul(torch::Tensor& mat_a, torch::Tensor& mat_b);
+
+  void DispatchMatMulAsync(torch::Tensor& mat_a, torch::Tensor& mat_b);
+  torch::Tensor WaitMatMul(int oid);
 
  private:
   void OnMessage(struct mosquitto* mosq, void* obj,
@@ -18,23 +21,24 @@ class MQTTServer : public MQTTBase {
   // void OnPublish(struct mosquitto* mosq, void* obj, int mid);
   void OnConnect(struct mosquitto* mosq, void* userdata, int result);
   void SetUpMosq(struct mosquitto* mosq);
-  //   void Publish(MatrixPartition& partition);
-  //   void RunPublishThread(int idx);
 
-  // void Subscribe(const std::string& topic) {
-  //   mosquitto_subscribe(mosq_, NULL, topic.c_str(), 0);
-  //   mosquitto_message_callback_set(mosq_, [](struct mosquitto* mosq, void*
-  //   obj, const struct mosquitto_message* message) {
-  //     static_cast<MQTTServer*>(obj)->OnMessage(mosq, obj, message);
-  //   });
-  // }
-
-  // void Publish(std::string& topic, void* payload, int payloadlen);
+  void HandleMatMul(const struct mosquitto_message* message);
+  void HandleTimer(const struct mosquitto_message* message);
 
  private:
   int64_t block_size_;
   int num_devices_;
+
+  std::atomic_int mm_count_{0};
+  std::vector<torch::Tensor> outputs_;
+  std::vector<std::mutex> outputs_mutex_;
+  std::vector<std::atomic_ullong> rsp_cb_counts_;
+
   torch::Tensor output_;
   std::mutex output_mutex_;
   std::condition_variable output_cv_;
+
+  sw::redis::Redis* redis_;
+  std::atomic_ullong logical_time_{0};
+  std::atomic_ullong real_time_{0};
 };

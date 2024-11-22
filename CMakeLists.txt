@@ -41,6 +41,13 @@ set(BUILD_EXAMPLES OFF)
 
 set(BUILD_SHARED_LIBS ON)
 
+
+set(HIREDIS_HEADER $ENV{HOME}/hiredis)
+set(HIREDIS_LIB $ENV{HOME}/hiredis)
+set(TEST_HIREDIS_LIB $ENV{HOME}/hiredis)
+
+
+include_directories($ENV{HOME})
 # # BLT Support Flags
 # set(ENABLE_CUDA ON)
 # set(ENABLE_OPENMP ON)
@@ -96,7 +103,17 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/eclipse-mosquitto/mosquitto.git
   GIT_TAG v2.0.20
 )
-FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags rabbitmq mosquitto)
+# FetchContent_Declare(
+#   hiredis
+#   GIT_REPOSITORY https://github.com/redis/hiredis.git
+#   GIT_TAG v1.1.0
+# )
+FetchContent_Declare(
+  redis
+  GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
+  GIT_TAG 1.3.13
+)
+FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags rabbitmq mosquitto redis)
 
 # if(NOT rabbitmq_POPULATED)
 #     FetchContent_Populate(rabbitmq)
@@ -115,6 +132,9 @@ endif()
 # Retrieve the Python version
 # message(STATUS "Python version: ${PYTHON_VERSION_STRING}")
 find_package(PythonInterp REQUIRED)
+
+# find hiredis
+# find_package(hiredis REQUIRED)
 
 # Retrieve the Python major and minor version
 string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\..*" _ ${PYTHON_VERSION_STRING})
@@ -258,10 +278,15 @@ include_directories(
   ${rabbitmq_SOURCE_DIR}/include
   ${rabbitmq_BINARY_DIR}/include
   ${mosquitto_SOURCE_DIR}/include
+  ${redis_SOURCE_DIR}/src
+  ${redis_SOURCE_DIR}/src/sw/redis++/cxx17
+  ${redis_SOURCE_DIR}/src/sw/redis++/no_tls
+  ${redis_BINARY_DIR}/src
 )
 
 link_directories(
   ${CONDA_PREFIX_PATH}/lib
+  $ENV{HOME}/hiredis
 )
 
 file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
@@ -391,6 +416,8 @@ set(MORPHLING_EXT_LIB
   uuid Threads::Threads fmt rttr_core
   rabbitmq libmosquitto
   libspdlog.so
+  redis++
+  hiredis
 )
 
 define_gpu_extension_target(
