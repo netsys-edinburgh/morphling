@@ -41,7 +41,8 @@ torch::Tensor CreateOutputMatrix(const torch::Tensor& mat_a,
 
 void UpdateMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
                        int64_t c, int64_t pivot, int64_t block_size);
-
+void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
+                         int64_t c, int64_t pivot, int64_t block_size);
 typedef std::tuple<void*, int64_t> MatData;
 
 struct MatrixPartition {
@@ -49,11 +50,19 @@ struct MatrixPartition {
   int64_t col;
   int64_t pivot;
   int64_t h_dim;
+  int64_t oid;
   std::vector<MatData> mat;
   // int64_t block_size;
 
   std::tuple<void*, int64_t> Serialize() const;
   void Deserialize(const void* data, int64_t size);
+};
+
+enum TimerType { kTimerGet, kTimerPut };
+
+struct Timer {
+  uint8_t type;
+  uint64_t time;
 };
 
 MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,

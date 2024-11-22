@@ -14,7 +14,13 @@
 
 #include "common/generator.h"
 #include "common/types_and_defs.h"
+#include "redis_base.h"
 #include "utils/logger.h"
+
+#define MQTT_COMPUTE_TOPIC_REQ "/morphling/comp/req/"
+#define MQTT_COMPUTE_TOPIC_RSP "/morphling/comp/rsp/"
+#define MQTT_TIMER_TOPIC_REQ "/morphling/timer/req/"
+#define MQTT_TIMER_TOPIC_RSP "/morphling/timer/rsp/"
 
 class MQTTBase {
  public:
@@ -53,9 +59,9 @@ class MQTTBase {
     // fprintf(stderr, "Published message %d\n", mid);
     if (pub_cb_count_ == 0) {
       LOG_DEBUG("All messages published, clearing buffer");
-      // for (auto* ptr : pub_buffer_) {
-      //   free(ptr);
-      // }
+      for (auto* ptr : pub_buffer_) {
+        free(ptr);
+      }
       pub_buffer_.clear();
     }
   }
@@ -70,13 +76,11 @@ class MQTTBase {
     mosquitto_lib_init();
 
     num_mosq_ = std::stoi(GETENV("MORPHLING_NUM_CONN", "1"));
-    fprintf(stderr, "Number of connections: %d\n", num_mosq_);
+    LOG_DEBUG("Number of connections: {}", num_mosq_);
     pub_mutex_ = std::move(std::vector<std::mutex>(num_mosq_));
     pub_cv_ = std::move(std::vector<std::condition_variable>(num_mosq_));
     for (int i = 0; i < num_mosq_; i++) {
       pub_queue_.push_back(std::deque<PubTask>());
-      // pub_cv_.push_back(std::move(std::condition_variable()));
-      // pub_mutex_.push_back(std::move(std::mutex()));
       pub_threads_.push_back(std::thread(&MQTTBase::RunPublishThread, this, i));
     }
   }
@@ -145,6 +149,8 @@ class MQTTBase {
   std::atomic_ullong pub_count_{0};
   std::atomic_ullong pub_cb_count_{0};
   std::vector<void*> pub_buffer_;
+
+  std::atomic_ullong rsp_cb_count_{0};
 
  private:
   std::vector<std::thread> pub_threads_;

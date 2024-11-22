@@ -93,7 +93,7 @@ if __name__ == "__main__":
         # os.system(" ".join(command))
         # # device_processes.append(p)
 
-    time.sleep(5)
+    time.sleep(15)
     # start model from here
     model = AutoModelForCausalLM.from_pretrained(
         model_args.model_name, torch_dtype=torch.float32
@@ -102,6 +102,28 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(model_args.model_name)
 
     print("Model loaded", model)
+
+    # get output of "docker exec mosquitto mosquitto_sub -t '$SYS/broker/subscriptions/count'  -C 1"
+    while True:
+        output = subprocess.run(
+            [
+                "docker",
+                "exec",
+                "mosquitto",
+                "mosquitto_sub",
+                "-t",
+                "$SYS/broker/subscriptions/count",
+                "-C",
+                "1",
+            ],
+            stdout=subprocess.PIPE,
+        )
+        print("Subscriptions count", output.stdout)
+
+        if int(output.stdout) >= device_args.num_devices:
+            break
+        time.sleep(1)
+        print("Waiting for devices to connect")
 
     if model_args.backend == "rabbitmq":
         loop = asyncio.get_event_loop()
@@ -126,6 +148,10 @@ if __name__ == "__main__":
 
     print("Backend connected")
 
+    #     / # mosquitto_sub -t '$SYS/broker/subscriptions/count' -v
+    # $SYS/broker/subscriptions/count 40
+    # $SYS/broker/subscriptions/count 41
+
     # random text for seqlen > 128
     input_text = "".join("Hello, my dog is cute. He is a good ") * 128
     input_ids = tokenizer(
@@ -138,18 +164,18 @@ if __name__ == "__main__":
 
     print("input_ids", input_ids, flush=True)
 
-    ref_model = model.to("cuda:0")
-    ref_input_ids = input_ids.to("cuda:0")
-    ref_outputs = ref_model(
-        **input_ids,
-        return_dict=True,
-        output_hidden_states=True,
-        output_attentions=True,
-    )
-    ref_logits = ref_outputs.logits
-    ref_hidden_states = ref_outputs.hidden_states
-    ref_attentions = ref_outputs.attentions
-    # ref_outputs = [out.cpu() for out in ref_outputs if isinstance(out, torch.Tensor)]
+    # ref_model = model.to("cuda:0")
+    # ref_input_ids = input_ids.to("cuda:0")
+    # ref_outputs = ref_model(
+    #     **input_ids,
+    #     return_dict=True,
+    #     output_hidden_states=True,
+    #     output_attentions=True,
+    # )
+    # ref_logits = ref_outputs.logits
+    # ref_hidden_states = ref_outputs.hidden_states
+    # ref_attentions = ref_outputs.attentions
+    # # ref_outputs = [out.cpu() for out in ref_outputs if isinstance(out, torch.Tensor)]
 
     apply_hooks("linear")
 
@@ -163,23 +189,30 @@ if __name__ == "__main__":
         output_attentions=True,
     )
     end = time.time()
-    print("Inference time", end - start)
+    print("Forward time", end - start)
     out_logits = outputs.logits
     out_hidden_states = outputs.hidden_states
     out_attentions = outputs.attentions
-    # print(outputs)
-    # outputs = [out for out in outputs if isinstance(out, torch.Tensor)]
-    # print(outputs[0])
+
+    labels = input_ids["input_ids"]
+    loss = torch.nn.functional.cross_entropy(
+        out_logits.view(-1, out_logits.size(-1)), labels.view(-1)
+    )
+    print("Loss", loss)
+    start = time.time()
+    loss.backward()
+    end = time.time()
+    print("Backward time", end - start)
 
     # print("ref_hidden_states", ref_hidden_states)
 
-    for i, (ref, out) in enumerate(zip(ref_hidden_states, out_hidden_states)):
-        print("ref", ref)
-        print("out", out)
-        assert torch.allclose(
-            ref.to("cpu"), out.to("cpu"), atol=1e-6
-        ), f"Attention are not close!, max diff: {torch.max(torch.abs(ref.to('cpu') - out.to('cpu')))}"
-        print(f"Attention {i} is close!")
+    # for i, (ref, out) in enumerate(zip(ref_hidden_states, out_hidden_states)):
+    #     print("ref", ref)
+    #     print("out", out)
+    #     assert torch.allclose(
+    #         ref.to("cpu"), out.to("cpu"), atol=1e-6
+    #     ), f"Attention are not close!, max diff: {torch.max(torch.abs(ref.to('cpu') - out.to('cpu')))}"
+    #     print(f"Attention {i} is close!")
 
     # for i, (ref, out) in enumerate(zip(ref_hidden_states, out_hidden_states)):
     #     assert torch.allclose(

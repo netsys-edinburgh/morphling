@@ -66,8 +66,9 @@ class LinearFunction(torch.autograd.Function):
         # output = torch.as_tensor(np.matmul(input, weight))
 
         # FIXME: this only applies to mqtt backend
-        output = _backend.sync_dispatch_matmul(input, weight.transpose(-2, -1))
-        ref = torch.matmul(input.to("cuda:0"), weight.to("cuda:0")).to("cpu")
+        _backend.async_dispatch_matmul(input, weight.transpose(-2, -1))
+        output = _backend.wait_matmul(0)
+        # ref = torch.matmul(input.to("cuda:0"), weight.to("cuda:0")).to("cpu")
         # validate output
         # assert torch.allclose(output, ref), f"Output is not close! input shape: {input.shape}, weight shape: {weight.shape}, max diff: {torch.max(torch.abs(output - ref))}"
 
@@ -77,28 +78,44 @@ class LinearFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        print("LinearFunction backward")
         input, weight, bias = ctx.saved_tensors
+        print(
+            "LinearFunction backward",
+            grad_output.shape,
+            weight.shape,
+            input.shape,
+        )
         grad_input = grad_weight = grad_bias = None
-        # logger.debug(f"input shape: {input.shape}")
-        # logger.debug(f"grad_output shape: {grad_output.shape}")
-        # logger.debug(f"weight shape: {weight.shape}")
         if ctx.needs_input_grad[0]:
             # grad_input = grad_output.mm(weight)
             # grad_input = torch.as_tensor(
             #     np.matmul(grad_output, weight.transpose(-2, -1))
             # )
-            grad_input = _backend.sync_dispatch_matmul(
-                grad_output, weight.transpose(-2, -1)
-            )
+            # grad_input = _backend.sync_dispatch_matmul(
+            #     grad_output, weight.transpose(-2, -1)
+            # )
+            _backend.async_dispatch_matmul(grad_output, weight)
         if ctx.needs_input_grad[1]:
             # grad_weight = grad_output.t().mm(input)
             # grad_weight = torch.as_tensor(
             #     np.matmul(grad_output.transpose(-2, -1), input)
             # ).transpose(-2, -1)
-            grad_weight = _backend.sync_dispatch_matmul(
-                grad_output.transpose(-2, -1), input
-            ).transpose(-2, -1)
+            # grad_weight = _backend.sync_dispatch_matmul(
+            #     grad_output.transpose(-2, -1), input
+            # ).transpose(-2, -1)
+            _backend.async_dispatch_matmul(
+                grad_output.transpose(-2, -1), input.transpose(-2, -1)
+            )
+
+        dispatch_count = 0
+        if ctx.needs_input_grad[0]:
+            grad_input = _backend.wait_matmul(dispatch_count)
+            dispatch_count += 1
+
+        if ctx.needs_input_grad[1]:
+            grad_weight = _backend.wait_matmul(dispatch_count).transpose(-2, -1)
+            dispatch_count += 1
+
         if bias is not None and ctx.needs_input_grad[2]:
             grad_bias = grad_output.sum(0)
 

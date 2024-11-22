@@ -48,10 +48,10 @@ extern void InitLogger();
 #define LOG_INFO(...) spdlog::info(__VA_ARGS__)
 #define LOG_ERROR(...) spdlog::error(__VA_ARGS__)
 #define LOG_WARN(...) spdlog::warn(__VA_ARGS__)
-#define LOG_FATAL(...)             \
-  do {                             \
-    spdlog::critical(__VA_ARGS__); \
-    assert(false);                 \
+#define LOG_FATAL(...)                                 \
+  do {                                                 \
+    spdlog::critical(__VA_ARGS__);                     \
+    throw(std::runtime_error("Logged a FATAL error")); \
   } while (0)
 
 #define LOG_FATAL_IF(cond, ...) \

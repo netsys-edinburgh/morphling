@@ -100,15 +100,16 @@ def main():
     host, port = args.redis_host.split(":")
     redis_connector = redis.Redis(host=host, port=port)
 
-    device_uuid = str(uuid.uuid4())
+    # device_uuid = str(uuid.uuid4())
     device_info = {
-        "uuid": device_uuid,
+        "id": args.id,
         "flops": args.flops,
         "memory": args.memory,
         "ul_bw": args.ul_bw,
         "dl_bw": args.dl_bw,
-        "ul_lat": args.ul_lat,
-        "dl_lat": args.dl_lat,
+        "ul_lat": int(args.ul_lat * 1e6),
+        "dl_lat": int(args.dl_lat * 1e6),
+        "logical_time": 0,
     }
 
     # FIXME: subject to change as we do not trust the device to do its own measurement
@@ -116,14 +117,12 @@ def main():
     # 2. server send random number matrix multiplication tasks to the device to measure flops, results needs to be matched.
 
     # device reconnect is considered new device
-    print(
-        f"Registering device {device_uuid} with info {device_info}", flush=True
-    )
-    redis_connector.hmset(device_uuid, mapping=device_info)
-    redis_connector.expire(device_uuid, 5)
+    print(f"Registering device {args.id} with info {device_info}", flush=True)
+    redis_connector.hmset(args.id, mapping=device_info)
+    redis_connector.expire(args.id, 60)
 
     # use threading to timer to refresh ttl
-    threading.Timer(5, lambda: redis_connector.expire("devices", 5)).start()
+    # threading.Timer(5, lambda: redis_connector.expire("devices", 5)).start()
 
     if args.emulation:
         # enable interception of torch.mm
@@ -147,7 +146,7 @@ def main():
         worker.handle_req()
 
     elif args.backend == "mqtt":
-        worker = AutoWorker.from_name(args.backend, f"/morphling/req/{args.id}")
+        worker = AutoWorker.from_name(args.backend, str(args.id))
         worker.start()
         while True:
             time.sleep(1)
