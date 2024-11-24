@@ -28,10 +28,13 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
   auto start = std::chrono::high_resolution_clock::now();
   MatrixPartition partition;
   partition.Deserialize(message->payload, message->payloadlen);
+  auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG("REQ Deserialization time: {}us", duration.count());
+  LOG_DEBUG("{} REQ Deserialization time: {}us", part_key, duration.count());
+
+  LOG_DEBUG("{} partition: {}", part_key, partition.DebugString());
 
   // get logical time from redis
   auto time = redis_->hget(uuid_, "logical_time");
@@ -40,6 +43,36 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
   logical_time_ = std::stoull(*time);
   logical_time_ += (double)message->payloadlen / device_info_["dl_bw"] *
                    1e6;  // in microseconds
+
+  auto tensor_key_row =
+      std::make_tuple(partition.version, partition.pivot, partition.row, true);
+  auto tensor_key_col =
+      std::make_tuple(partition.version, partition.pivot, partition.col, false);
+
+  bool r_cached = cached_tensors_.Exist(tensor_key_row);
+  bool c_cached = cached_tensors_.Exist(tensor_key_col);
+
+  LOG_DEBUG("{} Row cached: {}, Col cached: {}", part_key, r_cached, c_cached);
+
+  // LOG_FATAL_IF(r_cached && c_cached,
+  //              "{} Both row and col tensors are cached, something went
+  //              wrong", part_key);
+  LOG_FATAL_IF(!r_cached && std::get<1>(partition.mat[0]) == 0,
+               "{} Row tensor is not cached but size is 0", part_key);
+  LOG_FATAL_IF(!c_cached && std::get<1>(partition.mat[1]) == 0,
+               "{} Col tensor is not cached but size is 0", part_key);
+
+  if (r_cached) {
+    auto cached_tensor = cached_tensors_.Get(tensor_key_row);
+    partition.mat[0] = {cached_tensor.data_ptr(),
+                        cached_tensor.numel() * sizeof(float)};
+  }
+
+  if (c_cached) {
+    auto cached_tensor = cached_tensors_.Get(tensor_key_col);
+    partition.mat[1] = {cached_tensor.data_ptr(),
+                        cached_tensor.numel() * sizeof(float)};
+  }
 
   // create tensor from partition
   auto [r_ptr, r_size] = partition.mat[0];
@@ -71,14 +104,35 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
                               FLOAT32_TENSOR_OPTIONS(torch::kCPU))
                  .to(torch::kCUDA, device);
 
-  // std::cerr << "Row: " << row << std::endl;
-  // std::cerr << "Col: " << col << std::endl;
+  LOG_DEBUG("{} Row: {}, Col: {}", part_key, row.sizes().vec(),
+            col.sizes().vec());
+
+  if (!r_cached) {
+    void* r_cpy_ptr;
+    cudaHostAlloc(&r_cpy_ptr, r_size, cudaHostAllocDefault);
+    std::memcpy(r_cpy_ptr, r_ptr, r_size);
+    cached_tensors_.Put(tensor_key_row,
+                        torch::from_blob(r_cpy_ptr, {row_size, partition.h_dim},
+                                         CudaHostDeleter<void>{},
+                                         FLOAT32_TENSOR_OPTIONS(torch::kCPU)));
+  }
+
+  if (!c_cached) {
+    void* c_cpy_ptr;
+    cudaHostAlloc(&c_cpy_ptr, c_size, cudaHostAllocDefault);
+    std::memcpy(c_cpy_ptr, c_ptr, c_size);
+    cached_tensors_.Put(tensor_key_col,
+                        torch::from_blob(c_cpy_ptr, {col_size, partition.h_dim},
+                                         CudaHostDeleter<void>{},
+                                         FLOAT32_TENSOR_OPTIONS(torch::kCPU)));
+  }
 
   auto result = torch::mm(row, col.transpose(0, 1)).to(torch::kCPU);
   auto matmul_logical_time = (double)row_size * partition.h_dim * col_size * 2 /
                              device_info_["flops"] * 1e6;  // in microseconds
-  logical_time_ += (double)row_size * partition.h_dim * col_size * 2 /
-                   device_info_["flops"] * 1e6;  // in microseconds
+  // logical_time_ += (double)row_size * partition.h_dim * col_size * 2 /
+  //                  device_info_["flops"] * 1e6;  // in microseconds
+
   // auto zeros = torch::zeros_like(result);
   // LOG_FATAL_IF(torch::allclose(result, zeros),
   //              "Result is all zero, something went wrong, worker cannot be "
@@ -86,23 +140,25 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
 
   end = std::chrono::high_resolution_clock::now();
   duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG("Matmul real time: {}us, Matmul logical time: {}us",
+  LOG_DEBUG("{} Matmul real time: {}us, Matmul logical time: {}us", part_key,
             duration.count(), matmul_logical_time);
+
+  logical_time_ += duration.count();
 
   start = std::chrono::high_resolution_clock::now();
   MatrixPartition response = partition;
   response.h_dim = result.size(1);
   response.mat.clear();
   response.mat.push_back({result.data_ptr(), result.numel() * sizeof(float)});
-  // fprintf(stderr, "Response size: %ld\n", result.numel() * sizeof(float));
 
   auto [data, size] = response.Serialize();
+  // fprintf(stderr, "Response size: %ld\n", size);
   // replace req with rsp
   auto pos = std::string(message->topic).find("req");
   std::string topic = std::string(message->topic).replace(pos, 3, "rsp");
   end = std::chrono::high_resolution_clock::now();
   duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG("RSP Serialization time: {}us", duration.count());
+  LOG_DEBUG("{} RSP Serialization time: {}us", part_key, duration.count());
 
   Publish(topic, data, size);
   logical_time_ +=
@@ -140,7 +196,8 @@ void MQTTWorker::SetUpMosq(struct mosquitto* mosq) {
       });
 }
 
-MQTTWorker::MQTTWorker(const std::string& uuid) : MQTTBase() {
+MQTTWorker::MQTTWorker(const std::string& uuid)
+    : MQTTBase(), cached_tensors_(1000) {
   for (int i = 0; i < num_mosq_; i++) {
     // auto key = GenUUID();
     struct mosquitto* mosq = mosquitto_new(NULL, clean_session_, this);

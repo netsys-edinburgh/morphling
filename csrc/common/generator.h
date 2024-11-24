@@ -2,8 +2,10 @@
 
 #include <uuid/uuid.h>
 
+#include <bitset>
 #include <chrono>
 #include <iomanip>
+#include <random>
 #include <sstream>
 #include <string>
 
@@ -13,6 +15,18 @@ inline std::string GenUUID() {
   char uuid_str[37];
   uuid_unparse(uuid, uuid_str);
   return std::string(uuid_str);
+}
+
+inline uint64_t GenUUID64() {
+  static std::random_device rd;
+  static std::mt19937_64 eng(rd());
+  static std::uniform_int_distribution<uint64_t> distr;
+
+  std::bitset<64> uuid;
+  uuid = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  uuid ^= distr(eng);
+
+  return uuid.to_ullong();
 }
 
 inline std::string CurrentTimeString() {

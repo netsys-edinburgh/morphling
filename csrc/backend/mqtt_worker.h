@@ -1,7 +1,9 @@
 #pragma once
 
 #include "common/generator.h"
+#include "common/pytorch_defs.h"
 #include "mqtt_base.h"
+#include "server_base.h"
 
 class MQTTWorker : public MQTTBase {
  public:
@@ -23,6 +25,8 @@ class MQTTWorker : public MQTTBase {
   std::string timer_topic_;
   std::unordered_map<std::string, uint64_t> device_info_;
   std::string uuid_;
+
+  LRUCache<TensorKey, torch::Tensor> cached_tensors_;
 
   std::atomic_ullong logical_time_{0};
   sw::redis::Redis* redis_;

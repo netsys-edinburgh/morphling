@@ -193,6 +193,7 @@ if __name__ == "__main__":
     out_logits = outputs.logits
     out_hidden_states = outputs.hidden_states
     out_attentions = outputs.attentions
+    print("out_logits", out_logits)
 
     labels = input_ids["input_ids"]
     loss = torch.nn.functional.cross_entropy(

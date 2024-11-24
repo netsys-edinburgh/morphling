@@ -25,6 +25,8 @@ class MQTTServer : public MQTTBase {
   void HandleMatMul(const struct mosquitto_message* message);
   void HandleTimer(const struct mosquitto_message* message);
 
+  void RephrasePartitions(std::vector<MatrixPartition>& partitions);
+
  private:
   int64_t block_size_;
   int num_devices_;
@@ -42,3 +44,15 @@ class MQTTServer : public MQTTBase {
   std::atomic_ullong logical_time_{0};
   std::atomic_ullong real_time_{0};
 };
+
+// class GreedySchedulingPolicy {
+//   public:
+//     GreedySchedulingPolicy(MQTTServer& server) : server_(server) {}
+//     ~GreedySchedulingPolicy() = default;
+
+//     void RephrasePartitions(std::vector<MatrixPartition>& partitions);
+//     void Refresh();
+
+//   private:
+//     MQTTServer& server_;
+// };
