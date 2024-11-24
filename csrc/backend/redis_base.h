@@ -26,3 +26,10 @@ inline int GetNumKeys(sw::redis::Redis* redis) {
   }
   return keys.size();
 }
+
+inline std::unordered_map<std::string, std::string> GetDeviceInfo(
+    sw::redis::Redis* redis, const std::string& uuid) {
+  std::unordered_map<std::string, std::string> info;
+  redis->hgetall(uuid, std::inserter(info, info.begin()));
+  return std::move(info);
+}

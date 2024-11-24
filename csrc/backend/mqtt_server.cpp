@@ -30,8 +30,9 @@ void MQTTServer::HandleMatMul(const struct mosquitto_message* message) {
   auto start = std::chrono::high_resolution_clock::now();
   MatrixPartition partition;
   partition.Deserialize(message->payload, message->payloadlen);
+  auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
-  LOG_DEBUG("Deserialization time: {}us",
+  LOG_DEBUG("{} RSP Deserialization time: {}us", part_key,
             std::chrono::duration_cast<std::chrono::microseconds>(end - start)
                 .count());
 
@@ -39,13 +40,18 @@ void MQTTServer::HandleMatMul(const struct mosquitto_message* message) {
   int64_t row_size = o_size / partition.h_dim / sizeof(float);
   int64_t col_size = partition.h_dim;
 
+  // LOG_DEBUG("row_size: {}, col_size: {}, o_size: {}", row_size, col_size,
+  // o_size);
+
+  LOG_DEBUG("{} partition: {}", part_key, partition.DebugString());
+
   start = std::chrono::high_resolution_clock::now();
   auto output = torch::from_blob(o_ptr, {row_size, col_size},
                                  FLOAT32_TENSOR_OPTIONS(torch::kCPU));
   {
     std::lock_guard<std::mutex> lock(outputs_mutex_[partition.oid]);
-    UpdateMatrixBlock(outputs_[partition.oid], output, partition.row,
-                      partition.col, partition.pivot, block_size_);
+    IndexPutMatrixBlock(outputs_[partition.oid], output, partition.row,
+                        partition.col, partition.pivot, block_size_);
   }
   end = std::chrono::high_resolution_clock::now();
   LOG_DEBUG("UpdateMatrixBlock time: {}us",
@@ -176,6 +182,8 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
   auto partitions = PartitionMatrices(mat_a, mat_b, block_size_);
   LOG_DEBUG("Number of partitions: {}", partitions.size());
 
+  RephrasePartitions(partitions);
+
   std::vector<std::future<void>> futures;
   // int64_t num_devices = std::stoi(GETENV("NUM_DEVICES", "1"));
   pub_buffer_.resize(pub_buffer_.size() + partitions.size());
@@ -187,8 +195,8 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
   for (auto& partition : partitions) {
     partition.oid = mm_count_;
     auto [data, size] = partition.Serialize();
-    auto topic = std::string(MQTT_COMPUTE_TOPIC_REQ) +
-                 std::to_string(count % num_devices_);
+    auto topic =
+        std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
     Publish(topic, data, size);
     // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
     pub_buffer_[count] = data;
@@ -201,7 +209,6 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
   LOG_DEBUG("Publish time: {}us",
             std::chrono::duration_cast<std::chrono::microseconds>(end - start)
                 .count());
-
   mm_count_++;
 }
 
@@ -286,4 +293,78 @@ void MQTTServer::SetUpMosq(struct mosquitto* mosq) {
                const struct mosquitto_message* message) {
         static_cast<MQTTServer*>(obj)->OnMessage(mosq, obj, message);
       });
+}
+
+void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
+  std::vector<double> device_time(num_devices_, 0);
+  std::vector<double> device_ul_bw(num_devices_, 0);
+  std::vector<double> device_dl_bw(num_devices_, 0);
+  std::vector<double> device_flops(num_devices_, 0);
+  std::vector<std::unordered_set<TensorKey>> device_tensors(num_devices_);
+
+  for (int i = 0; i < num_devices_; i++) {
+    std::string uuid = std::to_string(i);
+    auto d_info = GetDeviceInfo(redis_, uuid);
+    device_ul_bw[i] = std::stod(d_info["ul_bw"]);
+    device_dl_bw[i] = std::stod(d_info["dl_bw"]);
+    device_flops[i] = std::stod(d_info["flops"]);
+  }
+
+  LOG_DEBUG("Device info: ul_bw: {}, dl_bw: {}, flops: {}", device_ul_bw,
+            device_dl_bw, device_flops);
+
+  // greedy algorithm to select the minimal time
+  for (auto& partition : partitions) {
+    double min_time = std::numeric_limits<double>::max();
+    int min_device = 0;
+    auto version = partition.version;
+    auto tensor_key_row =
+        std::make_tuple(version, partition.pivot, partition.row, true);
+    auto tensor_key_col =
+        std::make_tuple(version, partition.pivot, partition.col, false);
+    bool min_r_cached = false;
+    bool min_c_cached = false;
+    for (int i = 0; i < num_devices_; i++) {
+      auto& tensors = device_tensors[i];
+
+      bool r_cached = tensors.find(tensor_key_row) != tensors.end();
+      bool c_cached = tensors.find(tensor_key_col) != tensors.end();
+
+      auto r_size = std::get<1>(partition.mat[0]);
+      auto c_size = std::get<1>(partition.mat[1]);
+      auto cached_r_size = (r_cached) ? 0 : r_size;
+      auto cached_c_size = (c_cached) ? 0 : c_size;
+
+      double ul_time =
+          (block_size_ * block_size_) * sizeof(float) / device_ul_bw[i];
+      double dl_time =
+          (cached_r_size + cached_c_size) * sizeof(float) / device_dl_bw[i];
+      double flops = 2.0 * (r_size / sizeof(float)) * (c_size / sizeof(float)) /
+                     partition.h_dim;
+
+      auto time = ul_time + dl_time + flops + device_time[i];
+      if (time < min_time) {
+        min_time = time;
+        min_device = i;
+        min_r_cached = r_cached;
+        min_c_cached = c_cached;
+      }
+    }
+    // update the time for the device
+    device_time[min_device] += min_time;
+    partition.dev_id = min_device;
+
+    if (!min_r_cached) {
+      device_tensors[min_device].insert(tensor_key_row);
+    } else {
+      // set corresponding mat to null to save communication
+      partition.mat[0] = {nullptr, 0};
+    }
+
+    if (!min_c_cached) {
+      device_tensors[min_device].insert(tensor_key_col);
+    } else {
+      partition.mat[1] = {nullptr, 0};
+    }
+  }
 }

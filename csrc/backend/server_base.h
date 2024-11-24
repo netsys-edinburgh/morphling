@@ -43,19 +43,54 @@ void UpdateMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
                        int64_t c, int64_t pivot, int64_t block_size);
 void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
                          int64_t c, int64_t pivot, int64_t block_size);
+
 typedef std::tuple<void*, int64_t> MatData;
 
+typedef std::tuple<uint64_t, int64_t, int64_t, bool>
+    TensorKey;  // version, pivot, r/c, is_row
+
+// define custom hash function for TensorKey
+namespace std {
+template <>
+struct hash<TensorKey> {
+  std::size_t operator()(const TensorKey& k) const {
+    return std::hash<uint64_t>{}(std::get<0>(k)) ^
+           std::hash<int64_t>{}(std::get<1>(k)) ^
+           std::hash<int64_t>{}(std::get<2>(k)) ^
+           std::hash<bool>{}(std::get<3>(k));
+  }
+};
+}  // namespace std
+
 struct MatrixPartition {
+  uint64_t version;
   int64_t row;
   int64_t col;
-  int64_t pivot;
-  int64_t h_dim;
-  int64_t oid;
-  std::vector<MatData> mat;
-  // int64_t block_size;
-
+  int64_t pivot;             // leading dimension
+  int64_t h_dim;             // hidden dimension
+  int64_t dev_id;            // device id
+  int64_t oid;               // output matrix id for parallel matmul
+  std::vector<MatData> mat;  // if ptr is null and size is 0, means that this
+                             // entry need to be fetched from cache first mat is
+                             // row block, second mat is col block
   std::tuple<void*, int64_t> Serialize() const;
   void Deserialize(const void* data, int64_t size);
+
+  TensorKey GetRowKey() const {
+    return std::make_tuple(version, pivot, row, true);
+  }
+
+  TensorKey GetColKey() const {
+    return std::make_tuple(version, pivot, col, false);
+  }
+
+  std::string GetPartitionKey() const {
+    // [version:pivot:row:col]
+    return "[" + std::to_string(version) + ":" + std::to_string(pivot) + ":" +
+           std::to_string(row) + ":" + std::to_string(col) + "]";
+  }
+
+  std::string DebugString() const;
 };
 
 enum TimerType { kTimerGet, kTimerPut };

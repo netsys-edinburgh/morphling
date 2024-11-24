@@ -2,17 +2,19 @@
 
 #include <sys/mman.h>
 
+#include "common/generator.h"
+
 void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
                          int64_t c, int64_t pivot, int64_t block_size) {
   // implement torch::index_put_ using memory copy
-  auto* target_ptr = target.data_ptr();
-  auto* mat_ptr = mat.data_ptr();
+  void* target_ptr = target.data_ptr();
+  void* mat_ptr = mat.data_ptr();
 
   auto mat_shape = mat.sizes().vec();
   auto target_shape = target.sizes().vec();
 
-  auto mat_n_rows = mat_shape[mat_shape.size() - 2];
-  auto mat_n_cols = mat_shape[mat_shape.size() - 1];
+  int64_t mat_n_rows = mat_shape[mat_shape.size() - 2];
+  int64_t mat_n_cols = mat_shape[mat_shape.size() - 1];
 
   int64_t elem_size = mat.element_size();
 
@@ -24,9 +26,12 @@ void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
   int64_t target_offset =
       pivot * in_dim * out_dim * elem_size + offset_r + offset_c;
 
-  for (int i = 0; i < mat_n_rows; ++i) {
-    auto mat_row_offset = i * mat_n_cols * elem_size;
-    auto target_row_offset = target_offset + i * out_dim * elem_size;
+  for (int64_t i = 0; i < mat_n_rows; ++i) {
+    int64_t mat_row_offset = i * mat_n_cols * elem_size;
+    int64_t target_row_offset = target_offset + i * out_dim * elem_size;
+    // LOG_DEBUG("IndexPutMatrixBlock, target_row_offset: {}, mat_row_offset:
+    // {}",
+    //           target_row_offset, mat_row_offset);
     memcpy((char*)target_ptr + target_row_offset,
            (char*)mat_ptr + mat_row_offset, mat_n_cols * elem_size);
   }
@@ -159,11 +164,13 @@ MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
   // size_r, size_c, a_bytes, b_bytes);
 
   MatrixPartition partition;
+  partition.version = 0;  // need to set version
+  partition.oid = -1;     // need to set oid
   partition.row = r;
   partition.col = c;
   partition.h_dim = h_dim;
   partition.pivot = pivot;
-  partition.oid = -1;
+  partition.dev_id = -1;
   partition.mat.push_back({offset_r_ptr, size_r});
   partition.mat.push_back({offset_c_ptr, size_c});
   // partition.block_size = block_size;
@@ -184,6 +191,7 @@ std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
   int64_t out_dim = b_shape[b_shape.size() - 2];
 
   std::vector<MatrixPartition> partitions;
+  auto uuid64 = GenUUID64();
 
   int64_t num_block_rows = in_dim / block_size + (in_dim % block_size != 0);
   int64_t num_block_cols = out_dim / block_size + (out_dim % block_size != 0);
@@ -207,11 +215,16 @@ std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
     }
   }
 
+  // set version to same uuid64
+  for (auto& partition : partitions) {
+    partition.version = uuid64;
+  }
+
   return partitions;
 }
 
 std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
-  int64_t size = sizeof(int64_t) * 5;
+  int64_t size = sizeof(int64_t) * 6 + sizeof(uint64_t);
   for (const auto& mat : mat) {
     size += std::get<1>(mat) + sizeof(int64_t);
   }
@@ -226,7 +239,8 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
 
   int64_t offset = 0;
   // fprintf(stderr, "Serializing partition: %ld, %ld, %ld\n", row, col, h_dim);
-
+  memcpy(ptr + offset, &version, sizeof(uint64_t));
+  offset += sizeof(uint64_t);
   memcpy(ptr + offset, &row, sizeof(int64_t));
   offset += sizeof(int64_t);
   memcpy(ptr + offset, &col, sizeof(int64_t));
@@ -234,6 +248,8 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
   memcpy(ptr + offset, &pivot, sizeof(int64_t));
   offset += sizeof(int64_t);
   memcpy(ptr + offset, &h_dim, sizeof(int64_t));
+  offset += sizeof(int64_t);
+  memcpy(ptr + offset, &dev_id, sizeof(int64_t));
   offset += sizeof(int64_t);
   memcpy(ptr + offset, &oid, sizeof(int64_t));
   offset += sizeof(int64_t);
@@ -243,6 +259,9 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
     offset += sizeof(int64_t);
     // fprintf(stderr, "ptr: %p, offset: %ld, size: %ld\n", ptr, offset,
     // std::get<1>(mat));
+    if (std::get<1>(mat) == 0) {
+      continue;
+    }
     memcpy(ptr + offset, std::get<0>(mat), std::get<1>(mat));
     offset += std::get<1>(mat);
     // fprintf(stderr, "Mat size: %ld\n", std::get<1>(mat));
@@ -259,6 +278,8 @@ void MatrixPartition::Deserialize(const void* data, int64_t size) {
   //   LOG_FATAL("Failed to pin memory in deserialization");
   // }
 
+  memcpy(&version, ptr + offset, sizeof(uint64_t));
+  offset += sizeof(uint64_t);
   memcpy(&row, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
   memcpy(&col, ptr + offset, sizeof(int64_t));
@@ -267,23 +288,40 @@ void MatrixPartition::Deserialize(const void* data, int64_t size) {
   offset += sizeof(int64_t);
   memcpy(&h_dim, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
+  memcpy(&dev_id, ptr + offset, sizeof(int64_t));
+  offset += sizeof(int64_t);
   memcpy(&oid, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
 
-  // fprintf(stderr, "Deserialized partition: %ld, %ld, %ld, %ld, %ld\n", row,
-  //         col, pivot, h_dim, oid);
+  // fprintf(stderr, "Deserialized partition: %ld, %ld, %ld, %ld, %ld, %ld\n",
+  // version, row,
+  //         col, pivot, h_dim, dev_id);
 
   while (offset < size) {
     int64_t mat_size;
     memcpy(&mat_size, ptr + offset, sizeof(int64_t));
     offset += sizeof(int64_t);
-
-    // void* mat_ptr = malloc(mat_size + 1);
-    // memcpy(mat_ptr, ptr + offset, mat_size);
-    // mat.push_back({mat_ptr, mat_size});
+    if (mat_size == 0) {
+      mat.push_back({nullptr, 0});
+      continue;
+    }
 
     mat.push_back({ptr + offset, mat_size});
     offset += mat_size;
-    // fprintf(stderr, "Mat size: %ld\n", mat_size);
   }
+
+  // fprintf(stderr, "Deserialized partition, size: %ld\n", mat.size());
+}
+
+std::string MatrixPartition::DebugString() const {
+  std::ostringstream oss;
+  oss << "v: " << version << ", r: " << row << ", c: " << col
+      << ", p: " << pivot << ", h: " << h_dim << ", dev_id: " << dev_id
+      << ", oid: " << oid;
+
+  // add mat data
+  for (const auto& mat_data : mat) {
+    oss << ", m_size: " << std::get<1>(mat_data);
+  }
+  return oss.str();
 }

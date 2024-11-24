@@ -33,6 +33,15 @@ struct DoNothingDeleter {
   void operator()(T* ptr) const {}
 };
 
+template <typename T>
+struct CudaHostDeleter {
+  void operator()(T* ptr) const {
+    if (ptr) {
+      cudaFreeHost(ptr);
+    }
+  }
+};
+
 #define GETENV(name, default_value) \
   (std::getenv(name) ? std::getenv(name) : default_value)
 
@@ -95,3 +104,54 @@ constexpr void* pointer_to_void(const T* ptr) {
       return fmt::formatter<std::string>::format(EnumType##ToString(v), ctx); \
     }                                                                         \
   };
+
+#include <iostream>
+#include <list>
+#include <unordered_map>
+#include <utility>
+
+template <typename KeyType, typename ValueType>
+class LRUCache {
+ public:
+  explicit LRUCache(size_t cap) : capacity_(cap) {}
+
+  void Put(const KeyType& key, const ValueType& value) {
+    auto it = cache_.find(key);
+    if (it != cache_.end()) {
+      // Update item if it exists and move it to the back of the list
+      lru_.erase(it->second.second);
+    } else {
+      // Check capacity_ and remove the least recently used item
+      if (cache_.size() == capacity_) {
+        cache_.erase(lru_.front());
+        lru_.pop_front();
+      }
+    }
+    // Insert new item at the back of the list
+    lru_.push_back(key);
+    cache_[key] = {value, --lru_.end()};
+  }
+
+  ValueType Get(const KeyType& key) {
+    auto it = cache_.find(key);
+    if (it == cache_.end()) {
+      throw std::range_error("Key not found");
+    }
+    // Move the accessed item to the back of the list
+    lru_.erase(it->second.second);
+    lru_.push_back(key);
+    it->second.second = --lru_.end();
+    return it->second.first;
+  }
+
+  bool Exist(const KeyType& key) const {
+    return cache_.find(key) != cache_.end();
+  }
+
+ private:
+  std::list<KeyType> lru_;  // Stores keys of cache items
+  std::unordered_map<
+      KeyType, std::pair<ValueType, typename std::list<KeyType>::iterator>>
+      cache_;
+  size_t capacity_;
+};
