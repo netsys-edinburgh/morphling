@@ -44,10 +44,33 @@ void UpdateMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
 void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
                          int64_t c, int64_t pivot, int64_t block_size);
 
-typedef std::tuple<void*, int64_t> MatData;
+typedef std::tuple<void*, int64_t> PtrData;
+
+// define hash function for PtrData
+namespace std {
+template <>
+struct hash<PtrData> {
+  std::size_t operator()(const PtrData& p) const {
+    return std::hash<void*>{}(std::get<0>(p)) ^
+           std::hash<int64_t>{}(std::get<1>(p));
+  }
+};
+}  // namespace std
 
 typedef std::tuple<uint64_t, int64_t, int64_t, bool>
     TensorKey;  // version, pivot, r/c, is_row
+
+// create a spdlog fmt for TensorKey
+template <>
+struct fmt::formatter<TensorKey> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const TensorKey& p, FormatContext& ctx) {
+    return format_to(ctx.out(), "[{}:{}:{}:{}]", std::get<0>(p), std::get<1>(p),
+                     std::get<2>(p), std::get<3>(p));
+  }
+};
 
 // define custom hash function for TensorKey
 namespace std {
@@ -70,9 +93,12 @@ struct MatrixPartition {
   int64_t h_dim;             // hidden dimension
   int64_t dev_id;            // device id
   int64_t oid;               // output matrix id for parallel matmul
-  std::vector<MatData> mat;  // if ptr is null and size is 0, means that this
+  uint64_t timestamp;        // timestamp on sending the message
+  std::vector<PtrData> mat;  // if ptr is null and size is 0, means that this
                              // entry need to be fetched from cache first mat is
                              // row block, second mat is col block
+  void* ptr_ = nullptr;      // pointer to the data
+  int64_t size_ = 0;         // size of the data
   std::tuple<void*, int64_t> Serialize() const;
   void Deserialize(const void* data, int64_t size);
 
@@ -84,6 +110,14 @@ struct MatrixPartition {
     return std::make_tuple(version, pivot, col, false);
   }
 
+  int64_t Size() const {
+    int64_t size = 0;
+    for (const auto& m : mat) {
+      size += std::get<1>(m);
+    }
+    return size;
+  }
+
   std::string GetPartitionKey() const {
     // [version:pivot:row:col]
     return "[" + std::to_string(version) + ":" + std::to_string(pivot) + ":" +
@@ -93,12 +127,12 @@ struct MatrixPartition {
   std::string DebugString() const;
 };
 
-enum TimerType { kTimerGet, kTimerPut };
+// enum TimerType { kTimerGet, kTimerPut };
 
-struct Timer {
-  uint8_t type;
-  uint64_t time;
-};
+// struct Timer {
+//   uint8_t type;
+//   uint64_t time;
+// };
 
 MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
                                          const torch::Tensor& mat_b, int64_t r,

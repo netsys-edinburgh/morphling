@@ -49,3 +49,10 @@ inline std::string CurrentTimeString() {
 
   return oss.str();
 }
+
+// constexpr microseconds since epoch
+inline uint64_t CurrentTimeMicros() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}

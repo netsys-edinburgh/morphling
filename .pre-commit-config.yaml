@@ -12,7 +12,7 @@ repos:
     # -   id: check-symlinks
     -   id: check-yaml
     -   id: destroyed-symlinks
-    # -   id: end-of-file-fixer
+    -   id: end-of-file-fixer
     -   id: fix-byte-order-marker
     -   id: fix-encoding-pragma
         args: [--remove]
@@ -35,7 +35,8 @@ repos:
     hooks:
     -   id: clang-format  # formatter of C/C++ code based on a style guide: LLVM, Google, Chromium, Mozilla, and WebKit available
         args: ['-style=file']
-    -   id: cppcheck
+    # -   id: cpplint
+    # -   id: cppcheck # exclude some checks
 
 -   repo: https://github.com/codespell-project/codespell
     rev: v2.3.0

@@ -32,6 +32,7 @@ if __name__ == "__main__":
     print(device_args, model_args, flush=True)
 
     os.environ["NUM_DEVICES"] = str(device_args.num_devices)
+    num_gpus = torch.cuda.device_count()
 
     # read the output of the bash script
     this_file_path = os.path.dirname(os.path.realpath(__file__))
@@ -71,6 +72,7 @@ if __name__ == "__main__":
         # env["TORCH_SHOW_CPP_STACKTRACES"] = "1"
 
         command = [
+            "CUDA_VISIBLE_DEVICES=" + str(i % num_gpus),
             "bash",
             f"{this_file_path}/run_device.sh",
             str(i),
@@ -153,16 +155,18 @@ if __name__ == "__main__":
     # $SYS/broker/subscriptions/count 41
 
     # random text for seqlen > 128
-    input_text = "".join("Hello, my dog is cute. He is a good ") * 128
-    input_ids = tokenizer(
+    input_text = [
+        "".join("Hello, my dog is cute. He is a good ") * 128
+    ] * model_args.batch_size
+    inputs = tokenizer(
         input_text,
         return_tensors="pt",
         padding=True,
         truncation=True,
-        max_length=256,
+        max_length=model_args.seq_length,
     )
 
-    print("input_ids", input_ids, flush=True)
+    print("inputs", inputs, flush=True)
 
     # ref_model = model.to("cuda:0")
     # ref_input_ids = input_ids.to("cuda:0")
@@ -180,10 +184,10 @@ if __name__ == "__main__":
     apply_hooks("linear")
 
     model = model.to("cpu")
-    input_ids = input_ids.to("cpu")
+    inputs = inputs.to("cpu")
     start = time.time()
     outputs = model(
-        **input_ids,
+        **inputs,
         return_dict=True,
         output_hidden_states=True,
         output_attentions=True,

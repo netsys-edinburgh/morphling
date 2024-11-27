@@ -2,6 +2,8 @@
 #include <cuda_runtime_api.h>
 #include <torch/extension.h>
 
+#include <string>
+
 #include "backend/mqtt_server.h"
 #include "backend/mqtt_worker.h"
 #include "common/pytorch_defs.h"
@@ -27,12 +29,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("start", &MQTTServer::Start, "Start MQTT server")
       .def("async_dispatch_matmul", &MQTTServer::DispatchMatMulAsync,
            "Dispatch matmul to devices")
-      .def("wait_matmul", &MQTTServer::WaitMatMul, "Wait for matmul response")
-      .def("publish",
-           [](MQTTServer& server, std::string& topic, torch::Tensor& payload) {
-             server.Publish(topic, payload.data_ptr(),
-                            payload.numel() * sizeof(float));
-           });
+      .def("wait_matmul", &MQTTServer::WaitMatMul, "Wait for matmul response");
+  //   .def("publish",
+  //        [](MQTTServer& server, std::string& topic, torch::Tensor& payload) {
+  //          server.Publish(topic, payload.data_ptr(),
+  //                         payload.numel() * sizeof(float));
+  //        });
 
   //   py::class_<AMQPBackend>(m, "AMQPBackend")
   //       .def(py::init<const std::string&, uint32_t>())
