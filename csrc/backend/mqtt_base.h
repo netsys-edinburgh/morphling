@@ -19,8 +19,8 @@
 
 #define MQTT_COMPUTE_TOPIC_REQ "/morphling/comp/req/"
 #define MQTT_COMPUTE_TOPIC_RSP "/morphling/comp/rsp/"
-#define MQTT_TIMER_TOPIC_REQ "/morphling/timer/req/"
-#define MQTT_TIMER_TOPIC_RSP "/morphling/timer/rsp/"
+// #define MQTT_TIMER_TOPIC_REQ "/morphling/timer/req/"
+// #define MQTT_TIMER_TOPIC_RSP "/morphling/timer/rsp/"
 
 class MQTTBase {
  public:
@@ -30,13 +30,17 @@ class MQTTBase {
     int payloadlen;
   };
 
-  void Publish(std::string& topic, void* payload, int payloadlen) {
+  void Publish(int idx, std::string& topic, void* payload, int payloadlen) {
     // mosquitto_publish(mosq_, NULL, topic.c_str(), payloadlen, payload, 0,
     // false);
     auto task = PubTask{topic, payload, payloadlen};
-    auto idx = publish_count_++ % num_mosq_;
+    // auto idx = publish_count_++ % num_mosq_;
+    idx = idx % num_mosq_;
     {
       std::lock_guard<std::mutex> lock(pub_mutex_[idx]);
+      // if (!pub_ready_[idx]) {
+      //   pub_ready_[idx] = true;
+      // }
       pub_queue_[idx].push_back(task);
     }
     pub_cv_[idx].notify_one();
@@ -58,12 +62,27 @@ class MQTTBase {
     pub_cb_count_--;
     // fprintf(stderr, "Published message %d\n", mid);
     if (pub_cb_count_ == 0) {
-      LOG_DEBUG("All messages published, clearing buffer");
+      LOG_INFO("All messages published, clearing buffer");
       for (auto* ptr : pub_buffer_) {
         free(ptr);
       }
       pub_buffer_.clear();
     }
+
+    // auto this_id = std::this_thread::get_id();
+    // find mosq in mosq_
+    // auto iter = mosq_.begin();
+    // int idx = 0;
+    // for (; iter != mosq_.end(); iter++, idx++) {
+    //   if (iter->second == mosq) {
+    //     break;
+    //   }
+    // }
+    // {
+    //   std::lock_guard<std::mutex> lock(pub_mutex_[idx]);
+    //   pub_ready_[idx] = true;
+    // }
+    // pub_cv_[idx].notify_one();
   }
 
   explicit MQTTBase(const std::string& host = "localhost", int port = 1883,
@@ -82,6 +101,9 @@ class MQTTBase {
     for (int i = 0; i < num_mosq_; i++) {
       pub_queue_.push_back(std::deque<PubTask>());
       pub_threads_.push_back(std::thread(&MQTTBase::RunPublishThread, this, i));
+
+      // get tid of pub thread
+      // pub_ready_[i] = false;
     }
   }
 
@@ -113,14 +135,17 @@ class MQTTBase {
 
  private:
   void RunPublishThread(int idx) {
+    // auto this_id = std::this_thread::get_id();
     while (running_) {
       PubTask task;
       {
         std::unique_lock<std::mutex> lock(pub_mutex_[idx]);
-        pub_cv_[idx].wait(lock,
-                          [this, idx] { return !pub_queue_[idx].empty(); });
+        pub_cv_[idx].wait(lock, [this, idx] {
+          return !pub_queue_[idx].empty();  // && pub_ready_[idx];
+        });
         task = pub_queue_[idx].front();
         pub_queue_[idx].pop_front();
+        // pub_ready_[idx] = false;
       }
       // LOG_DEBUG("Publishing message {} by {:p} size {}", task.topic,
       //           task.payload, task.payloadlen);
@@ -137,7 +162,7 @@ class MQTTBase {
 
  protected:
   std::unordered_map<uint32_t, struct mosquitto*> mosq_;
-  std::atomic_ullong publish_count_{0};
+  // std::atomic_ullong publish_count_{0};
   // struct mosquitto* mosq_;
   int num_mosq_;
   std::string host_;
@@ -154,6 +179,7 @@ class MQTTBase {
 
  private:
   std::vector<std::thread> pub_threads_;
+  // std::unordered_map<int, bool> pub_ready_;
   std::vector<std::deque<PubTask>> pub_queue_;
   std::vector<std::condition_variable> pub_cv_;
   std::vector<std::mutex> pub_mutex_;

@@ -164,13 +164,14 @@ MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
   // size_r, size_c, a_bytes, b_bytes);
 
   MatrixPartition partition;
-  partition.version = 0;  // need to set version
-  partition.oid = -1;     // need to set oid
+  // partition.version = 0;  // need to set version
+  // partition.oid = -1;     // need to set oid
   partition.row = r;
   partition.col = c;
   partition.h_dim = h_dim;
   partition.pivot = pivot;
-  partition.dev_id = -1;
+  // partition.dev_id = -1;
+  partition.timestamp = CurrentTimeMicros();
   partition.mat.push_back({offset_r_ptr, size_r});
   partition.mat.push_back({offset_c_ptr, size_c});
   // partition.block_size = block_size;
@@ -224,7 +225,7 @@ std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
 }
 
 std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
-  int64_t size = sizeof(int64_t) * 6 + sizeof(uint64_t);
+  int64_t size = sizeof(int64_t) * 6 + sizeof(uint64_t) * 2;
   for (const auto& mat : mat) {
     size += std::get<1>(mat) + sizeof(int64_t);
   }
@@ -253,6 +254,8 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
   offset += sizeof(int64_t);
   memcpy(ptr + offset, &oid, sizeof(int64_t));
   offset += sizeof(int64_t);
+  memcpy(ptr + offset, &timestamp, sizeof(uint64_t));
+  offset += sizeof(uint64_t);
 
   for (const auto& mat : mat) {
     memcpy(ptr + offset, &std::get<1>(mat), sizeof(int64_t));
@@ -274,6 +277,9 @@ void MatrixPartition::Deserialize(const void* data, int64_t size) {
   uint8_t* ptr = (uint8_t*)data;
   int64_t offset = 0;
 
+  ptr_ = ptr;
+  size_ = size;
+
   // if (mlock(ptr, size) != 0) {
   //   LOG_FATAL("Failed to pin memory in deserialization");
   // }
@@ -292,6 +298,8 @@ void MatrixPartition::Deserialize(const void* data, int64_t size) {
   offset += sizeof(int64_t);
   memcpy(&oid, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
+  memcpy(&timestamp, ptr + offset, sizeof(uint64_t));
+  offset += sizeof(uint64_t);
 
   // fprintf(stderr, "Deserialized partition: %ld, %ld, %ld, %ld, %ld, %ld\n",
   // version, row,

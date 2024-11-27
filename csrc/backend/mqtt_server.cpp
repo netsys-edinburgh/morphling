@@ -13,9 +13,9 @@ void MQTTServer::OnMessage(struct mosquitto* mosq, void* obj,
     HandleMatMul(message);
   }
 
-  if (topic.find(MQTT_TIMER_TOPIC_RSP) != std::string::npos) {
-    HandleTimer(message);
-  }
+  // if (topic.find(MQTT_TIMER_TOPIC_RSP) != std::string::npos) {
+  //   HandleTimer(message);
+  // }
 
   // // last number after / is the device id
   // std::string device_id = topic.substr(topic.find_last_of("/") + 1);
@@ -40,8 +40,10 @@ void MQTTServer::HandleMatMul(const struct mosquitto_message* message) {
   int64_t row_size = o_size / partition.h_dim / sizeof(float);
   int64_t col_size = partition.h_dim;
 
-  // LOG_DEBUG("row_size: {}, col_size: {}, o_size: {}", row_size, col_size,
-  // o_size);
+  uint64_t ul_overhead = CurrentTimeMicros() - partition.timestamp;
+  // fprintf(stderr, "UL overhead: %ldus\n", ul_overhead);
+  // std::string key = std::to_string(partition.oid);
+  // update
 
   LOG_DEBUG("{} partition: {}", part_key, partition.DebugString());
 
@@ -49,7 +51,7 @@ void MQTTServer::HandleMatMul(const struct mosquitto_message* message) {
   auto output = torch::from_blob(o_ptr, {row_size, col_size},
                                  FLOAT32_TENSOR_OPTIONS(torch::kCPU));
   {
-    std::lock_guard<std::mutex> lock(outputs_mutex_[partition.oid]);
+    // std::lock_guard<std::mutex> lock(outputs_mutex_[partition.oid]);
     IndexPutMatrixBlock(outputs_[partition.oid], output, partition.row,
                         partition.col, partition.pivot, block_size_);
   }
@@ -180,7 +182,12 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
                                      torch::Tensor& mat_b) {
   outputs_[mm_count_].set_data(CreateOutputMatrix(mat_a, mat_b));
   auto partitions = PartitionMatrices(mat_a, mat_b, block_size_);
-  LOG_DEBUG("Number of partitions: {}", partitions.size());
+  auto a_shape = mat_a.sizes().vec();
+  auto b_shape = mat_b.sizes().vec();
+
+  auto cur_ver = partitions[0].version;
+  LOG_INFO("[{}] Number of partitions: {} for A: {} and B: {}", cur_ver,
+           partitions.size(), a_shape, b_shape);
 
   RephrasePartitions(partitions);
 
@@ -197,7 +204,7 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
     auto [data, size] = partition.Serialize();
     auto topic =
         std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
-    Publish(topic, data, size);
+    Publish(partition.dev_id, topic, data, size);
     // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
     pub_buffer_[count] = data;
     // });
@@ -296,32 +303,32 @@ void MQTTServer::SetUpMosq(struct mosquitto* mosq) {
 }
 
 void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
-  std::vector<double> device_time(num_devices_, 0);
-  std::vector<double> device_ul_bw(num_devices_, 0);
-  std::vector<double> device_dl_bw(num_devices_, 0);
-  std::vector<double> device_flops(num_devices_, 0);
+  std::vector<float> device_time(num_devices_, 0);
+  std::vector<float> device_ul_bw(num_devices_, 0);
+  std::vector<float> device_dl_bw(num_devices_, 0);
+  std::vector<float> device_flops(num_devices_, 0);
   std::vector<std::unordered_set<TensorKey>> device_tensors(num_devices_);
 
   for (int i = 0; i < num_devices_; i++) {
     std::string uuid = std::to_string(i);
     auto d_info = GetDeviceInfo(redis_, uuid);
-    device_ul_bw[i] = std::stod(d_info["ul_bw"]);
-    device_dl_bw[i] = std::stod(d_info["dl_bw"]);
-    device_flops[i] = std::stod(d_info["flops"]);
+    device_ul_bw[i] = std::stof(d_info["ul_bw"]);
+    device_dl_bw[i] = std::stof(d_info["dl_bw"]);
+    device_flops[i] = std::stof(d_info["flops"]);
   }
 
-  LOG_DEBUG("Device info: ul_bw: {}, dl_bw: {}, flops: {}", device_ul_bw,
-            device_dl_bw, device_flops);
+  // LOG_INFO("Device info: ul_bw: {}, dl_bw: {}, flops: {}", device_ul_bw,
+  //           device_dl_bw, device_flops);
+  // shuffle the partitions
+  std::random_shuffle(partitions.begin(), partitions.end());
 
   // greedy algorithm to select the minimal time
   for (auto& partition : partitions) {
-    double min_time = std::numeric_limits<double>::max();
+    float min_time = std::numeric_limits<float>::max();
     int min_device = 0;
     auto version = partition.version;
-    auto tensor_key_row =
-        std::make_tuple(version, partition.pivot, partition.row, true);
-    auto tensor_key_col =
-        std::make_tuple(version, partition.pivot, partition.col, false);
+    auto tensor_key_row = partition.GetRowKey();
+    auto tensor_key_col = partition.GetColKey();
     bool min_r_cached = false;
     bool min_c_cached = false;
     for (int i = 0; i < num_devices_; i++) {
@@ -335,36 +342,46 @@ void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
       auto cached_r_size = (r_cached) ? 0 : r_size;
       auto cached_c_size = (c_cached) ? 0 : c_size;
 
-      double ul_time =
-          (block_size_ * block_size_) * sizeof(float) / device_ul_bw[i];
-      double dl_time =
-          (cached_r_size + cached_c_size) * sizeof(float) / device_dl_bw[i];
-      double flops = 2.0 * (r_size / sizeof(float)) * (c_size / sizeof(float)) /
-                     partition.h_dim;
+      float ul_time =
+          (float)(block_size_ * block_size_) * sizeof(float) / device_ul_bw[i];
+      float dl_time = (float)(cached_r_size + cached_c_size) * sizeof(float) /
+                      device_dl_bw[i];
+      float flops = (float)2.0 * (r_size / sizeof(float)) *
+                    (c_size / sizeof(float)) / partition.h_dim /
+                    device_flops[i];
 
-      auto time = ul_time + dl_time + flops + device_time[i];
+      float time = std::max(std::max(ul_time, dl_time), flops) + device_time[i];
+      // ul_time + dl_time + flops + device_time[i];
       if (time < min_time) {
         min_time = time;
         min_device = i;
         min_r_cached = r_cached;
         min_c_cached = c_cached;
+        // fprintf(stderr, "Device: %d, UL time: %f, DL time: %f, FLOPS: %f,
+        // Time: %f\n", i, ul_time, dl_time, flops, time);
       }
     }
+    assert(min_time != std::numeric_limits<float>::max());
     // update the time for the device
-    device_time[min_device] += min_time;
+    device_time[min_device] = min_time;
     partition.dev_id = min_device;
+    device_tensors[min_device].insert(tensor_key_row);
+    device_tensors[min_device].insert(tensor_key_col);
 
-    if (!min_r_cached) {
-      device_tensors[min_device].insert(tensor_key_row);
-    } else {
-      // set corresponding mat to null to save communication
+    if (min_r_cached) {
       partition.mat[0] = {nullptr, 0};
     }
-
-    if (!min_c_cached) {
-      device_tensors[min_device].insert(tensor_key_col);
-    } else {
+    if (min_c_cached) {
       partition.mat[1] = {nullptr, 0};
     }
+
+    // print device time
+    // std::string time_str = "[";
+    // for (int i = 0; i < num_devices_; i++) {
+    //   time_str += std::to_string(device_time[i]) + ",";
+    // }
+    // time_str += "]";
+    // fprintf(stderr, "Device time: %s\n", time_str.c_str());
   }
+  LOG_INFO("Device time: {}", device_time);
 }
