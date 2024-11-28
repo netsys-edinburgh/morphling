@@ -26,6 +26,7 @@ class MQTTServer : public MQTTBase {
   void HandleTimer(const struct mosquitto_message* message);
 
   void RephrasePartitions(std::vector<MatrixPartition>& partitions);
+  void PublishPartition(MatrixPartition& partition, int64_t oid, int count);
 
  private:
   int64_t block_size_;
