@@ -119,7 +119,7 @@ def main():
     # device reconnect is considered new device
     print(f"Registering device {args.id} with info {device_info}", flush=True)
     redis_connector.hmset(args.id, mapping=device_info)
-    redis_connector.expire(args.id, 120)
+    # redis_connector.expire(args.id, 120)
 
     # use threading to timer to refresh ttl
     # threading.Timer(5, lambda: redis_connector.expire("devices", 5)).start()

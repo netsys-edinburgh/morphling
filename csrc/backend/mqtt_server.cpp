@@ -60,6 +60,8 @@ void MQTTServer::HandleMatMul(const struct mosquitto_message* message) {
             std::chrono::duration_cast<std::chrono::microseconds>(end - start)
                 .count());
 
+  std::string uuid = std::to_string(partition.dev_id);
+  // redis_->expire(uuid, 5);  // refresh the key, means device is alive
   // int nan_count = torch::isnan(output_).sum().item<int64_t>();
   // if (nan_count == 0) {
   //   output_cv_.notify_one();
@@ -213,9 +215,9 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
     // futures.push_back(std::move(future));
   }
   auto end = std::chrono::high_resolution_clock::now();
-  LOG_DEBUG("Publish time: {}us",
-            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
-                .count());
+  LOG_INFO("Publish time: {}us",
+           std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+               .count());
   mm_count_++;
 }
 

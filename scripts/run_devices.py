@@ -199,7 +199,7 @@ if __name__ == "__main__":
     out_attentions = outputs.attentions
     print("out_logits", out_logits)
 
-    labels = input_ids["input_ids"]
+    labels = inputs["input_ids"]
     loss = torch.nn.functional.cross_entropy(
         out_logits.view(-1, out_logits.size(-1)), labels.view(-1)
     )

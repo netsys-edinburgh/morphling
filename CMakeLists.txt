@@ -410,6 +410,8 @@ set(MORPHLING_MSG_SRC
   "csrc/scheduler/amqp_worker.cpp"
   "csrc/python/client_py.cpp"
   "csrc/utils/logger.cpp"
+  "csrc/memory/caching_allocator.cpp"
+  "csrc/memory/shared_memory.cpp"
 )
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}

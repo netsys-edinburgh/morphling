@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <iostream>
 #include <list>
 #include <stdexcept>
@@ -55,29 +56,33 @@ class FixCapLRUCache {
 template <typename KeyType, typename ValueType>
 class FixSizeLRUCache {
  public:
-  explicit FixSizeLRUCache(size_t max_bytes)
-      : max_bytes_(max_bytes), current_bytes_(0) {}
+  using DeleterType = std::function<void(const KeyType&, const ValueType&)>;
+
+  explicit FixSizeLRUCache(size_t max_bytes, DeleterType deleter = nullptr)
+      : max_bytes_(max_bytes), current_bytes_(0), deleter_(deleter) {}
 
   void Put(const KeyType& key, const ValueType& value, size_t value_size) {
     auto it = cache_.find(key);
-    size_t item_size =
-        sizeof(KeyType) + value_size;  // Calculate total size with key size and
-                                       // provided value size
+    size_t item_size = sizeof(KeyType) + value_size;  // Calculate total size
 
     if (it != cache_.end()) {
       // If item exists, update it and adjust size
-      current_bytes_ -=
-          sizeof(KeyType) + it->second.first.second;  // Subtract old value size
+      current_bytes_ -= sizeof(KeyType) + it->second.first.second;
       lru_.erase(it->second.second);
+      if (deleter_)
+        deleter_(it->first,
+                 it->second.first.first);  // Call deleter on old value
       cache_.erase(it);
     }
 
     // Evict least recently used items until there's enough space
     while (current_bytes_ + item_size > max_bytes_ && !lru_.empty()) {
       auto old_key = lru_.front();
-      current_bytes_ -=
-          sizeof(KeyType) +
-          cache_[old_key].first.second;  // Subtract the size of the old item
+      auto& old_value = cache_[old_key];
+      current_bytes_ -= sizeof(KeyType) + old_value.first.second;
+      if (deleter_)
+        deleter_(old_key,
+                 old_value.first.first);  // Call deleter on evicted value
       cache_.erase(old_key);
       lru_.pop_front();
     }
@@ -113,4 +118,5 @@ class FixSizeLRUCache {
       cache_;
   size_t max_bytes_;      // Maximum bytes allowed in the cache
   size_t current_bytes_;  // Current bytes used in the cache
+  DeleterType deleter_;   // Function to call on item deletion
 };
