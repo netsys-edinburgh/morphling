@@ -89,7 +89,7 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
   LOG_DEBUG("{} Handle partition immediately", part_key);
   HandlePartition(partition);
 
-  std::vector<void*> ptrs_del;
+  std::vector<std::string> keys;
   for (auto& c_part : cached_partitions_) {
     FillPartition(c_part);
     r_size = std::get<1>(c_part.mat[0]);
@@ -98,20 +98,19 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
       auto key = c_part.GetPartitionKey();
       LOG_DEBUG("{} Handle partition from cache", key);
       HandlePartition(c_part);
-      ptrs_del.push_back(c_part.ptr_);
+      keys.push_back(key);
+    } else {
+      LOG_WARN("{} Partition is not ready, r_size: {}, c_size: {}",
+               c_part.GetPartitionKey(), r_size, c_size);
     }
   }
 
-  for (int i = 0; i < ptrs_del.size();) {
-    for (auto it = cached_partitions_.begin();
-         it != cached_partitions_.end();) {
-      if (it->ptr_ == ptrs_del[i]) {
-        it = cached_partitions_.erase(it);
-        free(ptrs_del[i]);
-        i++;
-      } else {
-        it++;
-      }
+  for (auto it = cached_partitions_.begin(); it != cached_partitions_.end();) {
+    if (std::find(keys.begin(), keys.end(), it->GetPartitionKey()) !=
+        keys.end()) {
+      it = cached_partitions_.erase(it);
+    } else {
+      ++it;
     }
   }
 }
@@ -242,9 +241,12 @@ void MQTTWorker::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
 }
 
 void MQTTWorker::SavePartition(MatrixPartition& partition) {
-  void* ptr = malloc(partition.size_);
-  std::memcpy(ptr, partition.ptr_, partition.size_);
-  partition.Deserialize(ptr, partition.size_);
+  // void* ptr = malloc(partition.size_);
+  // std::memcpy(ptr, partition.ptr_, partition.size_);
+  // partition.Deserialize(ptr, partition.size_);
+  for (auto& mat : partition.mat) {
+    mat = {nullptr, 0};
+  }
   cached_partitions_.push_back(partition);
 }
 

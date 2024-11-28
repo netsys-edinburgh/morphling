@@ -174,10 +174,21 @@ torch::Tensor MQTTServer::WaitMatMul(int oid) {
   }
   logical_time_ = max_time;
   real_time_ += wait_time;
-  LOG_INFO("Real time {}us, Logical time: {}us", real_time_.load(),
+  LOG_INFO("Real time: {}us, Logical time: {}us", real_time_.load(),
            logical_time_.load());
   mm_count_--;
   return outputs_[oid];
+}
+
+void MQTTServer::PublishPartition(MatrixPartition& partition, int64_t oid,
+                                  int count) {
+  partition.oid = oid;
+  auto [data, size] = partition.Serialize();
+  auto topic =
+      std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
+  Publish(partition.dev_id, topic, data, size);
+  // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
+  pub_buffer_[count] = data;
 }
 
 void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
@@ -193,26 +204,34 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
 
   RephrasePartitions(partitions);
 
-  std::vector<std::future<void>> futures;
   // int64_t num_devices = std::stoi(GETENV("NUM_DEVICES", "1"));
+  int64_t count = pub_buffer_.size();
   pub_buffer_.resize(pub_buffer_.size() + partitions.size());
   pub_cb_count_ += partitions.size();
   rsp_cb_counts_[mm_count_] = partitions.size();
 
-  int64_t count = 0;
   auto start = std::chrono::high_resolution_clock::now();
+  std::vector<std::future<void>> futures;
   for (auto& partition : partitions) {
-    partition.oid = mm_count_;
-    auto [data, size] = partition.Serialize();
-    auto topic =
-        std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
-    Publish(partition.dev_id, topic, data, size);
-    // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-    pub_buffer_[count] = data;
-    // });
-    // pub_count_ = (pub_count_++) % num_devices_;
+    auto publish_func = std::bind(&MQTTServer::PublishPartition, this,
+                                  std::ref(partition), mm_count_.load(), count);
+    futures.push_back(std::async(std::launch::async, publish_func));
     count++;
-    // futures.push_back(std::move(future));
+    // partition.oid = mm_count_;
+    // auto [data, size] = partition.Serialize();
+    // auto topic =
+    //     std::string(MQTT_COMPUTE_TOPIC_REQ) +
+    //     std::to_string(partition.dev_id);
+    // Publish(partition.dev_id, topic, data, size);
+    // // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
+    // pub_buffer_[count] = data;
+    // // });
+    // // pub_count_ = (pub_count_++) % num_devices_;
+    // count++;
+    // // futures.push_back(std::move(future));
+  }
+  for (auto& f : futures) {
+    f.wait();
   }
   auto end = std::chrono::high_resolution_clock::now();
   LOG_INFO("Publish time: {}us",
