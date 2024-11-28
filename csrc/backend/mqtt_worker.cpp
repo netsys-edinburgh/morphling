@@ -10,10 +10,15 @@
 
 void MQTTWorker::OnMessage(struct mosquitto* mosq, void* obj,
                            const struct mosquitto_message* message) {
+  auto start = std::chrono::high_resolution_clock::now();
   auto topic = std::string(message->topic);
   if (topic.find(MQTT_COMPUTE_TOPIC_REQ) != std::string::npos) {
     HandleMatMul(message);
   }
+  auto end = std::chrono::high_resolution_clock::now();
+  LOG_DEBUG("Handle message time: {}us",
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                .count());
 
   // if (topic.find(MQTT_TIMER_TOPIC_REQ) != std::string::npos) {
   //   HandleTimer(message);
@@ -36,15 +41,6 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
 
   LOG_DEBUG("{} partition: {}", part_key, partition.DebugString());
 
-  // get logical time from redis
-  auto time = redis_->hget(uuid_, "logical_time");
-  LOG_FATAL_IF(!time, "Failed to get logical time from redis, key: {}", uuid_);
-
-  // fprintf(stderr, "DL overhead: %ldus\n", dl_overhead);
-  logical_time_ = std::stoull(*time);
-  // logical_time_ += (double)message->payloadlen / device_info_["dl_bw"] *
-  //                  1e6;  // in microseconds
-
   // create tensor from partition
   auto [r_ptr, r_size] = partition.mat[0];
   auto [c_ptr, c_size] = partition.mat[1];
@@ -57,32 +53,37 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
   auto tensor_key_row = partition.GetRowKey();
   auto tensor_key_col = partition.GetColKey();
 
-  if (r_size > 0) {
-    CacheTensor(tensor_key_row, r_ptr, r_size, partition.h_dim);
-  }
+  {
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    if (r_size > 0) {
+      CacheTensor(tensor_key_row, r_ptr, r_size, partition.h_dim);
+    }
 
-  if (c_size > 0) {
-    CacheTensor(tensor_key_col, c_ptr, c_size, partition.h_dim);
-  }
+    if (c_size > 0) {
+      CacheTensor(tensor_key_col, c_ptr, c_size, partition.h_dim);
+    }
 
-  auto r_cached = cached_tensors_.Exist(tensor_key_row);
-  auto c_cached = cached_tensors_.Exist(tensor_key_col);
+    auto r_cached = cached_tensors_.Exist(tensor_key_row);
+    auto c_cached = cached_tensors_.Exist(tensor_key_col);
 
-  LOG_DEBUG("{} Row cached: {}, row size: {}, Col cached: {}, col size: {}",
-            part_key, r_cached, row_size, c_cached, col_size);
+    LOG_DEBUG("{} Row cached: {}, row size: {}, Col cached: {}, col size: {}",
+              part_key, r_cached, row_size, c_cached, col_size);
 
-  FillPartition(partition);
+    FillPartition(partition);
 
-  if (r_size == 0 && !r_cached) {
-    LOG_WARN("{} Row size is 0 and not cached, saving for next msg", part_key);
-    SavePartition(partition);
-    return;
-  }
+    if (r_size == 0 && !r_cached) {
+      LOG_WARN("{} Row size is 0 and not cached, saving for next msg",
+               part_key);
+      SavePartition(partition);
+      return;
+    }
 
-  if (c_size == 0 && !c_cached) {
-    LOG_WARN("{} Col size is 0 and not cached, saving for next msg", part_key);
-    SavePartition(partition);
-    return;
+    if (c_size == 0 && !c_cached) {
+      LOG_WARN("{} Col size is 0 and not cached, saving for next msg",
+               part_key);
+      SavePartition(partition);
+      return;
+    }
   }
 
   LOG_DEBUG("{} Handle partition immediately", part_key);
@@ -101,14 +102,16 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
     }
   }
 
-  for (auto iter = cached_partitions_.begin();
-       iter != cached_partitions_.end();) {
-    if (std::find(ptrs_del.begin(), ptrs_del.end(), iter->ptr_) !=
-        ptrs_del.end()) {
-      free(iter->ptr_);
-      iter = cached_partitions_.erase(iter);
-    } else {
-      ++iter;
+  for (int i = 0; i < ptrs_del.size();) {
+    for (auto it = cached_partitions_.begin();
+         it != cached_partitions_.end();) {
+      if (it->ptr_ == ptrs_del[i]) {
+        it = cached_partitions_.erase(it);
+        free(ptrs_del[i]);
+        i++;
+      } else {
+        it++;
+      }
     }
   }
 }
@@ -180,6 +183,9 @@ void MQTTWorker::HandlePartition(const MatrixPartition& partition) {
 
   auto [data, size] = response.Serialize();
 
+  pub_cb_count_++;
+  pub_buffer_.push_back(data);
+
   // replace req with rsp
   std::string topic = MQTT_COMPUTE_TOPIC_RSP + uuid_;
   end = std::chrono::high_resolution_clock::now();
@@ -202,12 +208,23 @@ void MQTTWorker::HandlePartition(const MatrixPartition& partition) {
   time_map["v_ul_time"] = std::to_string(ul_time);
   time_map["r_dl_overhead"] = std::to_string(dl_overhead);
 
-  logical_time_ += std::max(dl_time, std::max(mm_time, ul_time));
+  std::lock_guard<std::mutex> lock(redis_mutex_);
+  // get logical time from redis
+  auto time = redis_->hget(uuid_, "logical_time");
+  LOG_FATAL_IF(!time, "Failed to get logical time from redis, key: {}", uuid_);
+  int64_t logical_time = std::stoull(*time);
+  logical_time += std::max(dl_time, std::max(mm_time, ul_time));
+  // fprintf(stderr, "DL overhead: %ldus\n", dl_overhead);
+  // logical_time_ = std::stoull(*time);
+  // logical_time_ += (double)message->payloadlen / device_info_["dl_bw"] *
+  //                  1e6;  // in microseconds
+
+  // logical_time_ += std::max(dl_time, std::max(mm_time, ul_time));
   // logical_time_ +=
   //     (double)size / device_info_["ul_bw"] * 1e6;  // in microseconds
   // LOG_INFO("Logical time: {}us", logical_time_.load());
   redis_->hmset(uuid_, time_map.begin(), time_map.end());
-  redis_->hset(uuid_, "logical_time", std::to_string(logical_time_.load()));
+  redis_->hset(uuid_, "logical_time", std::to_string(logical_time));
 }
 
 void MQTTWorker::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
@@ -215,15 +232,13 @@ void MQTTWorker::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
   if (cached_tensors_.Exist(key)) {
     return;
   }
-  void* cpy_ptr;
+  void* cpy_ptr = kCachingAllocator->Allocate(size);
   int64_t ld_size = size / h_dim / sizeof(float);
-  cudaHostAlloc(&cpy_ptr, size, cudaHostAllocDefault);
   std::memcpy(cpy_ptr, ptr, size);
-  cached_tensors_.Put(
-      key,
-      torch::from_blob(cpy_ptr, {ld_size, h_dim}, CudaHostDeleter<void>{},
-                       FLOAT32_TENSOR_OPTIONS(torch::kCPU)),
-      size);
+  cached_tensors_.Put(key,
+                      torch::from_blob(cpy_ptr, {ld_size, h_dim},
+                                       FLOAT32_TENSOR_OPTIONS(torch::kCPU)),
+                      size);
 }
 
 void MQTTWorker::SavePartition(MatrixPartition& partition) {
@@ -272,6 +287,10 @@ void MQTTWorker::OnConnect(struct mosquitto* mosq, void* userdata, int result) {
 }
 
 void MQTTWorker::SetUpMosq(struct mosquitto* mosq) {
+  mosquitto_publish_callback_set(
+      mosq, [](struct mosquitto* mosq, void* obj, int mid) {
+        static_cast<MQTTWorker*>(obj)->OnPublish(mosq, obj, mid);
+      });
   mosquitto_connect_callback_set(
       mosq, [](struct mosquitto* mosq, void* obj, int result) {
         static_cast<MQTTWorker*>(obj)->OnConnect(mosq, obj, result);
@@ -316,18 +335,35 @@ MQTTWorker::MQTTWorker(const std::string& uuid)
     // std::cerr << key << " " << value << std::endl;
   }
 
-  cached_tensors_ =
-      FixSizeLRUCache<TensorKey, torch::Tensor>(device_info_["memory"]);
+  // set env variable MORPHLING_PIN_SIZE
+  std::string pin_size = std::to_string(device_info_["memory"]);
+  setenv("MORPHLING_PIN_SIZE", pin_size.c_str(), 1);
+  InitCachingAllocator(MemoryType::PIN);
+  cached_tensors_ = FixSizeLRUCache<TensorKey, torch::Tensor>(
+      device_info_["memory"],
+      [](const TensorKey& key, const torch::Tensor& tensor) {
+        kCachingAllocator->Free(tensor.data_ptr());
+      });
 
-  // create a thread that refreshes the key in redis every 1 second
-  std::thread t([this]() {
-    while (running_) {
-      std::this_thread::sleep_for(std::chrono::seconds(1));
-      auto set =
-          redis_->expire(uuid_, 5);  // refresh the key, means device is alive
-      LOG_FATAL_IF(!set, "Failed to refresh key in redis for device: {}",
-                   uuid_);
-    }
-  });
-  t.detach();
+  // // create a thread that refreshes the key in redis every 1 second
+  // std::thread t([this]() {
+  //   while (running_) {
+  //     std::this_thread::sleep_for(std::chrono::seconds(1));
+  //     auto set =
+  //         redis_->expire(uuid_, 5);  // refresh the key, means device is
+  //         alive
+  //     if (!set) {
+  //       LOG_WARN("Failed to refresh key in redis for device: {}", uuid_);
+  //       // reset device info
+  //       std::unordered_map<std::string, std::string> info;
+  //       for (auto& [key, value] : device_info_) {
+  //         info[key] = std::to_string(value);
+  //       }
+  //       redis_->hmset(uuid_, info.begin(), info.end());
+  //       redis_->hset(uuid_, "logical_time",
+  //       std::to_string(logical_time_.load())); redis_->expire(uuid_, 5);
+  //     }
+  //   }
+  // });
+  // t.detach();
 }

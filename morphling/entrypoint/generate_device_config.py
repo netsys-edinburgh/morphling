@@ -68,7 +68,7 @@ class DeviceConfigArguments:
         default="1G", metadata={"help": "Lower bound of device memory"}
     )
     mem_ub: str = field(
-        default="10G", metadata={"help": "Upper bound of device memory"}
+        default="3G", metadata={"help": "Upper bound of device memory"}
     )
 
     seed: int = field(default=42, metadata={"help": "Random seed"})

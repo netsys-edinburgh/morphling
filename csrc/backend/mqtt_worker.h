@@ -2,6 +2,7 @@
 
 #include "common/generator.h"
 #include "common/pytorch_defs.h"
+#include "memory/caching_allocator.h"
 #include "mqtt_base.h"
 #include "server_base.h"
 
@@ -34,8 +35,13 @@ class MQTTWorker : public MQTTBase {
 
   std::vector<MatrixPartition> cached_partitions_;
   std::unordered_set<PtrData> cached_msgs_;
-  FixSizeLRUCache<TensorKey, torch::Tensor> cached_tensors_;
 
-  std::atomic_ullong logical_time_{0};
+  FixSizeLRUCache<TensorKey, torch::Tensor> cached_tensors_;
+  std::mutex cache_mutex_;
+  std::mutex redis_mutex_;
+
+  CachingAllocator* allocator_;
+
+  // std::atomic_ullong logical_time_{0};
   sw::redis::Redis* redis_;
 };

@@ -62,7 +62,7 @@ class MQTTBase {
     pub_cb_count_--;
     // fprintf(stderr, "Published message %d\n", mid);
     if (pub_cb_count_ == 0) {
-      LOG_INFO("All messages published, clearing buffer");
+      LOG_DEBUG("All messages published, clearing buffer");
       for (auto* ptr : pub_buffer_) {
         free(ptr);
       }

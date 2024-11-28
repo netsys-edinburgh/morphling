@@ -8,8 +8,8 @@
 
 #include <cstring>  // for memset
 #include <memory>
-#include <rttr/registration>
-#include <rttr/type>
+// #include <rttr/registration>
+// #include <rttr/type>
 #include <string>
 
 #include "common/types_and_defs.h"
