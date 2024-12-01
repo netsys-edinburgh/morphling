@@ -23,6 +23,8 @@ try:
     # The assert is not needed since Github CI does not use GPU server, install cuda library is sufficient
     # assert torch.cuda.is_available() == True
     from torch.utils.cpp_extension import CUDA_HOME
+
+    print(f"torch version: {torch.__version__}")
 except Exception:
     torch_available = False
     print(
@@ -30,6 +32,8 @@ except Exception:
         "Please visit https://pytorch.org/ to see how to properly install torch on your system."
     )
 
+# import torch
+# from torch.utils.cpp_extension import CUDA_HOME
 
 ROOT_DIR = os.path.dirname(__file__)
 
@@ -101,7 +105,7 @@ class CMakeExtension(Extension):
     def __init__(self, name: str, cmake_lists_dir: str = ".", **kwa) -> None:
         super().__init__(name, sources=[], **kwa)
         self.cmake_lists_dir = os.path.abspath(cmake_lists_dir)
-        self.target_type = kwa.get('target_type', 'shared')
+        self.target_type = kwa.get("target_type", "shared")
 
 
 # Adapted from https://github.com/vllm-project/vllm/blob/a1242324c99ff8b1e29981006dfb504da198c7c3/setup.py
@@ -117,7 +121,9 @@ class cmake_build_ext(build_ext):
         default_cfg = "Debug" if self.debug else "Release"
         cfg = os.getenv("CMAKE_BUILD_TYPE", default_cfg)
 
-        outdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
+        outdir = os.path.abspath(
+            os.path.dirname(self.get_ext_fullpath(ext.name))
+        )
 
         cmake_args = [
             "-DCMAKE_BUILD_TYPE={}".format(cfg),
@@ -131,7 +137,9 @@ class cmake_build_ext(build_ext):
         if verbose:
             cmake_args += ["-DCMAKE_VERBOSE_MAKEFILE=ON"]
 
-        cmake_args += ["-DMORPHLING_PYTHON_EXECUTABLE={}".format(sys.executable)]
+        cmake_args += [
+            "-DMORPHLING_PYTHON_EXECUTABLE={}".format(sys.executable)
+        ]
 
         if is_ninja_available():
             build_tool = ["-G", "Ninja"]
@@ -143,28 +151,36 @@ class cmake_build_ext(build_ext):
             # Default build tool to whatever cmake picks.
             build_tool = []
 
-        if 'TEST' in os.environ and os.environ['TEST'] == '1':
-            cmake_args.append('-DBUILD_TESTS=ON')
+        if "TEST" in os.environ and os.environ["TEST"] == "1":
+            cmake_args.append("-DBUILD_TESTS=ON")
         else:
-            cmake_args.append('-DBUILD_TESTS=OFF')
+            cmake_args.append("-DBUILD_TESTS=OFF")
 
         subprocess.check_call(
             ["cmake", ext.cmake_lists_dir, *build_tool, *cmake_args],
             cwd=self.build_temp,
         )
 
-        if 'TEST' in os.environ and os.environ['TEST'] == '1':
+        if "TEST" in os.environ and os.environ["TEST"] == "1":
             # get folder names under self.build_temp/test/cpp/CmakeFiles
             # and pass them to ninja
-            test_folder = os.path.join(self.build_temp, 'tests', "cpp")
+            test_folder = os.path.join(self.build_temp, "tests", "cpp")
 
-            with open(os.path.join(test_folder, 'CTestTestfile.cmake'), 'r') as f:
+            with open(
+                os.path.join(test_folder, "CTestTestfile.cmake"), "r"
+            ) as f:
                 content = f.readlines()
                 for line in content:
-                    if 'add_test(' in line:
+                    if "add_test(" in line:
                         # add_test([=[test_shared_pin_memory]=], get test_shared_pin_memory
-                        test_name = line.strip().split('add_test([=[')[-1].split(']=]')[0]
-                        subprocess.check_call(['ninja', '-C', self.build_temp, test_name])
+                        test_name = (
+                            line.strip()
+                            .split("add_test([=[")[-1]
+                            .split("]=]")[0]
+                        )
+                        subprocess.check_call(
+                            ["ninja", "-C", self.build_temp, test_name]
+                        )
 
     def build_extensions(self) -> None:
         # Ensure that CMake is present and working
@@ -189,7 +205,8 @@ class cmake_build_ext(build_ext):
                 ".",
                 "--target",
                 ext_target_name,
-                "-j", str(num_jobs),
+                "-j",
+                str(num_jobs),
             ]
 
             subprocess.check_call(["cmake", *build_args], cwd=self.build_temp)
@@ -200,9 +217,9 @@ class cmake_build_ext(build_ext):
         Override to manage both shared libraries (.so) and executables.
         """
         for ext in self.extensions:
-            if ext.name == ext_name and ext.target_type == 'executable':
+            if ext.name == ext_name and ext.target_type == "executable":
                 # For executables, return the name directly without suffixes
-                ext_target_name = ext_name.replace(".", "/") #TODO: fix this
+                ext_target_name = ext_name.replace(".", "/")  # TODO: fix this
                 return ext_target_name
         # Default behavior for shared libraries
         return super().get_ext_filename(ext_name)
@@ -234,9 +251,7 @@ class BuildPackageProtos(Command):
             raise RuntimeError("error: {} failed".format(command))
 
     def run(self):
-        self._build_package_proto(
-            ".", "morphling/proto/morphling.proto"
-        )
+        self._build_package_proto(".", "morphling/proto/morphling.proto")
 
 
 class CustomInstall(install):
@@ -247,6 +262,7 @@ class CustomInstall(install):
         self.run_command("build_package_protos")
 
         super().run()
+
 
 class CustomBuild(sdist):
     """Custom build command to run build_package_protos."""
@@ -263,6 +279,7 @@ class CustomBdistWheel(bdist_wheel):
         self.run_command("build_package_protos")
         super().run()
 
+
 cmdclass = {
     "build_ext": cmake_build_ext,
     "build_package_protos": BuildPackageProtos,
@@ -275,14 +292,22 @@ setup(
     name="morphling",
     version="0.0.1",
     ext_modules=[
-        CMakeExtension(name="morphling._C", target_type='shared'),
-        CMakeExtension(name="morphling.morphling_server", target_type='executable'),
+        CMakeExtension(name="morphling._C", target_type="shared"),
+        CMakeExtension(name="morphling._Msg", target_type="shared"),
+        CMakeExtension(
+            name="morphling.morphling_server", target_type="executable"
+        ),
+        # CMakeExtension(
+        #     name="morphling.morphling_worker_server", target_type="executable"
+        # ),
     ],
     entry_points={
         "console_scripts": [
             "morphling_emulator=morphling.entrypoint.emulator:main",
             "morphling_device_config=morphling.entrypoint.generate_device_config:main",
-            "morphling_server=morphling.entrypoint.server:main",
+            "morphling_device=morphling.entrypoint.run_device:main",
+            # "morphling_server=morphling.entrypoint.server:main",
+            "morphling_cmd=morphling.entrypoint.cmdline:main",
         ],
     },
     install_requires=install_requires,
@@ -291,7 +316,12 @@ setup(
     extras_require=extras,
     packages=find_packages(),
     package_data={
-        "morphling": ["py.typed", "*.so", "morphling_server"],
+        "morphling": [
+            "py.typed",
+            "*.so",
+            "morphling_server",
+            "morphling_worker_server",
+        ],
     },
     include_package_data=True,
     cmdclass=cmdclass,

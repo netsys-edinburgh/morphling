@@ -41,5 +41,3 @@ print(outputs.loss)
 
 loss.backward()
 # optimizer.step()
-
-

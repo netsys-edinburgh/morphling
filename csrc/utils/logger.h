@@ -48,10 +48,10 @@ extern void InitLogger();
 #define LOG_INFO(...) spdlog::info(__VA_ARGS__)
 #define LOG_ERROR(...) spdlog::error(__VA_ARGS__)
 #define LOG_WARN(...) spdlog::warn(__VA_ARGS__)
-#define LOG_FATAL(...)             \
-  do {                             \
-    spdlog::critical(__VA_ARGS__); \
-    assert(false);                 \
+#define LOG_FATAL(...)                                 \
+  do {                                                 \
+    spdlog::critical(__VA_ARGS__);                     \
+    throw(std::runtime_error("Logged a FATAL error")); \
   } while (0)
 
 #define LOG_FATAL_IF(cond, ...) \
@@ -84,6 +84,34 @@ extern void InitLogger();
     LOG_FATAL_IF(err != cudaSuccess, "CUDA error. message: {}", \
                  cudaGetErrorString(err));                      \
   }
+
+// fmt::formatter for std::vector
+
+namespace fmt {
+template <typename T>
+struct formatter<std::vector<T>> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx) {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const std::vector<T>& v, FormatContext& ctx) {
+    auto it = ctx.out();
+    *it = '[';
+    ++it;
+    for (size_t i = 0; i < v.size(); i++) {
+      if (i > 0) {
+        *it = ',';
+        ++it;
+      }
+      it = format_to(it, "{}", v[i]);
+    }
+    *it = ']';
+    return ++it;
+  }
+};
+}  // namespace fmt
 
 // #define LOG_DEBUG(...)                                      \
 //   do {                                                      \

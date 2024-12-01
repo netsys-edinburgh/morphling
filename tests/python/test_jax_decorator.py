@@ -32,6 +32,7 @@ pyobj_keywords = [
     "Array",
 ]
 
+
 def jax_decorator(func, funcname=None):
     def wrapper(*args, **kwargs):
         for arg in args:
@@ -40,6 +41,7 @@ def jax_decorator(func, funcname=None):
         return func(*args, **kwargs)
 
     return wrapper
+
 
 # for all functions in jax, add decorator
 functions = [f for f in dir(jax) if callable(getattr(jax, f))]
@@ -59,7 +61,11 @@ for f in functions:
     setattr(jax.numpy, f, jax_decorator(func, f))
 
 # for all functions in jax.Array, add decorator
-functions = [f for f in dir(jaxlib.xla_extension.ArrayImpl) if callable(getattr(jaxlib.xla_extension.ArrayImpl, f))]
+functions = [
+    f
+    for f in dir(jaxlib.xla_extension.ArrayImpl)
+    if callable(getattr(jaxlib.xla_extension.ArrayImpl, f))
+]
 print(functions)
 for f in functions:
     if f in pyobj_keywords:
@@ -75,4 +81,4 @@ print(type(a), dir(a))
 print(isinstance(a, jax.Array))
 
 print(a * b)
-print(a ** 2)
+print(a**2)

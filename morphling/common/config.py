@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import logging
 from dataclasses import dataclass, field
@@ -27,7 +28,17 @@ SYMBOLS = {
         "iotta",
     ),
     "iec": ("Bi", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"),
-    "iec_ext": ("byte", "kibi", "mebi", "gibi", "tebi", "pebi", "exbi", "zebi", "yobi"),
+    "iec_ext": (
+        "byte",
+        "kibi",
+        "mebi",
+        "gibi",
+        "tebi",
+        "pebi",
+        "exbi",
+        "zebi",
+        "yobi",
+    ),
 }
 
 
@@ -110,6 +121,15 @@ def human2bytes(s):
           ...
       ValueError: can't interpret '12 foo'
     """
+
+    # if string contains all numbers, return as int
+    if s.isdigit():
+        return int(s)
+
+    # if string contains all numbers and a dot, return as float
+    if s.replace(".", "", 1).isdigit():
+        return float(s)
+
     init = s
     num = ""
     while s and s[0:1].isdigit() or s[0:1] == ".":
@@ -134,24 +154,36 @@ def human2bytes(s):
 
 
 @dataclass
+class TrainigConfig:
+    batch_size: int = field(default=128, metadata={"help": "Batch size"})
+    seq_length: int = field(default=1024, metadata={"help": "Sequence length"})
+    model: str = field(default="gpt2", metadata={"help": "Model name"})
+
+
+@dataclass
 class DeviceConfig:
-    flops: str = field(
+    rank: int
+    # ip: str
+    # port: int
+    flops: int = field(
         default="1e12",
-        metadata={"help": "The number of FLOPs of the device, support customary units"},
+        metadata={
+            "help": "The number of FLOPs of the device, support customary units"
+        },
     )
-    memory: str = field(
+    memory: int = field(
         default="1e12",
         metadata={
             "help": "The memory size in bytes of the device, support customary units"
         },
     )
-    ul_bw: str = field(
+    ul_bw: float = field(
         default="1e12",
         metadata={
             "help": "The uplink bandwidth in bytes of the device, support customary units"
         },
     )
-    dl_bw: str = field(
+    dl_bw: float = field(
         default="1e12",
         metadata={
             "help": "The downlink bandwidth in bytes of the device, support customary units"
@@ -168,11 +200,18 @@ class DeviceConfig:
         metadata={"help": "The downlink latency of the device"},
     )
 
-    def __post_init__(self):
-        self.flops = human2bytes(self.flops)
-        self.memory = human2bytes(self.memory)
-        self.ul_bw = human2bytes(self.ul_bw)
-        self.dl_bw = human2bytes(self.dl_bw)
+    # def __post_init__(self):
+    #     self.flops = human2bytes(self.flops)
+    #     self.memory = human2bytes(self.memory)
+    #     self.ul_bw = human2bytes(self.ul_bw)
+    #     self.dl_bw = human2bytes(self.dl_bw)
+
+
+class EnhancedJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if dataclasses.is_dataclass(o):
+            return dataclasses.asdict(o)
+        return super().default(o)
 
 
 @dataclass
@@ -203,7 +242,6 @@ class EmulatorConfig:
     )
 
     def __post_init__(self):
-
         # total_gpu_memory = int(
         #     torch.cuda.get_device_properties(0).total_memory / 1024**3
         # )
@@ -226,7 +264,9 @@ class EmulatorConfig:
         os.environ["MORPHLING_CKPT_PATH"] = self.ckpt_path
         os.environ["MORPHLING_GPU_SIZE"] = str(self.gpu_memory)
 
-        param_meta_map_file = os.path.join(self.ckpt_path, "param_meta_map.json")
+        param_meta_map_file = os.path.join(
+            self.ckpt_path, "param_meta_map.json"
+        )
 
         with open(param_meta_map_file, "r") as f:
             param_meta_map = json.load(f)

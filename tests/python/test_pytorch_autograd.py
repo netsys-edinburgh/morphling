@@ -12,11 +12,14 @@ layer = OPTDecoderLayer(config)
 
 torch.bmm = LinearFunction.apply
 
+
 # decorator for a class method, add arguments for the function at position 0
 def add_arguments(func):
     def wrapper(*args, **kwargs):
         return func(*args, **kwargs)
+
     return wrapper
+
 
 torch.Tensor.__add__ = add_arguments(AddFunction.apply)
 # linear = LinearFunction.apply

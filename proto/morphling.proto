@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package morphling;
 
+message Empty {}
+
 service MemoryManager {
     rpc ScheduleGemmSync (ScheduleGemmRequest) returns (ScheduleGemmResponse) {}
     rpc GetModelParam (ModelParamRequest) returns (ModelParamResponse) {}
@@ -18,7 +20,7 @@ message ShmInfo {
 }
 
 message ScheduleGemmRequest {
-    // string task_id = 1;
+    string task_id = 1;
     uint32 device_id = 2;
     uint32 sync_stage = 3;
     repeated ShmInfo a_info = 10;
@@ -45,3 +47,62 @@ message ModelParamResponse {
     Response rsp = 1;
     repeated ParamInfo param_info = 2;
 }
+
+
+// Messages used in MQ
+
+message MatMulRequestMessage {
+    uint32 row = 1;
+    uint32 col = 2;
+    repeated uint32 ld = 3;
+    repeated bytes mat = 10;
+}
+
+message MatMulResponseMessage {
+    uint32 row = 1;
+    uint32 col = 2;
+    repeated uint32 ld = 3;
+    bytes mat = 10;
+}
+
+// service WorkerManager {
+//     rpc RegisterWorker (RegisterWorkerRequest) returns (Empty) {}
+//     rpc KeepAlive (KeepAliveRequest) returns (Empty) {}
+//     rpc GetWorkerInfo (GetWorkerInfoRequest) returns (GetWorkerInfoResponse) {}
+//     rpc GetAllWorkerInfo (Empty) returns (GetWorkerInfoResponse) {}
+// }
+
+// message WorkerInfo {
+//     string uuid = 2;
+//     uint64 ul_bw = 3;
+//     uint64 dl_bw = 4;
+//     float ul_lat = 5;
+//     float dl_lat = 6;
+//     uint64 flops = 7;
+//     uint64 mem_cap = 8;
+// }
+
+// message RegisterWorkerRequest {
+//     WorkerInfo worker_info = 1;
+// }
+
+// message RegisterWorkerResponse {
+//     Response rsp = 1;
+// }
+
+// message KeepAliveRequest {
+//     string worker_uuid = 1;
+// }
+
+// message KeepAliveResponse {
+//     Response rsp = 1;
+// }
+
+// message GetWorkerInfoRequest {
+//     string worker_uuid = 1;
+// }
+
+// message GetWorkerInfoResponse {
+//     Response rsp = 1;
+//     repeated WorkerInfo worker_info = 10;
+// }

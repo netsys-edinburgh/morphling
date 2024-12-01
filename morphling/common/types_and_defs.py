@@ -5,7 +5,9 @@ import numpy as np
 import torch
 
 
-def find_tensor_same_size(param_meta_map: Dict[str, dict], size: int) -> np.ndarray:
+def find_tensor_same_size(
+    param_meta_map: Dict[str, dict], size: int
+) -> np.ndarray:
     names_of_size = [
         name for name, param in param_meta_map.items() if param["size"] == size
     ]
@@ -14,8 +16,12 @@ def find_tensor_same_size(param_meta_map: Dict[str, dict], size: int) -> np.ndar
     return ids_of_size
 
 
-def compute_shm_offsets(param_meta_map: Dict[str, dict]) -> Tuple[int, Dict[str, int]]:
-    unique_sizes_counter = Counter([param["size"] for param in param_meta_map.values()])
+def compute_shm_offsets(
+    param_meta_map: Dict[str, dict],
+) -> Tuple[int, Dict[str, int]]:
+    unique_sizes_counter = Counter(
+        [param["size"] for param in param_meta_map.values()]
+    )
     shm_mem_size = sum(
         [size + 4 * count for size, count in unique_sizes_counter.items()]
     )
@@ -30,7 +36,9 @@ def compute_shm_offsets(param_meta_map: Dict[str, dict]) -> Tuple[int, Dict[str,
     return shm_mem_size, shm_mem_offsets
 
 
-def compute_pin_offsets(param_meta_map: Dict[str, dict]) -> Tuple[int, Dict[str, int]]:
+def compute_pin_offsets(
+    param_meta_map: Dict[str, dict],
+) -> Tuple[int, Dict[str, int]]:
     pin_mem_size = sum([meta["size"] for _, meta in param_meta_map.items()])
     offset = 0
     pin_mem_offsets = {}
@@ -40,13 +48,19 @@ def compute_pin_offsets(param_meta_map: Dict[str, dict]) -> Tuple[int, Dict[str,
     return pin_mem_size, pin_mem_offsets
 
 
-def update_shm_offsets(param_meta_map: Dict[str, dict]) -> Tuple[int, Dict[str, int]]:
+def update_shm_offsets(
+    param_meta_map: Dict[str, dict],
+) -> Tuple[int, Dict[str, int]]:
     _, shm_mem_offsets = compute_shm_offsets(param_meta_map)
-    unique_sizes_counter = Counter([param["size"] for param in param_meta_map.values()])
+    unique_sizes_counter = Counter(
+        [param["size"] for param in param_meta_map.values()]
+    )
     for size, count in unique_sizes_counter.items():
         # find all tensor name and id with the same size
         names_of_size = [
-            name for name, param in param_meta_map.items() if param["size"] == size
+            name
+            for name, param in param_meta_map.items()
+            if param["size"] == size
         ]
 
         for i, name in enumerate(names_of_size):

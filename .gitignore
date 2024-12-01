@@ -11,7 +11,7 @@ Testing/Temporary/*
 /core
 /protoc
 /test_plugin
-/tests
+# /tests
 /lite-test
 /protoc-*.*
 
