@@ -1,10 +1,4 @@
-# # Retrieve the Conda environment path from the environment variable
-# if(DEFINED ENV{CONDA_PREFIX})
-# set(CONDA_PREFIX_PATH $ENV{CONDA_PREFIX})
-# message(STATUS "Conda environment path: ${CONDA_PREFIX_PATH}")
-# else()
-# message(WARNING "CONDA_PREFIX is not set. Make sure your Conda environment is activated.")
-# endif()
+# include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/tests.cmake)
 
 # # Manually specify the Python executable
 # set(Python_EXECUTABLE ${CONDA_PREFIX_PATH}/bin/python)
@@ -49,7 +43,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -march=znver3 -O3 -D__AVX256__=1 
 # set(CMAKE_BUILD_RPATH "/mnt/data/xly/.conda/envs/edgeml/lib:/usr/local/cuda-12.2/targets/x86_64-linux/lib")
 # set(CMAKE_INSTALL_RPATH "/mnt/data/xly/.conda/envs/edgeml/lib:/usr/local/cuda-12.2/targets/x86_64-linux/lib")
 include_directories(
-    ${UMPIRE_INCLUDE_DIRS}
+    # ${UMPIRE_INCLUDE_DIRS}
     ${EXTERNAL_DIR}/umpire/src/tpl/umpire/camp/include
 
     ${CMAKE_CURRENT_SOURCE_DIR}/../../csrc
@@ -58,8 +52,13 @@ include_directories(
     ${EXTERNAL_DIR}/umpire/build/src/tpl/umpire/camp/include
 )
 
+
+# message(STATUS "Python_VERSION: ${Python_VERSION}")
+# message(STATUS "CONDA_PREFIX_PATH: ${CONDA_PREFIX_PATH}")
 link_directories(
-    ${UMPIRE_LIBRARY_DIRS}
+    # ${UMPIRE_LIBRARY_DIRS}
+    ${CONDA_PREFIX_PATH}/lib
+    ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/torch/lib
 )
 
 # foreach(TEST_SOURCE ${TEST_SOURCES})
@@ -87,7 +86,7 @@ link_directories(
 # add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 # endforeach(TEST_SOURCE)
 
-message(STATUS "CMAKE_CURRENT_SOURCE_DIR: ${CMAKE_CURRENT_SOURCE_DIR}")
+message(STATUS "torch_python_LIBRARY: ${torch_python_LIBRARY}")
 
 
 add_executable(test_uuid test_uuid.cpp)
@@ -97,6 +96,39 @@ set_target_properties(test_uuid PROPERTIES
 )
 add_test(NAME test_uuid COMMAND test_uuid)
 
+add_executable(test_torch_layout test_torch_layout.cpp)
+target_include_directories(test_torch_layout PRIVATE
+    ${TORCH_INCLUDE_DIRS}
+)
+target_link_libraries(test_torch_layout ${TORCH_LIBRARIES})
+set_target_properties(test_torch_layout PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+add_test(NAME test_torch_layout COMMAND test_torch_layout)
+
+set(SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../csrc/backend/server_base.cpp
+)
+add_executable(test_matrix_partition test_matrix_partition.cpp ${SRC})
+target_include_directories(test_matrix_partition PRIVATE
+    ${TORCH_INCLUDE_DIRS}
+)
+target_link_libraries(test_matrix_partition ${TORCH_LIBRARIES} ${torch_python_LIBRARY})
+set_target_properties(test_matrix_partition PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+add_test(NAME test_matrix_partition COMMAND test_matrix_partition)
+
+# set(TEST_INCLUDE_DIRS
+#     ${TORCH_INCLUDE_DIRS}
+# )
+# set(TEST_LIBRARIES
+#     uuid ${TORCH_LIBRARIES} rttr_core
+# )
+# add_test_executable(test_matrix_partition
+#     LIBRARIES ${TEST_LIBRARIES}
+#     INCLUDE_DIRECTORIES ${TEST_INCLUDE_DIRS}
+# )
 # add_executable(test_shared_pin_memory test_shared_pin_memory.cpp ${MEMORY_SRC} ${UTILS_SRC})
 # target_include_directories(test_shared_pin_memory PRIVATE
 #     ${CUDA_INCLUDE_DIRS}

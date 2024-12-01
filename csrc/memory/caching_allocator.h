@@ -50,26 +50,8 @@ class CachingAllocator : public noncopyable {
     return allocation_map_.find(ptr) != allocation_map_.end();
   }
 
-  int GetShmId(void* ptr) {
-    std::lock_guard<std::mutex> guard(mutex_);
-    const auto& it = shm_id_map_.find(ptr);
-    LOG_FATAL_IF(it == shm_id_map_.end(), "Cannot find shm id {:p}", ptr);
-    return it->second.id;
-  }
-
-  std::string GetShmName(void* ptr) {
-    std::lock_guard<std::mutex> guard(mutex_);
-    const auto& it = shm_id_map_.find(ptr);
-    LOG_FATAL_IF(it == shm_id_map_.end(), "Cannot find shm name {:p}", ptr);
-    return it->second.name;
-  }
-
-  size_t GetShmSize(void* ptr) {
-    std::lock_guard<std::mutex> guard(mutex_);
-    const auto& it = shm_id_map_.find(ptr);
-    LOG_FATAL_IF(it == shm_id_map_.end(), "Cannot find shm size {:p}", ptr);
-    return it->second.size;
-  }
+  ShmMeta FindShmMetaByRange(void* ptr);
+  void InsertShmMeta(ShmMeta meta);
 
   MemoryType GetType() const { return type_; }
 
@@ -107,8 +89,9 @@ class CachingAllocator : public noncopyable {
   std::unordered_map<void*, ShmMeta> shm_id_map_;
 };
 
+extern std::once_flag kInitCachingAllocatorFlag;
+
 static void InitCachingAllocator(MemoryType type, int device_id = -1) {
-  static std::once_flag kInitCachingAllocatorFlag;
   std::call_once(kInitCachingAllocatorFlag, [&]() {
     size_t bytes = 0;
     LOG_DEBUG("InitCachingAllocator: type: {}, device_id: {}", type, device_id);
@@ -130,14 +113,12 @@ static void InitCachingAllocator(MemoryType type, int device_id = -1) {
     } else {
       LOG_FATAL("Unknown memory type");
     }
-    LOG_WARN_IF(kCachingAllocator != nullptr,
-                "Caching allocator is already initialized");
+    LOG_FATAL_IF(kCachingAllocator != nullptr,
+                 "Caching allocator is already initialized");
 
-    if (kCachingAllocator == nullptr) {
-      kCachingAllocator =
-          std::make_unique<CachingAllocator>(bytes, type, device_id);
-      LOG_INFO("Caching allocator initialized with {}GB, type: {}", bytes / GB,
-               type);
-    }
+    kCachingAllocator =
+        std::make_unique<CachingAllocator>(bytes, type, device_id);
+    LOG_INFO("Caching allocator initialized with {}GB, type: {}", bytes / GB,
+             type);
   });
 }

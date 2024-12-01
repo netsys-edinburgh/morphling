@@ -25,14 +25,17 @@ model_name = "gpt2"
 model = GPT2LMHeadModel.from_pretrained(model_name).to(device)
 tokenizer = GPT2Tokenizer.from_pretrained(model_name)
 
+
 def save_initial_weights(model, filename):
-    initial_weights = model.transformer.h[0].attn.c_attn.weight.data.cpu().numpy()
+    initial_weights = (
+        model.transformer.h[0].attn.c_attn.weight.data.cpu().numpy()
+    )
     np.save(filename, initial_weights)
     print(f"Initial weights saved to {filename}")
 
 
 if tokenizer.pad_token is None:
-    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+    tokenizer.add_special_tokens({"pad_token": "[PAD]"})
     model.resize_token_embeddings(len(tokenizer))
 
 input_text = "Hello, how are you? " * 100
@@ -66,4 +69,6 @@ for epoch in range(num_epochs):
 
     print(f"Epoch {epoch + 1}/{num_epochs} completed")
 
-print(f"Training completed with Batch size: {batch_size}, Sequence length: {sequence_length}")
+print(
+    f"Training completed with Batch size: {batch_size}, Sequence length: {sequence_length}"
+)

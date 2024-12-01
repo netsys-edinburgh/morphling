@@ -95,7 +95,6 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
     LOG_FATAL_IF(size == nullptr, "MORPHLING_GPU_SIZE is not set");
     auto bytes = std::stoull(size);
 
-    // InitCachingAllocator(MemoryType::PIN_SHM);
     checkpoint_handle_ = std::make_unique<CheckpointHandle>(storage_path);
     checkpoint_handle_->ReadCheckpoint();
 
@@ -105,9 +104,16 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
   Status ScheduleGemmSync(ServerContext* context,
                           const ScheduleGemmRequest* request,
                           ScheduleGemmResponse* response) override {
-    GemmArgsPtr args = std::make_unique<GemmArgs>();
-    args.reset(reinterpret_cast<GemmArgs*>(OpenSharedMemory(
-        request->task_info().name().c_str(), request->task_info().size())));
+    const char* task_name = request->task_info().name().c_str();
+    size_t task_size = request->task_info().size();
+    std::string task_id = request->task_id();
+
+    LOG_DEBUG("ScheduleGemmSync: {}, {}, {}", task_id, task_name, task_size);
+
+    // FIXME: need to free the shared memory after the task is done
+    auto args = AttachSharedMemoryPtr<GemmArgs>(task_name, task_size);
+
+    LOG_DEBUG("ScheduleGemmSync: {},  {}", task_id, args->DebugString());
 
     for (int i = 0; i < args->group_size; i++) {
       // read from repeated fields a_info, b_info, c_info
@@ -118,6 +124,12 @@ class MemoryManagerServer final : public morphling::MemoryManager::Service {
       args->c[i] = (float*)OpenSharedMemory(request->c_info(i).name().c_str(),
                                             request->c_info(i).size());
     }
+
+    LOG_DEBUG("ScheduleGemmSync: EnqueueGemmWithPolicy {}", task_id);
+
+    worker_pool_->EnqueueGemmWithPolicy(task_id, args);
+    worker_pool_->Wait(task_id);
+    LOG_DEBUG("ScheduleGemmSync: done. {}", task_id);
 
     return Status::OK;
   }
@@ -155,10 +167,9 @@ void RunServer(const std::string& server_address,
   std::unique_ptr<Server> server(builder.BuildAndStart());
   LOG_INFO("Server listening on {}", server_address);
 
-  // set env var MORPHLING_SERVER_ADDRESS
-  // setenv("MORPHLING_SERVER_ADDRESS", server_address.c_str(), 1);
-
   server->Wait();
+
+  LOG_INFO("Server shutting down");
 }
 
 int main(int argc, char** argv) {
@@ -186,7 +197,6 @@ int main(int argc, char** argv) {
                "Checkpoint path does not exist {}", ckpt_path.string());
 
   RunServer(FLAGS_listen, FLAGS_path);
-  // InitCachingAllocator(MemoryType::PIN_SHM);
 
   // auto param_meta_map_file = ckpt_path / PARAM_META_FILE;
   // auto json_reader = JsonReader<ParamMeta>(ckpt_path.string());

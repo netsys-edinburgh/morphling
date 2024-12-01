@@ -39,6 +39,15 @@ message(STATUS "CMAKE_BINARY_DIR: ${CMAKE_BINARY_DIR}")
 set(BUILD_UNIT_TESTS OFF)
 set(BUILD_EXAMPLES OFF)
 
+set(BUILD_SHARED_LIBS ON)
+
+
+set(HIREDIS_HEADER $ENV{HOME}/hiredis)
+set(HIREDIS_LIB $ENV{HOME}/hiredis)
+set(TEST_HIREDIS_LIB $ENV{HOME}/hiredis)
+
+
+include_directories($ENV{HOME})
 # # BLT Support Flags
 # set(ENABLE_CUDA ON)
 # set(ENABLE_OPENMP ON)
@@ -84,7 +93,32 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/gabime/spdlog.git
   GIT_TAG v1.14.1
 )
-FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags)
+FetchContent_Declare(
+  rabbitmq
+  GIT_REPOSITORY https://github.com/alanxz/rabbitmq-c.git
+  GIT_TAG v0.14.0
+)
+FetchContent_Declare(
+  mosquitto
+  GIT_REPOSITORY https://github.com/eclipse-mosquitto/mosquitto.git
+  GIT_TAG v2.0.20
+)
+# FetchContent_Declare(
+#   hiredis
+#   GIT_REPOSITORY https://github.com/redis/hiredis.git
+#   GIT_TAG v1.1.0
+# )
+FetchContent_Declare(
+  redis
+  GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
+  GIT_TAG 1.3.13
+)
+FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags rabbitmq mosquitto redis)
+
+# if(NOT rabbitmq_POPULATED)
+#     FetchContent_Populate(rabbitmq)
+#     add_subdirectory(${rabbitmq_SOURCE_DIR} ${rabbitmq_BINARY_DIR})
+# endif()
 
 set(gRPC_INSTALL ON) # Install gRPC for TARGET_FILE
 
@@ -98,6 +132,9 @@ endif()
 # Retrieve the Python version
 # message(STATUS "Python version: ${PYTHON_VERSION_STRING}")
 find_package(PythonInterp REQUIRED)
+
+# find hiredis
+# find_package(hiredis REQUIRED)
 
 # Retrieve the Python major and minor version
 string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\..*" _ ${PYTHON_VERSION_STRING})
@@ -219,6 +256,7 @@ add_custom_command(
   COMMAND ${_PROTOBUF_PROTOC}
   ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
   --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+  --python_out "${CMAKE_CURRENT_BINARY_DIR}"
   -I "${hw_proto_path}"
   --plugin=protoc-gen-grpc=${_GRPC_CPP_PLUGIN_EXECUTABLE}
   "${hw_proto}"
@@ -230,7 +268,6 @@ add_custom_command(
 include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Python3_INCLUDE_DIRS}
-
   ${CONDA_PREFIX_PATH}/include
   ${rttr_SOURCE_DIR}/src
   ${rttr_BINARY_DIR}/src
@@ -238,10 +275,18 @@ include_directories(
   ${grpc_SOURCE_DIR}/include
   ${protobuf_SOURCE_DIR}/src
   ${spdlog_SOURCE_DIR}/include
+  ${rabbitmq_SOURCE_DIR}/include
+  ${rabbitmq_BINARY_DIR}/include
+  ${mosquitto_SOURCE_DIR}/include
+  ${redis_SOURCE_DIR}/src
+  ${redis_SOURCE_DIR}/src/sw/redis++/cxx17
+  ${redis_SOURCE_DIR}/src/sw/redis++/no_tls
+  ${redis_BINARY_DIR}/src
 )
 
 link_directories(
   ${CONDA_PREFIX_PATH}/lib
+  $ENV{HOME}/hiredis
 )
 
 file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
@@ -250,13 +295,14 @@ file(GLOB UTILS_SRC "csrc/utils/*.cpp")
 file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
 file(GLOB SCHEDULER_SRC "csrc/scheduler/*.cpp")
 file(GLOB PYTHON_SRC "csrc/python/*.cpp")
+file(GLOB BACKEND_SRC "csrc/backend/*.cpp")
 
-add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
-target_link_libraries(morphling_interceptor PUBLIC
-  CUDA::cudart Threads::Threads
-  libspdlog.so grpc++ grpc++_reflection
-)
-target_include_directories(morphling_interceptor PUBLIC "csrc" ${CUDA_INCLUDE_DIRS})
+# add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
+# target_link_libraries(morphling_interceptor PUBLIC
+#   CUDA::cudart Threads::Threads
+#   libspdlog.so grpc++ grpc++_reflection
+# )
+# target_include_directories(morphling_interceptor PUBLIC "csrc" ${CUDA_INCLUDE_DIRS})
 
 # add_library(morphling STATIC ${UTILS_SRC} ${CHECKPOINT_SRC})
 # target_link_libraries(morphling PUBLIC
@@ -268,7 +314,13 @@ target_include_directories(morphling_interceptor PUBLIC "csrc" ${CUDA_INCLUDE_DI
 message(STATUS "rttr_SOURCE_DIR: ${rttr_SOURCE_DIR}")
 message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
 
-add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs} ${SCHEDULER_SRC} ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC})
+# set (MORPHLING_EXT_INCLUDE_DIRS
+
+# )
+
+add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs}
+  "csrc/scheduler/gpu_worker.cpp" ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC}
+)
 add_dependencies(morphling_server generate_proto_files)
 target_link_libraries(morphling_server PRIVATE
   gflags::gflags fmt
@@ -279,8 +331,22 @@ target_link_libraries(morphling_server PRIVATE
   CUDA::cublas CUDA::cudart
   libpython${Python_VERSION}.so
   ${TORCH_LIBRARIES}
+  rabbitmq
 )
 target_include_directories(morphling_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
+
+# add_executable(morphling_worker_server "csrc/worker_server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs})
+# add_dependencies(morphling_worker_server generate_proto_files)
+# target_link_libraries(morphling_worker_server PRIVATE
+#   gflags::gflags fmt
+#   ${_PROTOBUF_LIBPROTOBUF}
+#   grpc++ grpc++_reflection
+#   libspdlog.so
+#   uuid
+# )
+# target_include_directories(morphling_worker_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
+
+
 
 # Supported NVIDIA architectures.
 set(CUDA_SUPPORTED_ARCHS "7.0;7.5;8.0;8.6;8.9;9.0")
@@ -310,17 +376,21 @@ set(MORPHLING_EXT_SRC
   ${CHECKPOINT_SRC}
   ${MEMORY_SRC}
   ${UTILS_SRC}
+  ${INTERCEPT_SRC}
   ${hw_proto_srcs}
   ${hw_grpc_srcs}
-  ${PYTHON_SRC}
+  "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
+  # ${TORCH_LIBRARIES}
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
   libspdlog.so rttr_core
   grpc++ grpc++_reflection
-  morphling_interceptor
+  rabbitmq
 )
+
+message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
 define_gpu_extension_target(
   _C
   DESTINATION morphling
@@ -329,25 +399,61 @@ define_gpu_extension_target(
   COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
   ARCHITECTURES ${MORPHLING_GPU_ARCHES}
   LIBRARIES ${MORPHLING_EXT_LIB}
+  # INCLUDE_DIRECTORIES ${MORPHLING_EXT_INCLUDE_DIRS}
+  WITH_SOABI
+)
+
+
+set(MORPHLING_MSG_SRC
+  ${BACKEND_SRC}
+  "csrc/scheduler/amqp_dispatcher.cpp"
+  "csrc/scheduler/amqp_worker.cpp"
+  "csrc/python/client_py.cpp"
+  "csrc/utils/logger.cpp"
+  "csrc/memory/caching_allocator.cpp"
+  "csrc/memory/shared_memory.cpp"
+)
+set(MORPHLING_EXT_LIB
+  torch ${torch_python_LIBRARY}
+  uuid Threads::Threads fmt rttr_core
+  rabbitmq libmosquitto
+  libspdlog.so
+  redis++
+  hiredis
+)
+
+define_gpu_extension_target(
+  _Msg
+  DESTINATION morphling
+  LANGUAGE ${MORPHLING_GPU_LANG}
+  SOURCES ${MORPHLING_MSG_SRC}
+  COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+  ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+  LIBRARIES ${MORPHLING_EXT_LIB}
+  # INCLUDE_DIRECTORIES ${MORPHLING_EXT_INCLUDE_DIRS}
   WITH_SOABI
 )
 
 # set(MORPHLING_INTERCEPTOR_SRC
 # ${INTERCEPT_SRC}
+# ${MEMORY_SRC}
+# ${UTILS_SRC}
+# ${hw_proto_srcs}
+# ${hw_grpc_srcs}
 # "csrc/python/intercept_py.cpp"
 # )
 # set(MORPHLING_INTERCEPTOR_LIB
-# mkl_rt grpc++ grpc++_reflection
-# libspdlog.so
+# mkl_rt grpc++ grpc++_reflection rttr_core
+# libspdlog.so uuid
 # )
 # define_gpu_extension_target(
-# morphling_interceptor
+# _intercept
 # DESTINATION morphling
 # LANGUAGE ${MORPHLING_GPU_LANG}
-# SOURCES ${MORPHLING_EXT_SRC}
+# SOURCES ${MORPHLING_INTERCEPTOR_SRC}
 # COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
 # ARCHITECTURES ${MORPHLING_GPU_ARCHES}
-# LIBRARIES ${MORPHLING_EXT_LIB}
+# LIBRARIES ${MORPHLING_INTERCEPTOR_LIB}
 # WITH_SOABI
 # )
 

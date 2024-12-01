@@ -15,11 +15,20 @@
 #define CUDA_MEMCPY_LOOP(trans, dst, src, ld, m, k, mode)                    \
   for (int col = 0; col < ((trans == 'N' || trans == 'n') ? k : m); col++) { \
     size_t num_elements = ((trans == 'N' || trans == 'n') ? m : k);          \
-    CHECK_CUDA_ERROR(cudaMemcpy(dst + col * ld, src + col * ld,              \
+    size_t offset = col * ld;                                                \
+    CHECK_CUDA_ERROR(cudaMemcpy(dst + offset, src + offset,                  \
                                 num_elements * sizeof(float), mode))         \
   }
 
-class GPUWorker : public WorkerBase {
+#define CUDA_TRANS_OP(trans) \
+  (trans == 'N' || trans == 'n') ? CUBLAS_OP_N : CUBLAS_OP_T
+
+class GPUWorkerThread {
+ public:
+  explicit GPUWorkerThread(int type);
+};
+
+class GPUWorker : public WorkerBase, std::enable_shared_from_this<GPUWorker> {
  public:
   explicit GPUWorker(int gpu_id, size_t size);
   ~GPUWorker();
@@ -30,11 +39,14 @@ class GPUWorker : public WorkerBase {
 
   DELETE_COPY_AND_ASSIGN(GPUWorker);
 
-  void EnqueueGemm(const GemmArgsPtr& args);
+  // void EnqueueGemm(std::shared_ptr<GemmArgs> args);
+  // void Wait();
+  void RunCublasGemm(std::shared_ptr<GemmArgs> args);
 
  private:
   void Run() override;
-  void RunCublasGemm(const GemmArgsPtr& args);
+
+  cublasOperation_t CudaTransConvert(char trans);
 
  private:
   std::unique_ptr<CachingAllocator> allocator_;
@@ -58,10 +70,13 @@ class GPUWorkerPool : public noncopyable {
 
   DELETE_COPY_AND_ASSIGN(GPUWorkerPool);
 
-  void EnqueueGemmWithPolicy(const GemmArgsPtr& args);
+  void EnqueueGemmWithPolicy(const std::string& task_id,
+                             std::shared_ptr<GemmArgs> args);
+  void WaitAll();
+  void Wait(const std::string& task_id);
 
  private:
-  std::vector<std::unique_ptr<GPUWorker>> workers_;
+  std::vector<std::shared_ptr<GPUWorker>> workers_;
   SchedulingPolicyType policy_;
   size_t size_;
   std::unique_ptr<SchedulingPolicy> scheduler_;

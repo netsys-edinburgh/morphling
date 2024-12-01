@@ -2,3 +2,5 @@
 
 // std::unique_ptr<TorchCachingAllocator> kTorchCachingAllocator =
 // std::make_unique<TorchCachingAllocator>();
+
+ReplaceTorchAllocatorOnLoad kReplaceTorchAllocatorOnLoad;

@@ -11,6 +11,7 @@ KB = 1024
 MB = 1024 * KB
 GB = 1024 * MB
 
+
 def main():
     parser = HfArgumentParser((EmulatorConfig,))
     args = parser.parse_args()
@@ -35,12 +36,16 @@ def main():
         subprocess.call(
             [
                 server_executable,
-                "--listen", listen_address,
-                "--path", checkpoint_path,
+                "--listen",
+                listen_address,
+                "--path",
+                checkpoint_path,
             ],
             env=env,
         )
     )
+
+    print("Emulator exited")
 
     # param_meta_map_file = os.path.join(args.ckpt_path, "param_meta_map.json")
 

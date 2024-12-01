@@ -22,18 +22,26 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         // deleter does nothing since memory is managed by emulator shared
         // memory
         // check if ptr bytes are all zeros
-        bool is_zero = true;
-        for (size_t i = 0; i < size; i++) {
-          if (((char*)ptr)[i] != 0) {
-            is_zero = false;
-            break;
-          }
-        }
-        LOG_FATAL_IF(
-            is_zero,
-            "Read all zeros, file: {}, offset: {}, size: {}, aligned_size: {}",
-            name.c_str(), 0, size, size);
-        LOG_DEBUG("Set tensor shm: name: {}, size: {}, ptr: {}", name, size,
+        //    bool is_zero = true;
+        //    for (size_t i = 0; i < size; i++) {
+        //      if (((char*)ptr)[i] != 0) {
+        //        is_zero = false;
+        //        break;
+        //      }
+        //    }
+        //    LOG_FATAL_IF(
+        //        is_zero,
+        //        "Read all zeros, file: {}, offset: {}, size: {}, aligned_size:
+        //        {}", name.c_str(), 0, size, size);
+        ShmMeta meta{
+            .id = -1,
+            .ptr = ptr,
+            .size = size,
+            .name = name,
+            .is_remote = true,
+        };
+        kCachingAllocator->InsertShmMeta(meta);
+        LOG_DEBUG("set_tensor_shm: name: {}, size: {}, ptr: {}", name, size,
                   ptr);
         tensor.set_data(torch::from_blob(ptr, tensor.sizes(), tensor.strides(),
                                          DoNothingDeleter<void>{},
@@ -45,8 +53,4 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def(py::init<>())
       .def("get_model_param", &MemoryManagerClient::GetModelParam,
            "Get model parameter from server");
-  //   py::class_<CheckpointHandle>(m, "CheckpointHandle")
-  //       .def(py::init<const std::string&>())
-  //       .def("read_checkpoint", &CheckpointHandle::ReadCheckpoint,
-  //            "Read checkpoint from disk");
 }
