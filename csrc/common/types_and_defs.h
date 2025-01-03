@@ -28,6 +28,7 @@ typedef std::unordered_map<std::string, ShmMeta> ParamShmMap;
 constexpr size_t KB = 1024;
 constexpr size_t MB = KB * KB;
 constexpr size_t GB = KB * KB * KB;
+constexpr size_t TB = KB * KB * KB * KB;
 
 template <typename T>
 struct DoNothingDeleter {

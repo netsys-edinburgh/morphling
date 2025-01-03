@@ -103,6 +103,10 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/eclipse-mosquitto/mosquitto.git
   GIT_TAG v2.0.20
 )
+FetchContent_Declare(
+  tcmalloc
+  GIT_REPOSITORY https://github.com/google/tcmalloc.git
+)
 # FetchContent_Declare(
 #   hiredis
 #   GIT_REPOSITORY https://github.com/redis/hiredis.git
@@ -113,7 +117,7 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
   GIT_TAG 1.3.13
 )
-FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags rabbitmq mosquitto redis)
+FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags rabbitmq mosquitto redis tcmalloc)
 
 # if(NOT rabbitmq_POPULATED)
 #     FetchContent_Populate(rabbitmq)
@@ -427,6 +431,29 @@ define_gpu_extension_target(
   DESTINATION morphling
   LANGUAGE ${MORPHLING_GPU_LANG}
   SOURCES ${MORPHLING_MSG_SRC}
+  COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+  ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+  LIBRARIES ${MORPHLING_EXT_LIB}
+  # INCLUDE_DIRECTORIES ${MORPHLING_EXT_INCLUDE_DIRS}
+  WITH_SOABI
+)
+
+
+set(MORPHLING_BACKEND_SRC
+  ${BACKEND_SRC}
+  "csrc/python/backend_py.cpp"
+)
+set(MORPHLING_EXT_LIB
+  torch ${torch_python_LIBRARY}
+  uuid Threads::Threads fmt rttr_core
+  libspdlog.so
+)
+
+define_gpu_extension_target(
+  _Backend
+  DESTINATION morphling
+  LANGUAGE ${MORPHLING_GPU_LANG}
+  SOURCES ${MORPHLING_BACKEND_SRC}
   COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
   ARCHITECTURES ${MORPHLING_GPU_ARCHES}
   LIBRARIES ${MORPHLING_EXT_LIB}

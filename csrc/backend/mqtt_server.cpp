@@ -204,6 +204,13 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
 
   RephrasePartitions(partitions);
 
+  int64_t total_bytes = 0;
+  for (auto& partition : partitions) {
+    total_bytes +=
+        std::get<1>(partition.mat[0]) + std::get<1>(partition.mat[1]);
+  }
+  LOG_INFO("Total bytes: {}MB", total_bytes / 1e6);
+
   // int64_t num_devices = std::stoi(GETENV("NUM_DEVICES", "1"));
   int64_t count = pub_buffer_.size();
   pub_buffer_.resize(pub_buffer_.size() + partitions.size());
@@ -213,22 +220,22 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
   auto start = std::chrono::high_resolution_clock::now();
   std::vector<std::future<void>> futures;
   for (auto& partition : partitions) {
-    auto publish_func = std::bind(&MQTTServer::PublishPartition, this,
-                                  std::ref(partition), mm_count_.load(), count);
-    futures.push_back(std::async(std::launch::async, publish_func));
-    count++;
-    // partition.oid = mm_count_;
-    // auto [data, size] = partition.Serialize();
-    // auto topic =
-    //     std::string(MQTT_COMPUTE_TOPIC_REQ) +
-    //     std::to_string(partition.dev_id);
-    // Publish(partition.dev_id, topic, data, size);
-    // // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-    // pub_buffer_[count] = data;
-    // // });
-    // // pub_count_ = (pub_count_++) % num_devices_;
+    // auto publish_func = std::bind(&MQTTServer::PublishPartition, this,
+    //                               std::ref(partition), mm_count_.load(),
+    //                               count);
+    // futures.push_back(std::async(std::launch::async, publish_func));
     // count++;
-    // // futures.push_back(std::move(future));
+    partition.oid = mm_count_;
+    auto [data, size] = partition.Serialize();
+    auto topic =
+        std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
+    Publish(partition.dev_id, topic, data, size);
+    // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
+    pub_buffer_[count] = data;
+    // });
+    // pub_count_ = (pub_count_++) % num_devices_;
+    count++;
+    // futures.push_back(std::move(future));
   }
   for (auto& f : futures) {
     f.wait();
@@ -243,19 +250,14 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
 void MQTTServer::OnConnect(struct mosquitto* mosq, void* userdata, int result) {
   if (result == 0) {
     // Connection successful
-    int mosq_idx = 0;
     for (size_t i = 0; i < num_devices_; i++) {
       auto topic = std::string(MQTT_COMPUTE_TOPIC_RSP) + std::to_string(i);
-      int ret =
-          mosquitto_subscribe(mosq_[i % num_mosq_], NULL, topic.c_str(), 0);
-      LOG_FATAL_IF(ret != MOSQ_ERR_SUCCESS,
-                   "Failed to subscribe to topic, error code: {}", ret);
-      fprintf(stderr, "Subscribed to topic %s\n", topic.c_str());
-      // topic = std::string(MQTT_TIMER_TOPIC_RSP) + std::to_string(i);
-      // ret = mosquitto_subscribe(mosq_[i % num_mosq_], NULL, topic.c_str(),
-      // 0); LOG_FATAL_IF(ret != MOSQ_ERR_SUCCESS,
-      //              "Failed to subscribe to topic, error code: {}", ret);
-      // fprintf(stderr, "Subscribed to topic %s\n", topic.c_str());
+      if (mosq == mosq_[i % num_mosq_]) {
+        int ret = mosquitto_subscribe(mosq, NULL, topic.c_str(), 0);
+        LOG_FATAL_IF(ret != MOSQ_ERR_SUCCESS,
+                     "Failed to subscribe to topic, error code: {}", ret);
+        fprintf(stderr, "Subscribed to topic %s\n", topic.c_str());
+      }
     }
   } else {
     LOG_FATAL("Connect failed with code {}", result);
@@ -363,13 +365,14 @@ void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
       auto cached_r_size = (r_cached) ? 0 : r_size;
       auto cached_c_size = (c_cached) ? 0 : c_size;
 
+      int64_t num_rows = r_size / partition.h_dim / sizeof(float);
+      int64_t num_cols = c_size / partition.h_dim / sizeof(float);
+
       float ul_time =
-          (float)(block_size_ * block_size_) * sizeof(float) / device_ul_bw[i];
-      float dl_time = (float)(cached_r_size + cached_c_size) * sizeof(float) /
-                      device_dl_bw[i];
-      float flops = (float)2.0 * (r_size / sizeof(float)) *
-                    (c_size / sizeof(float)) / partition.h_dim /
-                    device_flops[i];
+          (float)(num_rows * num_cols) * sizeof(float) / device_ul_bw[i];
+      float dl_time = (float)(cached_r_size + cached_c_size) / device_dl_bw[i];
+      float flops =
+          (float)2.0 * num_rows * num_cols * partition.h_dim / device_flops[i];
 
       float time = std::max(std::max(ul_time, dl_time), flops) + device_time[i];
       // ul_time + dl_time + flops + device_time[i];
