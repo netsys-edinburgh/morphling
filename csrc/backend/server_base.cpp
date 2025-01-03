@@ -225,20 +225,22 @@ std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
 }
 
 std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
-  int64_t size = sizeof(int64_t) * 6 + sizeof(uint64_t) * 2;
+  uint32_t size = sizeof(int64_t) * 6 + sizeof(uint64_t) * 2;
   for (const auto& mat : mat) {
     size += std::get<1>(mat) + sizeof(int64_t);
   }
-
   // fprintf(stderr, "Size: %ld\n", size);
 
-  uint8_t* ptr = (uint8_t*)malloc(size);
+  uint8_t* ptr = (uint8_t*)malloc(size + sizeof(uint32_t));
   // // pinning the pointer
   // int ret = mlock(ptr, size);
   // LOG_FATAL_IF(ret != 0, "Failed to pin memory in serialization, error code:
   // {}, msg: {}", ret, strerror(errno));
 
-  int64_t offset = 0;
+  // write payload size
+  memcpy(ptr, &size, sizeof(uint32_t));
+
+  int64_t offset = sizeof(int64_t);
   // fprintf(stderr, "Serializing partition: %ld, %ld, %ld\n", row, col, h_dim);
   memcpy(ptr + offset, &version, sizeof(uint64_t));
   offset += sizeof(uint64_t);
@@ -275,7 +277,7 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
 
 void MatrixPartition::Deserialize(const void* data, int64_t size) {
   uint8_t* ptr = (uint8_t*)data;
-  int64_t offset = 0;
+  int64_t offset = sizeof(uint32_t);
 
   ptr_ = ptr;
   size_ = size;
