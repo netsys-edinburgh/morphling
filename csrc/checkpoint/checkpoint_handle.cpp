@@ -5,7 +5,7 @@
 #include "archer_tensor_handle.h"
 #include "common/types_and_defs.h"
 #include "utils/json_reader.h"
-#include "utils/logger.h"
+// #include "utils/logger.h"
 #include "utils/progress_bar.h"
 
 CheckpointHandle::CheckpointHandle(const std::filesystem::path& prefix)

@@ -294,7 +294,6 @@ setup(
     ext_modules=[
         CMakeExtension(name="morphling._C", target_type="shared"),
         CMakeExtension(name="morphling._Msg", target_type="shared"),
-        CMakeExtension(name="morphling._Backend", target_type="shared"),
         CMakeExtension(
             name="morphling.morphling_server", target_type="executable"
         ),

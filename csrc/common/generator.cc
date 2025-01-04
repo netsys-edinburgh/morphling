@@ -1,5 +1,7 @@
 #include "generator.h"
 
+#include <atomic>
+
 uint32_t NumGenerator::ctx_id_ = 1;
 std::mutex NumGenerator::mutex_;
 
@@ -12,6 +14,6 @@ uint32_t NumGenerator::ctx_id() {
 }
 
 uint32_t NumGenerator::flowno() {
-  static atomic<uint32_t> flowno(1024);
+  static std::atomic<uint32_t> flowno(1024);
   return flowno++;
 }

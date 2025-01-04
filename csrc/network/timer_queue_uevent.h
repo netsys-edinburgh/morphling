@@ -15,9 +15,9 @@
 #include <unordered_map>
 #include <vector>
 
+#include "base/mutex.h"
+#include "base/timestamp.h"
 #include "callbacks.h"
-#include "mutex.h"
-#include "timestamp.h"
 
 namespace uevent {
 

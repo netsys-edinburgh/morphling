@@ -41,10 +41,11 @@
 #define MUDUO_BASE_STRINGPIECE_H
 
 #include <string.h>
-#include <types.h>
 
 #include <iosfwd>  // for ostream forward-declaration
 #include <string>
+
+#include "types.h"
 
 namespace base {
 

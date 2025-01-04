@@ -1,7 +1,7 @@
 #include "connection_libevent.h"
 
+#include "base/logging.h"
 #include "eventloop_libevent.h"
-#include "logging.h"
 
 namespace uevent {
 

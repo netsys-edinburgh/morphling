@@ -25,8 +25,6 @@ class ProxyCliHandle : public uevent::LoopHandle {
 
   void ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
                         const MatrixPartition& partition);
-
- private:
   void HandlePartition(const uevent::ConnectionUeventPtr& conn,
                        const MatrixPartition& partition);
 
@@ -56,6 +54,7 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
   void SavePartition(MatrixPartition& partition);
   void HandlePartition(const uevent::ConnectionUeventPtr& conn,
                        const MatrixPartition& partition);
+  void CheckCachedPartition(const uevent::ConnectionUeventPtr& conn);
 
  private:
   ProxyEnvCfg& ctx_;
@@ -100,8 +99,8 @@ class ProxyCli {
 
  public:
   ProxyCli();
-  Status Initialize(const std::string& cfg_file);
-  Status Start();
+  void Initialize(const std::string& cfg_file);
+  void Start();
 
  private:
   ProxyCliImplPtr svr_;

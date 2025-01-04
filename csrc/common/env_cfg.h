@@ -8,6 +8,9 @@ struct ProxyEnvCfg {
 
   // worker
   int thread;
+  int64_t block_size;
+  int64_t num_device;
+  int max_inflight;
 
   // log
   std::string log_path;

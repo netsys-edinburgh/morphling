@@ -3,19 +3,21 @@
 //
 // Author: Shuo Chen (chenshuo at chenshuo dot com)
 
-#include <current_thread.h>
+#include "thread.h"
+
 #include <errno.h>
-#include <exception.h>
 #include <linux/unistd.h>
-#include <logging.h>
 #include <stdio.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
-#include <thread.h>
 #include <unistd.h>
 
 #include <type_traits>
+
+#include "current_thread.h"
+#include "exception.h"
+#include "logging.h"
 
 namespace base {
 namespace CurrentThread {

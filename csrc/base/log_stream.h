@@ -3,10 +3,11 @@
 
 #include <assert.h>
 #include <string.h>  // memcpy
-#include <string_piece.h>
-#include <types.h>
 
 #include <string>
+
+#include "string_piece.h"
+#include "types.h"
 
 namespace base {
 

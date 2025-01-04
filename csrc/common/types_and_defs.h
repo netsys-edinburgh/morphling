@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "lru.h"
-#include "rttr_registration.h"
+// #include "rttr_registration.h"
 
 #define PARAM_META_FILE "param_meta_map.json"
 #define BUFFER_SHM_NAME "/emulator_shm_buffer"
@@ -19,6 +19,7 @@ typedef std::size_t NodeID;
 typedef std::uint64_t GraphID;
 typedef std::uint64_t RequestID;
 
+struct ShmMeta;
 typedef std::unordered_map<std::string, ShmMeta> ParamShmMap;
 
 // #define KB 1024
@@ -29,6 +30,9 @@ constexpr size_t KB = 1024;
 constexpr size_t MB = KB * KB;
 constexpr size_t GB = KB * KB * KB;
 constexpr size_t TB = KB * KB * KB * KB;
+
+typedef std::tuple<uint64_t, int64_t, int64_t, bool>
+    TensorKey;  // version, pivot, r/c, is_row
 
 template <typename T>
 struct DoNothingDeleter {
