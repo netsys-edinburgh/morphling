@@ -3,10 +3,12 @@
 //
 // Author: Shuo Chen (chenshuo at chenshuo dot com)
 
+#include "thread_pool.h"
+
 #include <assert.h>
-#include <exception.h>
 #include <stdio.h>
-#include <thread_pool.h>
+
+#include "exception.h"
 
 using namespace base;
 

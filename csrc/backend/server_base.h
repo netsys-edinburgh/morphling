@@ -4,7 +4,7 @@
 
 #include <future>
 
-#include "utils/logger.h"
+#include "common/types_and_defs.h"
 
 template <typename T>
 std::vector<std::vector<T>> CartesianProduct(const std::vector<T>& list) {
@@ -61,16 +61,6 @@ typedef std::tuple<uint64_t, int64_t, int64_t, bool>
     TensorKey;  // version, pivot, r/c, is_row
 
 // create a spdlog fmt for TensorKey
-template <>
-struct fmt::formatter<TensorKey> {
-  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
-  template <typename FormatContext>
-  auto format(const TensorKey& p, FormatContext& ctx) {
-    return format_to(ctx.out(), "[{}:{}:{}:{}]", std::get<0>(p), std::get<1>(p),
-                     std::get<2>(p), std::get<3>(p));
-  }
-};
 
 // define custom hash function for TensorKey
 namespace std {
@@ -126,6 +116,8 @@ struct MatrixPartition {
 
   std::string DebugString() const;
 };
+
+typedef std::shared_ptr<MatrixPartition> MatrixPartitionPtr;
 
 // enum TimerType { kTimerGet, kTimerPut };
 

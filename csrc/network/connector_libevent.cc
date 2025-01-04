@@ -2,9 +2,9 @@
 
 #include <event2/bufferevent.h>
 
+#include "base/logging.h"
 #include "connection_libevent.h"
 #include "eventloop_libevent.h"
-#include "logging.h"
 
 namespace uevent {
 

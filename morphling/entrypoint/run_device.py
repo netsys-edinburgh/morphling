@@ -64,12 +64,17 @@ def main():
         type=str,
         default="rabbitmq",
         help="The backend to use for the device",
-        choices=["rabbitmq", "amqp", "mqtt"],  # more to be added later
+        choices=["rabbitmq", "amqp", "mqtt", "proxy"],  # more to be added later
     )
     parser.add_argument(
         "--emulation",
         action="store_true",
         help="Enable emulation mode",
+    )
+    parser.add_argument(
+        "--cfg",
+        default="",
+        help="The path to the config file",
     )
 
     # # positional
@@ -86,7 +91,7 @@ def main():
     # parser.add_argument("user_script_args", nargs=REMAINDER)
 
     args = parser.parse_args()
-    print(args, flush=True)
+    # print(args, flush=True)
 
     # human to bytes
     args.flops = human2bytes(args.flops)
@@ -147,6 +152,13 @@ def main():
 
     elif args.backend == "mqtt":
         worker = AutoWorker.from_name(args.backend, str(args.id))
+        worker.start()
+        while True:
+            time.sleep(1)
+
+    elif args.backend == "proxy":
+        worker = AutoWorker.from_name(args.backend)
+        worker.initialize(args.cfg)
         worker.start()
         while True:
             time.sleep(1)

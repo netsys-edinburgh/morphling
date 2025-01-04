@@ -10,6 +10,7 @@
 #include "morphling.pb.h"
 #include "network/uevent.h"
 #include "network/ueventloop_thread.h"
+#include "server_base.h"
 
 struct BatchSendRecv {
   size_t sent;
@@ -44,8 +45,11 @@ class ProxySvrHandle : public uevent::LoopHandle {
 
  public:
   void RequestCb(const uevent::ConnectionUeventPtr& conn);
+  void RequestWriteCb(const uevent::ConnectionUeventPtr& conn);
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
   void ConnectionClosedCb(const uevent::ConnectionUeventPtr& conn);
+  void SendInLoop(const uevent::ConnectionUeventPtr& conn,
+                  const MatrixPartitionPtr partition);
 
  private:
   void HandleMatMul(const void* payload, size_t size);
@@ -53,6 +57,8 @@ class ProxySvrHandle : public uevent::LoopHandle {
  private:
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
+  std::unordered_map<std::string, uint32_t> conn_inflight_;
+  std::deque<std::function<void()>> task_queue_;
 };
 
 class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
@@ -71,6 +77,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
   void ConnectionClosedCb(const uevent::ConnectionUeventPtr& conn);
   void RequestCb(const uevent::ConnectionUeventPtr& conn);
+  void RequestWriteCb(const uevent::ConnectionUeventPtr& conn);
 
   void RephrasePartitions(std::vector<MatrixPartition>& partitions);
 
@@ -115,8 +122,8 @@ class ProxySvr {
 
  public:
   ProxySvr();
-  Status Initialize(const std::string& cfg_file);
-  Status Start();
+  void Initialize(const std::string& cfg_file);
+  void Start();
 
   void DispatchMatMulAsync(torch::Tensor& mat_a, torch::Tensor& mat_b) {
     svr_->DispatchMatMulAsync(mat_a, mat_b);

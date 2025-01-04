@@ -1,5 +1,6 @@
 #include "server_base.h"
 
+#include <arpa/inet.h>
 #include <sys/mman.h>
 
 #include "common/generator.h"
@@ -64,9 +65,9 @@ torch::Tensor CreateOutputMatrix(const torch::Tensor& mat_a,
     c_shape.push_back(out_dim);
   }
 
-  LOG_DEBUG(
-      "Creating output matrix, A shape: {}, B shape: {}, Output shape: {}",
-      a_shape, b_shape, c_shape);
+  // LOG_DEBUG(
+  //     "Creating output matrix, A shape: {}, B shape: {}, Output shape: {}",
+  //     a_shape, b_shape, c_shape);
 
   auto output_matrix = torch::empty(c_shape);
   // fill with nan
@@ -238,9 +239,10 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
   // {}, msg: {}", ret, strerror(errno));
 
   // write payload size
-  memcpy(ptr, &size, sizeof(uint32_t));
+  size_t nl_size = htonl(size);
+  memcpy(ptr, &nl_size, sizeof(uint32_t));
 
-  int64_t offset = sizeof(int64_t);
+  int64_t offset = sizeof(uint32_t);
   // fprintf(stderr, "Serializing partition: %ld, %ld, %ld\n", row, col, h_dim);
   memcpy(ptr + offset, &version, sizeof(uint64_t));
   offset += sizeof(uint64_t);
@@ -272,7 +274,7 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
     // fprintf(stderr, "Mat size: %ld\n", std::get<1>(mat));
   }
 
-  return std::make_tuple(ptr, size);
+  return std::make_tuple(ptr, size + sizeof(uint32_t));
 }
 
 void MatrixPartition::Deserialize(const void* data, int64_t size) {

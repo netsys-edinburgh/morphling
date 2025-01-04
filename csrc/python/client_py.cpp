@@ -6,6 +6,8 @@
 
 #include "backend/mqtt_server.h"
 #include "backend/mqtt_worker.h"
+#include "backend/proxy_cli.h"
+#include "backend/proxy_svr.h"
 #include "common/pytorch_defs.h"
 #include "scheduler/amqp_dispatcher.h"
 #include "scheduler/amqp_worker.h"
@@ -15,6 +17,18 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def(py::init<const std::string&, uint32_t>())
       .def("sync_dispatch_matmul", &AMQPBackend::DispatchMatMul,
            "Dispatch matmul to devices");
+
+  py::class_<ProxySvr>(m, "ProxySvr")
+      .def(py::init<>())
+      .def("initialize", &ProxySvr::Initialize)
+      .def("start", &ProxySvr::Start)
+      .def("async_dispatch_matmul", &ProxySvr::DispatchMatMulAsync)
+      .def("wait_matmul", &ProxySvr::WaitMatMul);
+
+  py::class_<ProxyCli>(m, "ProxyCli")
+      .def(py::init<>())
+      .def("initialize", &ProxyCli::Initialize)
+      .def("start", &ProxyCli::Start);
 
   py::class_<MQTTWorker>(m, "MQTTWorker")
       .def(py::init<const std::string&>())

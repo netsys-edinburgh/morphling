@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "common/generator.h"
+#include "common/rttr_registration.h"
 #include "common/types_and_defs.h"
 #include "utils/logger.h"
 

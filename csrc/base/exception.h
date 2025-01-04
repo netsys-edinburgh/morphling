@@ -6,10 +6,10 @@
 #ifndef MUDUO_BASE_EXCEPTION_H
 #define MUDUO_BASE_EXCEPTION_H
 
-#include <types.h>
-
 #include <exception>
 #include <string>
+
+#include "types.h"
 
 namespace base {
 

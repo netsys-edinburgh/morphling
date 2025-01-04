@@ -299,7 +299,10 @@ file(GLOB UTILS_SRC "csrc/utils/*.cpp")
 file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
 file(GLOB SCHEDULER_SRC "csrc/scheduler/*.cpp")
 file(GLOB PYTHON_SRC "csrc/python/*.cpp")
-file(GLOB BACKEND_SRC "csrc/backend/*.cpp")
+file(GLOB BACKEND_SRC "csrc/backend/*.cpp" "csrc/backend/*.cc")
+file(GLOB COMMON_SRC "csrc/common/*.cpp" "csrc/common/*.cc")
+file(GLOB NETWORK_SRC "csrc/network/*.cc")
+file(GLOB BASE_SRC "csrc/base/*.cc")
 
 # add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
 # target_link_libraries(morphling_interceptor PUBLIC
@@ -410,6 +413,9 @@ define_gpu_extension_target(
 
 set(MORPHLING_MSG_SRC
   ${BACKEND_SRC}
+  ${NETWORK_SRC}
+  ${BASE_SRC}
+  ${COMMON_SRC}
   "csrc/scheduler/amqp_dispatcher.cpp"
   "csrc/scheduler/amqp_worker.cpp"
   "csrc/python/client_py.cpp"
@@ -424,6 +430,7 @@ set(MORPHLING_EXT_LIB
   libspdlog.so
   redis++
   hiredis
+  event
 )
 
 define_gpu_extension_target(
@@ -431,29 +438,6 @@ define_gpu_extension_target(
   DESTINATION morphling
   LANGUAGE ${MORPHLING_GPU_LANG}
   SOURCES ${MORPHLING_MSG_SRC}
-  COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
-  ARCHITECTURES ${MORPHLING_GPU_ARCHES}
-  LIBRARIES ${MORPHLING_EXT_LIB}
-  # INCLUDE_DIRECTORIES ${MORPHLING_EXT_INCLUDE_DIRS}
-  WITH_SOABI
-)
-
-
-set(MORPHLING_BACKEND_SRC
-  ${BACKEND_SRC}
-  "csrc/python/backend_py.cpp"
-)
-set(MORPHLING_EXT_LIB
-  torch ${torch_python_LIBRARY}
-  uuid Threads::Threads fmt rttr_core
-  libspdlog.so
-)
-
-define_gpu_extension_target(
-  _Backend
-  DESTINATION morphling
-  LANGUAGE ${MORPHLING_GPU_LANG}
-  SOURCES ${MORPHLING_BACKEND_SRC}
   COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
   ARCHITECTURES ${MORPHLING_GPU_ARCHES}
   LIBRARIES ${MORPHLING_EXT_LIB}

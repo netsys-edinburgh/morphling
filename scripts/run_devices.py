@@ -41,6 +41,87 @@ if __name__ == "__main__":
     )
     print("env_init", output.stdout)
 
+    # time.sleep(15)
+    # start model from here
+    model = AutoModelForCausalLM.from_pretrained(
+        model_args.model_name, torch_dtype=torch.float32
+    )
+    model.eval()
+    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name)
+
+    print("Model loaded", model)
+
+    # # get output of "docker exec mosquitto mosquitto_sub -t '$SYS/broker/subscriptions/count'  -C 1"
+    # while True:
+    #     command = [
+    #             "docker",
+    #             "exec",
+    #             "mosquitto",
+    #             "mosquitto_sub",
+    #             "-t",
+    #             "$SYS/broker/subscriptions/count",
+    #             "-C",
+    #             "1",
+    #         ]
+    #     # command = [
+    #     #         "docker",
+    #     #         "exec",
+    #     #         "emqx",
+    #     #         "emqx_ctl",
+    #     #         "broker",
+    #     #         "stats",
+    #     #     ]
+    #     output = subprocess.run(
+    #         command,
+    #         stdout=subprocess.PIPE,
+    #     )
+    #     print("Command", " ".join(command))
+    #     print("Subscriptions count", output.stdout)
+    #     # print("Error", output.stderr)
+
+    #     # # find line of "connections.count" from output.stdout
+    #     # for line in output.stdout.decode("utf-8").split("\n"):
+    #     #     if "connections.count" in line:
+    #     #         print("Connections count", line)
+    #     #         break
+
+    #     # if int(line.split(" ")[-1]) >= device_args.num_devices:
+    #     #     break
+
+    #     if int(output.stdout) >= device_args.num_devices:
+    #         break
+
+    #     time.sleep(1)
+    #     print("Waiting for devices to connect")
+
+    if model_args.backend == "rabbitmq":
+        loop = asyncio.get_event_loop()
+        backend = AutoBackend.from_name(
+            model_args.backend, loop, block_size=model_args.block_size
+        )
+        loop.run_until_complete(backend.connect())
+
+    elif model_args.backend == "amqp":
+        backend = AutoBackend.from_name(
+            model_args.backend, "localhost", model_args.block_size
+        )
+
+    elif model_args.backend == "mqtt":
+        backend = AutoBackend.from_name(
+            model_args.backend, model_args.block_size
+        )
+        backend.start()
+
+    elif model_args.backend == "proxy":
+        backend = AutoBackend.from_name(model_args.backend)
+        backend.initialize(model_args.cfg)
+        backend.start()
+
+    # backend = AutoBackend.from_name("amqp", "localhost", model_args.block_size)
+    morphling.hooks.autograd._backend = backend
+
+    time.sleep(5)
+
     device_processes = []
     print("Running devices", device_args.num_devices)
     for i in range(device_args.num_devices):
@@ -84,7 +165,7 @@ if __name__ == "__main__":
             str(device_args.dl_lat[i]),
             model_args.backend,
         ]
-        print("Running device", command)
+        # print("Running device", command)
         os.system(" ".join(command))
 
         # print("Running device", command)
@@ -95,64 +176,10 @@ if __name__ == "__main__":
         # os.system(" ".join(command))
         # # device_processes.append(p)
 
-    time.sleep(15)
-    # start model from here
-    model = AutoModelForCausalLM.from_pretrained(
-        model_args.model_name, torch_dtype=torch.float32
-    )
-    model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name)
-
-    print("Model loaded", model)
-
-    # get output of "docker exec mosquitto mosquitto_sub -t '$SYS/broker/subscriptions/count'  -C 1"
-    while True:
-        output = subprocess.run(
-            [
-                "docker",
-                "exec",
-                "mosquitto",
-                "mosquitto_sub",
-                "-t",
-                "$SYS/broker/subscriptions/count",
-                "-C",
-                "1",
-            ],
-            stdout=subprocess.PIPE,
-        )
-        print("Subscriptions count", output.stdout)
-
-        if int(output.stdout) >= device_args.num_devices:
-            break
-        time.sleep(1)
-        print("Waiting for devices to connect")
-
-    if model_args.backend == "rabbitmq":
-        loop = asyncio.get_event_loop()
-        backend = AutoBackend.from_name(
-            model_args.backend, loop, block_size=model_args.block_size
-        )
-        loop.run_until_complete(backend.connect())
-
-    elif model_args.backend == "amqp":
-        backend = AutoBackend.from_name(
-            model_args.backend, "localhost", model_args.block_size
-        )
-
-    elif model_args.backend == "mqtt":
-        backend = AutoBackend.from_name(
-            model_args.backend, model_args.block_size
-        )
-        backend.start()
-
-    # backend = AutoBackend.from_name("amqp", "localhost", model_args.block_size)
-    morphling.hooks.autograd._backend = backend
-
-    print("Backend connected")
-
     #     / # mosquitto_sub -t '$SYS/broker/subscriptions/count' -v
     # $SYS/broker/subscriptions/count 40
     # $SYS/broker/subscriptions/count 41
+    time.sleep(5)
 
     # random text for seqlen > 128
     input_text = [

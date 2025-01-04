@@ -1,7 +1,9 @@
+#include "timestamp.h"
+
 #include <stdio.h>
 #include <sys/time.h>
-#include <time.h>  // struct tm
-#include <timestamp.h>
+
+#include "time.h"  // struct tm
 
 #ifndef __STDC_FORMAT_MACROS
 #define __STDC_FORMAT_MACROS

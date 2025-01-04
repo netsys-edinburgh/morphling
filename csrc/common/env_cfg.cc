@@ -44,9 +44,14 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
   PARSE_STR_ENVCFG(parser, "network", "listen_ip", true, "", listen_ip);
 
   PARSE_INT_ENVCFG(parser, "worker", "thread", false, 2, thread);
+  PARSE_INT_ENVCFG(parser, "worker", "max_inflight", false, 5, max_inflight);
+  PARSE_INT_ENVCFG(parser, "worker", "block_size", false, 32, block_size);
+  PARSE_INT_ENVCFG(parser, "worker", "num_device", false, 32, num_device);
 
   PARSE_INT_ENVCFG(parser, "internal", "cleanup_wait", false, 60, cleanup_wait);
   PARSE_INT_ENVCFG(parser, "internal", "tcp_timeout", false, 5, tcp_timeout);
+
+  base::Logger::setLogLevel(log_level);
 
   return 0;
 }

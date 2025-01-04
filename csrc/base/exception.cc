@@ -3,7 +3,7 @@
 //
 // Author: Shuo Chen (chenshuo at chenshuo dot com)
 
-#include <exception.h>
+#include "exception.h"
 
 //#include <cxxabi.h>
 #include <execinfo.h>
