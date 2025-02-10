@@ -10,6 +10,7 @@
 #include <iostream>
 #include <mutex>
 
+#include "common/types_and_defs.h"  // for TensorKey
 #include "noncopyable.h"
 
 #define PRINT_ARGS(...)                \
@@ -111,50 +112,17 @@ struct formatter<std::vector<T>> {
     return ++it;
   }
 };
+
+// create a spdlog fmt for TensorKey
+template <>
+struct formatter<TensorKey> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const TensorKey& p, FormatContext& ctx) {
+    return format_to(ctx.out(), "[{}:{}:{}:{}]", std::get<0>(p), std::get<1>(p),
+                     std::get<2>(p), std::get<3>(p));
+  }
+};
+
 }  // namespace fmt
-
-// #define LOG_DEBUG(...)                                      \
-//   do {                                                      \
-//     if (kLogLevel <= kDebug) {                              \
-//       std::lock_guard<std::mutex> lock(kLogMutex);          \
-//       std::cout << formatstr() << level2str(kDebug) << " "; \
-//       print(__VA_ARGS__);                                   \
-//     }                                                       \
-//   } while (0)
-
-// #define LOG_INFO(...)                                      \
-//   do {                                                     \
-//     if (kLogLevel <= kInfo) {                              \
-//       std::lock_guard<std::mutex> lock(kLogMutex);         \
-//       std::cout << formatstr() << level2str(kInfo) << " "; \
-//       print(__VA_ARGS__);                                  \
-//     }                                                      \
-//   } while (0)
-
-// #define LOG_ERROR(...)                                      \
-//   do {                                                      \
-//     if (kLogLevel <= kError) {                              \
-//       std::lock_guard<std::mutex> lock(kLogMutex);          \
-//       std::cout << formatstr() << level2str(kError) << " "; \
-//       print(__VA_ARGS__);                                   \
-//     }                                                       \
-//   } while (0)
-
-// #define LOG_WARN(...)                                      \
-//   do {                                                     \
-//     if (kLogLevel <= kWarn) {                              \
-//       std::lock_guard<std::mutex> lock(kLogMutex);         \
-//       std::cout << formatstr() << level2str(kWarn) << " "; \
-//       print(__VA_ARGS__);                                  \
-//     }                                                      \
-//   } while (0)
-
-// #define LOG_FATAL(...)                                      \
-//   do {                                                      \
-//     if (kLogLevel <= kError) {                              \
-//       std::lock_guard<std::mutex> lock(kLogMutex);          \
-//       std::cout << formatstr() << level2str(kFatal) << " "; \
-//       print(__VA_ARGS__);                                   \
-//       throw std::runtime_error("Logged a FATAL error");     \
-//     }                                                       \
-//   } while (0)

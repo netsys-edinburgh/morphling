@@ -72,15 +72,13 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
     FillPartition(partition);
 
     if (r_size == 0 && !r_cached) {
-      LOG_WARN("{} Row size is 0 and not cached, saving for next msg",
-               part_key);
+      LOG_WARN("{} Row not cached, saving for next msg", part_key);
       SavePartition(partition);
       return;
     }
 
     if (c_size == 0 && !c_cached) {
-      LOG_WARN("{} Col size is 0 and not cached, saving for next msg",
-               part_key);
+      LOG_WARN("{} Col not cached, saving for next msg", part_key);
       SavePartition(partition);
       return;
     }

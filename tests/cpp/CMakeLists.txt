@@ -34,7 +34,7 @@ file(GLOB TEST_SOURCES "test_*.cpp")
 # message(STATUS "Python version: ${Python_VERSION}")
 
 # cpp flag add -m option to enable avx2
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -march=znver3 -O3 -D__AVX256__=1 -std=c++17")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -march=znver3 -Ofast -D__AVX256__=1 -std=c++17")
 
 # -mavx2 -march=znver3
 
@@ -118,6 +118,30 @@ set_target_properties(test_matrix_partition PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
 )
 add_test(NAME test_matrix_partition COMMAND test_matrix_partition)
+
+
+add_executable(test_mqtt_sender test_mqtt_sender.cpp)
+# target_include_directories(test_mqtt_sender PRIVATE
+#     ${TORCH_INCLUDE_DIRS}
+# )
+target_link_libraries(test_mqtt_sender libmosquitto)
+set_target_properties(test_mqtt_sender PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+add_test(NAME test_mqtt_sender COMMAND test_mqtt_sender)
+
+
+add_executable(test_rc_copy test_rc_copy.cpp)
+target_include_directories(test_rc_copy PRIVATE
+    ${TORCH_INCLUDE_DIRS}
+)
+target_link_libraries(test_rc_copy ${TORCH_LIBRARIES} ${torch_python_LIBRARY})
+set_target_properties(test_rc_copy PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+add_test(NAME test_rc_copy COMMAND test_rc_copy)
+
+#/mnt/data/xly/.conda/envs/emulator/lib/python3.9/site-packages/torch/lib/
 
 # set(TEST_INCLUDE_DIRS
 #     ${TORCH_INCLUDE_DIRS}

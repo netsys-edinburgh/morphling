@@ -20,7 +20,10 @@ class ModelConfigArguments:
         metadata={"help": "The backend to use for the device"},
     )
     block_size: int = field(default=128, metadata={"help": "Block size"})
-
+    cfg: str = field(
+        default="",
+        metadata={"help": "Proxy config file path"},
+    )
     log_level: str = field(default="info", metadata={"help": "Log level"})
 
 

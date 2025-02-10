@@ -5,9 +5,20 @@
 #include <bitset>
 #include <chrono>
 #include <iomanip>
+#include <mutex>
 #include <random>
 #include <sstream>
 #include <string>
+
+class NumGenerator {
+ public:
+  static uint32_t ctx_id();
+  static uint32_t flowno();
+
+ private:
+  static std::mutex mutex_;
+  static uint32_t ctx_id_;
+};
 
 inline std::string GenUUID() {
   uuid_t uuid;
