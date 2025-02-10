@@ -1,6 +1,7 @@
 #include "client.h"
 
 #include "common/generator.h"
+#include "common/rttr_registration.h"
 #include "memory/shared_memory.h"
 
 std::unique_ptr<MemoryManagerClient> kMemoryManagerClient = nullptr;

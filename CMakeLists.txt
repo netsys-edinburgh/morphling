@@ -103,6 +103,10 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/eclipse-mosquitto/mosquitto.git
   GIT_TAG v2.0.20
 )
+FetchContent_Declare(
+  tcmalloc
+  GIT_REPOSITORY https://github.com/google/tcmalloc.git
+)
 # FetchContent_Declare(
 #   hiredis
 #   GIT_REPOSITORY https://github.com/redis/hiredis.git
@@ -113,7 +117,7 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
   GIT_TAG 1.3.13
 )
-FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags rabbitmq mosquitto redis)
+FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags rabbitmq mosquitto redis tcmalloc)
 
 # if(NOT rabbitmq_POPULATED)
 #     FetchContent_Populate(rabbitmq)
@@ -295,7 +299,10 @@ file(GLOB UTILS_SRC "csrc/utils/*.cpp")
 file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
 file(GLOB SCHEDULER_SRC "csrc/scheduler/*.cpp")
 file(GLOB PYTHON_SRC "csrc/python/*.cpp")
-file(GLOB BACKEND_SRC "csrc/backend/*.cpp")
+file(GLOB BACKEND_SRC "csrc/backend/*.cpp" "csrc/backend/*.cc")
+file(GLOB COMMON_SRC "csrc/common/*.cpp" "csrc/common/*.cc")
+file(GLOB NETWORK_SRC "csrc/network/*.cc")
+file(GLOB BASE_SRC "csrc/base/*.cc")
 
 # add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
 # target_link_libraries(morphling_interceptor PUBLIC
@@ -406,6 +413,9 @@ define_gpu_extension_target(
 
 set(MORPHLING_MSG_SRC
   ${BACKEND_SRC}
+  ${NETWORK_SRC}
+  ${BASE_SRC}
+  ${COMMON_SRC}
   "csrc/scheduler/amqp_dispatcher.cpp"
   "csrc/scheduler/amqp_worker.cpp"
   "csrc/python/client_py.cpp"
@@ -420,6 +430,7 @@ set(MORPHLING_EXT_LIB
   libspdlog.so
   redis++
   hiredis
+  event
 )
 
 define_gpu_extension_target(
