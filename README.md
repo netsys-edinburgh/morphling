@@ -27,12 +27,7 @@ docker run -dit --rm --name redis -p 6379:6379 redis
 sleep 5
 
 cd /scripts
-python run_devices.py \
-    --num_devices 4 \
-    --model_name facebook/opt-125m \
-    --backend proxy \
-    --seq_length 128 \
-    --batch_size 1
+SPDLOG_LEVEL=debug python run_devices.py     --num_devices 4     --model_name facebook/opt-125m     --backend proxy     --seq_length 128     --batch_size 1 --cfg ../config/proxy/svr.ini 
 ```
 ## Trouble Shooting
 
