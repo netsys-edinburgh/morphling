@@ -19,9 +19,20 @@ pip install --no-build-isolation .
 ## Usage
 
 ```bash
-morphling_cmd save --model "facebook/opt-125m" --output <path to model checkpoint>
-morphling_emulator --ckpt_path <path to model checkpoint>
-SPDLOG_LEVEL=<level> MORPHLING_SERVER_ADDRESS=localhost:50051 MORPHLING_PIN_SIZE=10000000000  python tests/python/test_loaded_lib.py
+if [ "$(docker ps -q -f name=redis)" ]; then
+    docker stop redis
+fi
+
+docker run -dit --rm --name redis -p 6379:6379 redis
+sleep 5
+
+cd /scripts
+python run_devices.py \
+    --num_devices 4 \
+    --model_name facebook/opt-125m \
+    --backend proxy \
+    --seq_length 128 \
+    --batch_size 1
 ```
 ## Trouble Shooting
 
