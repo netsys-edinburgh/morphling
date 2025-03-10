@@ -23,3 +23,32 @@ morphling_cmd save --model "facebook/opt-125m" --output <path to model checkpoin
 morphling_emulator --ckpt_path <path to model checkpoint>
 SPDLOG_LEVEL=<level> MORPHLING_SERVER_ADDRESS=localhost:50051 MORPHLING_PIN_SIZE=10000000000  python tests/python/test_loaded_lib.py
 ```
+## Trouble Shooting
+
+Version Mismatch or Missing Libraries
+If you encounter errors like:
+
+```bash
+undefined symbol: sk_pop_free_ex (e.g., OpenSSL/gRPC mismatch)
+ImportError: librttr_core.so.*: cannot open shared object file (missing RTTR)
+ImportError: libmosquitto.so.*: cannot open shared object file (missing Mosquitto)
+```
+these typically mean libraries were built in a different environment than the one used at runtime, or the dynamic linker can’t find them.
+
+Steps to Fix:
+
+Reinstall / Rebuild Without Isolation
+Rebuild within the current environment to match installed libraries:
+
+```bash
+pip install --no-build-isolation --force-reinstall -e .
+```
+Set LD_LIBRARY_PATH if certain libraries (e.g., RTTR, Mosquitto) are in a non-standard location:
+```bash
+# Example for RTTR
+export LD_LIBRARY_PATH="/path/to/rttr/install/lib:$LD_LIBRARY_PATH"
+
+# Example for local build artifacts (e.g., C++ .so files)
+export LD_LIBRARY_PATH="/path/to/emulator/build/lib.linux-x86_64-cpython-310/morphling:$LD_LIBRARY_PATH"
+```
+
