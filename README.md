@@ -3,8 +3,17 @@
 ## Installation
 
 ```bash
-# use conda env or virtualenv
+# Use conda env or virtualenv
 pip install -e .
+
+# If using conda, install libxslt (required by some torch dependencies on certain systems)
+conda install -c conda-forge libxslt
+
+# If you have CUDA available and want to ensure Torch can detect it:
+export CUDA_HOME=/usr/local/cuda
+
+# If you run into Torch import errors or build issues, try building without isolation:
+pip install --no-build-isolation .
 ```
 
 ## Usage
