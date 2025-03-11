@@ -274,14 +274,30 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
   DecRspCbCount(mm_count_, partitions.size());
   for (auto& partition : shared_partitions) {
     partition->oid = mm_count_;
-    auto it = conn_map_.begin();
-    std::advance(it, partition->dev_id);
+    
+  
+    if (conn_map_.empty()) {
+      return;
+    }
+    
+  
+    size_t dev_index = partition->dev_id;
+    if (dev_index >= conn_map_.size()) {
 
+      dev_index = dev_index % conn_map_.size();
+    }
+    
+  
+    auto it = conn_map_.begin();
+    std::advance(it, dev_index);
+  
     auto* loop = it->second->GetLoop();
     auto* handle = reinterpret_cast<ProxySvrHandle*>(loop->GetLoopHandle());
-    loop->RunInLoop(
-        bind(&ProxySvrHandle::SendInLoop, handle, it->second, partition));
+  
+    loop->RunInLoop(bind(&ProxySvrHandle::SendInLoop, handle, it->second, partition));
+    LOG_INFO << "Scheduled SendInLoop for partition with oid: " << partition->oid;
   }
+  
   auto end = std::chrono::high_resolution_clock::now();
   LOG_INFO << "Publish time: "
            << std::chrono::duration_cast<std::chrono::microseconds>(end - start)
