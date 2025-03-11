@@ -264,7 +264,6 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
 
   std::random_shuffle(partitions.begin(), partitions.end());
   RephrasePartitions(partitions);
-  // make shared partitions
   std::vector<MatrixPartitionPtr> shared_partitions;
   for (auto& partition : partitions) {
     shared_partitions.push_back(std::make_shared<MatrixPartition>(partition));
@@ -286,7 +285,7 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
 
       dev_index = dev_index % conn_map_.size();
     }
-    
+
   
     auto it = conn_map_.begin();
     std::advance(it, dev_index);
@@ -295,7 +294,6 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
     auto* handle = reinterpret_cast<ProxySvrHandle*>(loop->GetLoopHandle());
   
     loop->RunInLoop(bind(&ProxySvrHandle::SendInLoop, handle, it->second, partition));
-    LOG_INFO << "Scheduled SendInLoop for partition with oid: " << partition->oid;
   }
   
   auto end = std::chrono::high_resolution_clock::now();
@@ -323,23 +321,31 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
   return outputs_[oid];
 }
 
-void ProxySvrImpl::RephrasePartitions(
-    std::vector<MatrixPartition>& partitions) {
-  std::vector<float> device_time(ctx_.num_device, 0);
-  std::vector<std::unordered_set<TensorKey>> device_tensors(ctx_.num_device);
+void ProxySvrImpl::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
+  // Use the lesser of the configured device count and the number of connected devices.
+  size_t num_devices = ctx_.num_device;
+  if (!conn_map_.empty()) {
+    num_devices = std::min((size_t)ctx_.num_device, conn_map_.size());
+  }
+  std::vector<float> device_time(num_devices, 0);
+  std::vector<std::unordered_set<TensorKey>> device_tensors(num_devices);
 
-  // greedy algorithm to select the minimal time
+  // For each partition, choose a device based on cost.
   for (auto& partition : partitions) {
     float min_time = std::numeric_limits<float>::max();
-    int min_device = 0;
-    auto version = partition.version;
+    int min_device = -1;
     auto tensor_key_row = partition.GetRowKey();
     auto tensor_key_col = partition.GetColKey();
     bool min_r_cached = false;
     bool min_c_cached = false;
-    for (int i = 0; i < ctx_.num_device; i++) {
-      auto& tensors = device_tensors[i];
 
+    // Create and shuffle device indices to randomize tie-breaking.
+    std::vector<size_t> device_indices(num_devices);
+    std::iota(device_indices.begin(), device_indices.end(), 0);
+    std::random_shuffle(device_indices.begin(), device_indices.end());
+
+    for (size_t idx : device_indices) {
+      auto& tensors = device_tensors[idx];
       bool r_cached = tensors.find(tensor_key_row) != tensors.end();
       bool c_cached = tensors.find(tensor_key_col) != tensors.end();
 
@@ -351,23 +357,21 @@ void ProxySvrImpl::RephrasePartitions(
       int64_t num_rows = r_size / partition.h_dim / sizeof(float);
       int64_t num_cols = c_size / partition.h_dim / sizeof(float);
 
-      float ul_time = (float)(num_rows * num_cols) * sizeof(float) / MB;
-      float dl_time = (float)(cached_r_size + cached_c_size) / MB;
-      float flops = (float)2.0 * num_rows * num_cols * partition.h_dim / TB;
+      float ul_time = (num_rows * num_cols * sizeof(float)) / MB;
+      float dl_time = (cached_r_size + cached_c_size) / MB;
+      float flops = (2.0f * num_rows * num_cols * partition.h_dim) / TB;
 
-      float time = std::max(std::max(ul_time, dl_time), flops) + device_time[i];
-      // ul_time + dl_time + flops + device_time[i];
-      if (time < min_time) {
-        min_time = time;
-        min_device = i;
+      float cost = std::max({ul_time, dl_time, flops}) + device_time[idx];
+      if (cost < min_time) {
+        min_time = cost;
+        min_device = idx;
         min_r_cached = r_cached;
         min_c_cached = c_cached;
-        // fprintf(stderr, "Device: %d, UL time: %f, DL time: %f, FLOPS: %f,
-        // Time: %f\n", i, ul_time, dl_time, flops, time);
       }
     }
-    assert(min_time != std::numeric_limits<float>::max());
-    // update the time for the device
+    if (min_device < 0) {
+      min_device = 0;  // Fallback (should not happen)
+    }
     device_time[min_device] = min_time;
     partition.dev_id = min_device;
     device_tensors[min_device].insert(tensor_key_row);
@@ -382,6 +386,8 @@ void ProxySvrImpl::RephrasePartitions(
   }
   LOG_INFO << "Device time: " << device_time;
 }
+
+
 
 /*********************************ProxySvr***************************************/
 typedef ProxySvr::Status ProxyStatus;
