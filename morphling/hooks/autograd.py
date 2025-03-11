@@ -73,7 +73,8 @@ class LinearFunction(torch.autograd.Function):
         # assert torch.allclose(output, ref), f"Output is not close! input shape: {input.shape}, weight shape: {weight.shape}, max diff: {torch.max(torch.abs(output - ref))}"
 
         if bias is not None:
-            output += bias.unsqueeze(0).expand_as(output)
+            output = output + bias.unsqueeze(0).expand_as(output)
+
         return output
 
     @staticmethod
