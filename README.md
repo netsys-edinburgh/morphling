@@ -32,7 +32,40 @@ SPDLOG_LEVEL=debug python run_devices.py     --num_devices 4     --model_name fa
 ## Physical Device Usage
 
 ```bash
-if [ "$(docker ps -q -f name=redis)" ]; then     docker stop redis; fi; docker run -dit --rm --name redis -p 6379:6379 redis; sleep 5; cd /home/eren/Emulator/DeviceEmulator/morphling/entrypoint; SPDLOG_LEVEL=debug python generate_device_config.py --num_devices 1 --device_type physical; cp device_config.json /home/eren/Emulator/DeviceEmulator/scripts/; cd /home/eren/Emulator/DeviceEmulator/scripts; SPDLOG_LEVEL=debug python run_devices.py     --num_devices 1     --model_name facebook/opt-125m     --backend proxy     --seq_length 128     --batch_size 1     --cfg /home/eren/Emulator/DeviceEmulator/config/proxy/svr.ini
+#!/bin/bash
+
+# 1) Stop any existing redis container
+if [ "$(docker ps -q -f name=redis)" ]; then
+    docker stop redis
+fi
+
+# 2) Start a new Redis container
+docker run -dit --rm --name redis -p 6379:6379 redis
+sleep 5
+
+# 3) Generate device config, run Morphling
+cd /home/eren/Emulator/DeviceEmulator/morphling/entrypoint
+SPDLOG_LEVEL=debug python generate_device_config.py --num_devices 1 --device_type physical
+cp device_config.json /home/eren/Emulator/DeviceEmulator/scripts/
+
+cd /home/eren/Emulator/DeviceEmulator/scripts
+SPDLOG_LEVEL=debug python run_devices.py \
+    --num_devices 1 \
+    --model_name facebook/opt-125m \
+    --backend proxy \
+    --seq_length 128 \
+    --batch_size 1 \
+    --cfg /home/eren/Emulator/DeviceEmulator/config/proxy/svr.ini &
+
+# 4) Start Nginx container
+cd /home/eren/Emulator/DeviceEmulator
+docker run -d --name morphling-proxy \
+    -p 443:443 \
+    -v $(pwd)/docker-nginx/morphling_stream.conf:/etc/nginx/conf.d/morphling_stream.conf:ro \
+    nginx:latest
+
+echo "All done. Now test from local with: nc -vz <server_ip> 443"
+
 ```
 ## Trouble Shooting
 
