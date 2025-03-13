@@ -32,22 +32,41 @@ SPDLOG_LEVEL=debug python run_devices.py     --num_devices 4     --model_name fa
 ## Physical Device Usage
 
 ```bash
-#!/bin/bash
+#!/usr/bin/env bash
+set -e
 
-# 1) Stop any existing redis container
-if [ "$(docker ps -q -f name=redis)" ]; then
-    docker stop redis
+# 1) Remove any existing redis or morphling containers
+REDIS_CONTAINERS=$(docker ps -aq -f name=redis)
+MORPHLING_CONTAINERS=$(docker ps -aq -f name=morphling)
+
+if [ -n "$REDIS_CONTAINERS" ]; then
+    echo "Stopping and removing existing redis containers..."
+    docker rm -f $REDIS_CONTAINERS
 fi
 
-# 2) Start a new Redis container
+if [ -n "$MORPHLING_CONTAINERS" ]; then
+    echo "Stopping and removing existing morphling containers..."
+    docker rm -f $MORPHLING_CONTAINERS
+fi
+
+# 2) (Optional) Kill any leftover run_devices.py processes
+if pgrep -f "run_devices.py" >/dev/null; then
+    echo "Killing leftover run_devices.py processes..."
+    pkill -f "run_devices.py"
+fi
+
+# 3) Start a new Redis container
+echo "Starting a new Redis container..."
 docker run -dit --rm --name redis -p 6379:6379 redis
 sleep 5
 
-# 3) Generate device config, run Morphling
+# 4) Generate device config
 cd /home/eren/Emulator/DeviceEmulator/morphling/entrypoint
 SPDLOG_LEVEL=debug python generate_device_config.py --num_devices 1 --device_type physical
 cp device_config.json /home/eren/Emulator/DeviceEmulator/scripts/
 
+# 5) Run Morphling devices in the background
+echo "Starting devices..."
 cd /home/eren/Emulator/DeviceEmulator/scripts
 SPDLOG_LEVEL=debug python run_devices.py \
     --num_devices 1 \
@@ -55,16 +74,24 @@ SPDLOG_LEVEL=debug python run_devices.py \
     --backend proxy \
     --seq_length 128 \
     --batch_size 1 \
-    --cfg /home/eren/Emulator/DeviceEmulator/config/proxy/svr.ini &
+    --cfg /home/eren/Emulator/DeviceEmulator/config/proxy/svr.ini \
+    &  # <-- run in background
 
-# 4) Start Nginx container
+# 6) Start Nginx container (morphling-proxy) with the correct mounts for stream
+echo "Starting Nginx container (morphling-proxy)..."
 cd /home/eren/Emulator/DeviceEmulator
-docker run -d --name morphling-proxy \
+docker run -d \
+    --name morphling-proxy \
     -p 443:443 \
-    -v $(pwd)/docker-nginx/morphling_stream.conf:/etc/nginx/conf.d/morphling_stream.conf:ro \
+    -v "$(pwd)/docker-nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+    -v "$(pwd)/docker-nginx/morphling_stream.conf:/etc/nginx/stream_conf.d/morphling_stream.conf:ro" \
     nginx:latest
 
 echo "All done. Now test from local with: nc -vz <server_ip> 443"
+
+# Keep script alive so the background job isn't killed
+wait
+
 
 ```
 ## Trouble Shooting
