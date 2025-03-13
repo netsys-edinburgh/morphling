@@ -16,7 +16,7 @@ export CUDA_HOME=/usr/local/cuda
 pip install --no-build-isolation .
 ```
 
-## Usage
+## Virtual Device Usage
 
 ```bash
 if [ "$(docker ps -q -f name=redis)" ]; then
@@ -28,6 +28,11 @@ sleep 5
 
 cd /scripts
 SPDLOG_LEVEL=debug python run_devices.py     --num_devices 4     --model_name facebook/opt-125m     --backend proxy     --seq_length 128     --batch_size 1 --cfg ../config/proxy/svr.ini 
+```
+## Physical Device Usage
+
+```bash
+if [ "$(docker ps -q -f name=redis)" ]; then     docker stop redis; fi; docker run -dit --rm --name redis -p 6379:6379 redis; sleep 5; cd /home/eren/Emulator/DeviceEmulator/morphling/entrypoint; SPDLOG_LEVEL=debug python generate_device_config.py --num_devices 1 --device_type physical; cp device_config.json /home/eren/Emulator/DeviceEmulator/scripts/; cd /home/eren/Emulator/DeviceEmulator/scripts; SPDLOG_LEVEL=debug python run_devices.py     --num_devices 1     --model_name facebook/opt-125m     --backend proxy     --seq_length 128     --batch_size 1     --cfg /home/eren/Emulator/DeviceEmulator/config/proxy/svr.ini
 ```
 ## Trouble Shooting
 
