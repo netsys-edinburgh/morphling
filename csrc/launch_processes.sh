@@ -148,4 +148,3 @@ g++ -g -fPIC -shared -o -std=c++17 "csrc/intercept/interceptor.so" \
     -L"build/temp.linux-x86_64-cpython-39/_deps/grpc-build/build/temp.linux-x86_64-cpython-39" \
     -L"build/temp.linux-x86_64-cpython-39/_deps/grpc-build/third_party/protobuf/build/temp.linux-x86_64-cpython-39" \
     -lmkl_rt -lgrpc++ -lgrpc++_reflection -lcublas -lcudart -lspdlog
-

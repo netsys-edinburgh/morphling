@@ -108,21 +108,21 @@ class DeviceConfigArguments:
         self.mem_ub = human2bytes(self.mem_ub)
 
         # all upper bounds must be greater than lower bounds
-        assert (
-            self.flops_ub > self.flops_lb
-        ), "Upper bound of device FLOPS must be greater than lower bound"
-        assert (
-            self.ul_bw_ub > self.ul_bw_lb
-        ), "Upper bound of device uplink bandwidth must be greater than lower bound"
-        assert (
-            self.dl_bw_ub > self.dl_bw_lb
-        ), "Upper bound of device downlink bandwidth must be greater than lower bound"
-        assert (
-            self.ul_latency_ub > self.ul_latency_lb
-        ), "Upper bound of device uplink latency must be greater than lower bound"
-        assert (
-            self.dl_latency_ub > self.dl_latency_lb
-        ), "Upper bound of device downlink latency must be greater than lower bound"
+        assert self.flops_ub > self.flops_lb, (
+            "Upper bound of device FLOPS must be greater than lower bound"
+        )
+        assert self.ul_bw_ub > self.ul_bw_lb, (
+            "Upper bound of device uplink bandwidth must be greater than lower bound"
+        )
+        assert self.dl_bw_ub > self.dl_bw_lb, (
+            "Upper bound of device downlink bandwidth must be greater than lower bound"
+        )
+        assert self.ul_latency_ub > self.ul_latency_lb, (
+            "Upper bound of device uplink latency must be greater than lower bound"
+        )
+        assert self.dl_latency_ub > self.dl_latency_lb, (
+            "Upper bound of device downlink latency must be greater than lower bound"
+        )
 
         set_seed(42)
         self.device_flops = np.random.randint(
