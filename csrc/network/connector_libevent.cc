@@ -30,7 +30,7 @@ int ConnectorLibevent::Connect() {
     return -1;
   }
   int64_t conn_id = 0;
-  //对于connect产生的连接使用 Ip << 16 | port 作为id
+  // 对于connect产生的连接使用 Ip << 16 | port 作为id
   if (peer_addr_.family() == AF_INET) {
     conn_id = (static_cast<int64_t>(peer_addr_.IpNetEndian()) << 16) |
               peer_addr_.PortNetEndian();

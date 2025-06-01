@@ -1,3 +1,8 @@
+*.pdf
+*.csv
+*.txt
+*.png
+
 # CMake-generated files
 .ninja_deps
 .ninja_logs

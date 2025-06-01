@@ -60,7 +60,7 @@ ConnectionLibevent::~ConnectionLibevent() {
     LOG_FATAL << "connection not closed when deconstruct";
   }
 }
-//由于不能在构造函数中使用shared_from_this,需要调用Init
+// 由于不能在构造函数中使用shared_from_this,需要调用Init
 int ConnectionLibevent::Init() {
   struct event_base* base =
       static_cast<EventLoopLibevent*>(loop_)->GetInnerBase();

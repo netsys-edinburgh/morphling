@@ -14,7 +14,7 @@ enum MessageType {
 };
 
 //======================================================================================================================
-extend ucloud.Body {
+extend morphling.Body {
     // ----- MatrixPartition 接口 -----------------------------------------------------------------------------------------------
     optional ComputeGemmRequest compute_gemm_request = 101; // 计算矩阵乘法
     optional ComputeGemmResponse compute_gemm_response = 102;

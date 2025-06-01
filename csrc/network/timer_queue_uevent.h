@@ -62,8 +62,8 @@ class TimerQueueUevent : base::noncopyable {
   // Timer list sorted by expiration
   TimerList timers_;
 
-  //为了删除的时候能通过TimerId 快速找到对应的定时器
-  // TODO(henry) 这个可以使用unordermap 提到效率
+  // 为了删除的时候能通过TimerId 快速找到对应的定时器
+  //  TODO(henry) 这个可以使用unordermap 提到效率
   ActiveTimerSet active_timers_;
 
   bool calling_expired_timers_;

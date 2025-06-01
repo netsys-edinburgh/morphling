@@ -87,7 +87,7 @@ TimerQueueUevent::~TimerQueueUevent() {
   }
 }
 
-//这里传入的时间是绝对时间
+// 这里传入的时间是绝对时间
 TimerId TimerQueueUevent::AddTimer(TimerCb cb, Timestamp when,
                                    double interval) {
   Timer* timer = new Timer(std::move(cb), when, interval);
@@ -154,7 +154,7 @@ std::vector<TimerQueueUevent::Entry> TimerQueueUevent::GetExpired(
   std::vector<Entry> expired;
   Entry sentry(now, reinterpret_cast<Timer*>(UINTPTR_MAX));
   TimerList::iterator end = timers_.lower_bound(sentry);
-  //全部超时，或者部分超时
+  // 全部超时，或者部分超时
   assert(end == timers_.end() || now < end->first);
   std::copy(timers_.begin(), end, back_inserter(expired));
   timers_.erase(timers_.begin(), end);
@@ -178,7 +178,7 @@ void TimerQueueUevent::Reset(const std::vector<Entry>& expired, Timestamp now) {
     if (it->second->repeat() &&
         canceling_timers_.find(it->second->sequence()) ==
             canceling_timers_.end()) {
-      it->second->Restart(now);  //重新设置定时
+      it->second->Restart(now);  // 重新设置定时
       Insert(it->second);
     } else {
       delete it->second;
