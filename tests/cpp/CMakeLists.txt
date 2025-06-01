@@ -34,8 +34,8 @@ file(GLOB TEST_SOURCES "test_*.cpp")
 # message(STATUS "Python version: ${Python_VERSION}")
 
 # cpp flag add -m option to enable avx2
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -march=znver3 -Ofast -D__AVX256__=1 -std=c++17")
-
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 -std=c++17 -ggdb3 -fno-omit-frame-pointer")
+message(STATUS "CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
 # -mavx2 -march=znver3
 
 # message(STATUS "UMPAIRE_INCLUDE_DIRS: ${UMPAIRE_INCLUDE_DIRS}")
@@ -87,6 +87,34 @@ link_directories(
 # endforeach(TEST_SOURCE)
 
 message(STATUS "torch_python_LIBRARY: ${torch_python_LIBRARY}")
+
+add_executable(echo_server_test echo_server_test.cc ${NETWORK_SRC} ${BASE_SRC})
+target_link_libraries(echo_server_test event uuid)
+set_target_properties(echo_server_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+add_test(NAME echo_server_test COMMAND echo_server_test)
+
+add_executable(echo_client_test echo_client_test.cc ${NETWORK_SRC} ${BASE_SRC})
+target_link_libraries(echo_client_test event uuid)
+set_target_properties(echo_client_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+add_test(NAME echo_client_test COMMAND echo_client_test)
+
+add_executable(test_kern_copy test_kern_copy.cpp)
+# target_link_libraries(test_kern_copy uuid)
+set_target_properties(test_kern_copy PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+add_test(NAME test_kern_copy COMMAND test_kern_copy)
+
+add_executable(test_splice_copy test_splice_copy.cpp)
+# target_link_libraries(test_splice_copy uuid)
+set_target_properties(test_splice_copy PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+add_test(NAME test_splice_copy COMMAND test_splice_copy)
 
 
 add_executable(test_uuid test_uuid.cpp)
@@ -178,3 +206,17 @@ add_test(NAME test_rc_copy COMMAND test_rc_copy)
 # set_target_properties(test_memcpy_bw PROPERTIES
 #     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
 # )
+
+add_executable(echo_server_libuv echo_server_libuv.cc)
+target_link_libraries(echo_server_libuv uv)
+set_target_properties(echo_server_libuv PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+add_test(NAME echo_server_libuv COMMAND echo_server_libuv)
+
+add_executable(echo_client_libuv echo_client_libuv.cc)
+target_link_libraries(echo_client_libuv uv)
+set_target_properties(echo_client_libuv PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+add_test(NAME echo_client_libuv COMMAND echo_client_libuv)

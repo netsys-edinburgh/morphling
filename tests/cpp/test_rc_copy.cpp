@@ -3,10 +3,19 @@
 #include <chrono>
 #include <iostream>
 
-int main() {
+int main(int argc, char* argv[]) {
   // Parameters
   const int64_t rows = 8192;
   const int64_t cols = 8192;
+
+  // // read a number of arguments
+  // if (argc > 1) {
+  //   rows = std::stoi(argv[1]);
+  //   cols = std::stoi(argv[1]);
+  // }
+  // if (argc > 2) {
+  //   cols = std::stoi(argv[2]);
+  // }
 
   {
     // Create a large tensor

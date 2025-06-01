@@ -170,9 +170,9 @@ class RabbitMQBackend(BaseBackend):
             lda_shape = a_shape[:-2]
             ldb_shape = b_shape[:-2]
             # ldx dim must be the same
-            assert (
-                lda_shape == ldb_shape
-            ), f"Input dimensions {lda_shape} and {ldb_shape} must be the same"
+            assert lda_shape == ldb_shape, (
+                f"Input dimensions {lda_shape} and {ldb_shape} must be the same"
+            )
             c_shape = a_shape[:-2] + (in_dim, out_dim)
 
         self.c = torch.empty(c_shape, device="cpu")
@@ -282,9 +282,9 @@ class RabbitMQBackend(BaseBackend):
 
         # if padded:
         #     return self.c[:, :a_shape[-2], :b_shape[-1]]
-        assert not torch.allclose(
-            self.c, torch.zeros_like(self.c)
-        ), f"Result is zero"
+        assert not torch.allclose(self.c, torch.zeros_like(self.c)), (
+            f"Result is zero"
+        )
         return self.c
 
     @timeit_decorator
@@ -454,9 +454,9 @@ class RabbitMQWorker:
             )
             self.last_dev_event = dev_event_id
 
-            assert not torch.allclose(
-                result, torch.zeros_like(result)
-            ), f"Computed block row={request.row} col={request.col} is zero"
+            assert not torch.allclose(result, torch.zeros_like(result)), (
+                f"Computed block row={request.row} col={request.col} is zero"
+            )
 
             print(
                 f"[x] {self.cid}: Computed block row={request.row} col={request.col} ld={request.ld}",
