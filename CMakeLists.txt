@@ -10,6 +10,7 @@ add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0) # needed for torch backward co
 
 # Set c++ 17
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CUDA_ARCHITECTURES native)
 
 option(BUILD_TESTS "Build tests" OFF)
 

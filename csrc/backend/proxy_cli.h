@@ -2,6 +2,7 @@
 
 #include "common/env_cfg.h"
 #include "common/lru.h"
+#include "common/pytorch_defs.h"
 #include "morphling.pb.h"
 #include "network/connector_libevent.h"
 #include "network/uevent.h"
@@ -46,6 +47,10 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
   MatrixPartition DecodeRequest(const void* payload, size_t size);
   void HandleMatMul(const uevent::ConnectionUeventPtr& conn,
                     MatrixPartition& partition);
+
+  void SendPbRequest(const std::string& topic, const std::string& payload);
+  void ReceivePbRequest(const std::string& topic,
+                        const google::protobuf::Message& pb);
 
  private:
   void FillPartition(MatrixPartition& partition);
@@ -101,6 +106,14 @@ class ProxyCli {
   ProxyCli();
   void Initialize(const std::string& cfg_file);
   void Start();
+  void Send(const torch::Tensor& tensor,
+            std::optional<int64_t> rank = std::nullopt);
+  void Receive(torch::Tensor& tensor,
+               std::optional<int64_t> rank = std::nullopt);
+  void AsyncSend(const torch::Tensor& tensor,
+                 std::optional<int64_t> rank = std::nullopt);
+  void AsyncReceive(torch::Tensor& tensor,
+                    std::optional<int64_t> rank = std::nullopt);
 
  private:
   ProxyCliImplPtr svr_;
