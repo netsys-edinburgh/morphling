@@ -1,0 +1,10 @@
+version: '3.8'
+
+# Docker Compose override for CPU-only deployment
+services:
+  device-emulator:
+    environment:
+      - SPDLOG_LEVEL=debug
+      # 移除CUDA相关环境变量
+    deploy:
+      resources: {}  # 移除GPU资源要求

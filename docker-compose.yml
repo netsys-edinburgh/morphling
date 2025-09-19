@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: morphling-redis
+    ports:
+      - "6380:6380"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  device-emulator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: morphling-emulator
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+      - "443:443"
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./config:/app/config
+    environment:
+      - SPDLOG_LEVEL=debug
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # 使用入口点脚本
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    # 默认启动bash，可以通过command覆盖
+    command: ["bash"]
+    
+    # 可选：直接启动设备模拟器
+    # command: ["morphling_emulator", "--num_devices", "4", "--model_name", "facebook/opt-125m"]
+
+  # 可选：Nginx代理服务
+  nginx-proxy:
+    image: nginx:alpine
+    container_name: morphling-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker-nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker-nginx/morphling_stream.conf:/etc/nginx/stream_conf.d/morphling_stream.conf:ro
+    depends_on:
+      - device-emulator
+    profiles:
+      - proxy  # 使用profiles来可选启动
+
+volumes:
+  redis_data:
+
+networks:
+  default:
+    name: morphling-network
