@@ -101,7 +101,7 @@ RUN if [ -f /usr/lib/x86_64-linux-gnu/libpython3.10.so.1.0 ]; then \
     echo "创建了libpython3.10.12.so软链接"; \
 fi && \
 ls -la /usr/lib/x86_64-linux-gnu/libpython3.10* || echo "Warning: No libpython3.10 found"
-
+RUN git clone --branch v0.9.6 --depth=1 https://github.com/rttrorg/rttr.git /tmp/rttr && \
 # 临时修复CMakeLists.txt以启用Python Development包查找
 RUN sed -i 's/# find_package(Python COMPONENTS Development REQUIRED)/find_package(Python COMPONENTS Development REQUIRED)/' /app/CMakeLists.txt
 
