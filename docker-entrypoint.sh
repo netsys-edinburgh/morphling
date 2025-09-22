@@ -16,20 +16,13 @@ else
     echo "No NVIDIA GPU detected"
 fi
 
-# 验证morphling安装
-echo "Verifying morphling installation..."
-python -c "import morphling; print('Morphling imported successfully')" || {
-    echo "ERROR: Failed to import morphling"
-    exit 1
-}
-
 # 如果传入了参数，执行参数
 if [ $# -gt 0 ]; then
     echo "Executing command: $@"
     exec "$@"
 else
     echo "No command provided. Starting interactive bash shell."
-    echo "Available commands:"
+    echo "Available commands1:"
     echo "  morphling_emulator - Start device emulator"
     echo "  morphling_device_config - Generate device config"
     echo "  morphling_device - Run device"
