@@ -14,6 +14,7 @@ import morphling
 from morphling.backend import AutoBackend
 from morphling.entrypoint import DeviceConfigArguments, ModelConfigArguments
 from morphling.hooks import apply_hooks
+torch.autograd.set_detect_anomaly(True)
 
 # # if SIGINT is received, kill all the devices
 # def signal_handler(sig, frame):
