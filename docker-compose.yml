@@ -4,8 +4,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: morphling-redis
-    ports:
-      - "6380:6380"
+    # 不暴露6379端口，避免与本地redis冲突
+    # ports:
+    #   - "6379:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -26,13 +27,30 @@ services:
     ports:
       - "8080:8080"
       - "443:443"
+      - "39000:39000"
+      - "28516:28516"
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
       - ./config:/app/config
+      # 挂载源码目录用于开发
+      - ./csrc:/app/csrc
+      - ./morphling:/app/morphling
+      - ./scripts:/app/scripts
+      - ./proto:/app/proto
+      - ./op_builder:/app/op_builder
+      - ./examples:/app/examples
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./setup.py:/app/setup.py
+      - ./CMakeLists.txt:/app/CMakeLists.txt
+      - ./requirements.txt:/app/requirements.txt
+      # 挂载构建目录，避免重复构建
+      - morphling_build:/app/build
     environment:
       - SPDLOG_LEVEL=debug
       - CUDA_VISIBLE_DEVICES=0
+      - MORPHLING_DEV_MODE=1  # 开发模式标志
+    shm_size: 8g
     deploy:
       resources:
         reservations:
@@ -42,8 +60,8 @@ services:
               capabilities: [gpu]
     # 使用入口点脚本
     entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
-    # 默认启动bash，可以通过command覆盖
-    command: ["bash"]
+    # 保持容器运行
+    command: ["tail", "-f", "/dev/null"]
     
     # 可选：直接启动设备模拟器
     # command: ["morphling_emulator", "--num_devices", "4", "--model_name", "facebook/opt-125m"]
@@ -65,6 +83,7 @@ services:
 
 volumes:
   redis_data:
+  morphling_build:  # 用于缓存构建结果
 
 networks:
   default:
