@@ -56,9 +56,10 @@ def main():
     parser.add_argument(
         "--redis_host",
         type=str,
-        default="localhost:6379",
+        default="morphling-redis:6379",
         help="The host and port of the redis server",
     )
+
     parser.add_argument(
         "--backend",
         type=str,

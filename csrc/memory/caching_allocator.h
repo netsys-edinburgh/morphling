@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "common/types_and_defs.h"
+#include "common/rttr_registration.h"  // For full ShmMeta definition
 #include "memory/shared_memory.h"
 #include "utils/logger.h"
 #include "utils/noncopyable.h"
