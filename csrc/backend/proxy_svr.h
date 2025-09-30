@@ -72,6 +72,8 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
 
   void IncRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] -= count; }
   void DecRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] += count; }
+  
+  size_t GetConnectionCount() const { return conn_map_.size(); }
 
  private:
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
@@ -129,6 +131,7 @@ class ProxySvr {
     svr_->DispatchMatMulAsync(mat_a, mat_b);
   }
   torch::Tensor WaitMatMul(int oid) { return svr_->WaitMatMul(oid); }
+  size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }
 
  private:
   ProxySvrImplPtr svr_;
