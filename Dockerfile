@@ -50,8 +50,26 @@ RUN apt-get update && apt-get install -y \
     libtool \
     autoconf \
     automake \
+    # 调试和编辑工具
+    gdb \
+    vim \
+    iputils-ping \
+    lsof \
+    net-tools \
+    librabbitmq-dev \
+    libmosquitto-dev \
+    libhiredis-dev \
     # 清理缓存
     && rm -rf /var/lib/apt/lists/*
+
+# 编译安装 redis-plus-plus
+RUN git clone --depth=1 https://github.com/sewenew/redis-plus-plus.git /tmp/redis-plus-plus && \
+    cd /tmp/redis-plus-plus && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release .. && \
+    make -j && make install && \
+    ldconfig && \
+    rm -rf /tmp/redis-plus-plus
 
 # 安装 libxslt（系统包）
 RUN apt-get update && apt-get install -y libxslt1-dev && rm -rf /var/lib/apt/lists/*
@@ -101,7 +119,13 @@ RUN if [ -f /usr/lib/x86_64-linux-gnu/libpython3.10.so.1.0 ]; then \
     echo "创建了libpython3.10.12.so软链接"; \
 fi && \
 ls -la /usr/lib/x86_64-linux-gnu/libpython3.10* || echo "Warning: No libpython3.10 found"
+
+# 安装 RTTR (librttr) v0.9.6 from GitHub
 RUN git clone --branch v0.9.6 --depth=1 https://github.com/rttrorg/rttr.git /tmp/rttr && \
+    mkdir -p /tmp/rttr/build && cd /tmp/rttr/build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=OFF -DBUILD_UNIT_TESTS=OFF -DBUILD_DOCUMENTATION=OFF -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make -j && make install && \
+    rm -rf /tmp/rttr
 # 临时修复CMakeLists.txt以启用Python Development包查找
 RUN sed -i 's/# find_package(Python COMPONENTS Development REQUIRED)/find_package(Python COMPONENTS Development REQUIRED)/' /app/CMakeLists.txt
 
@@ -112,7 +136,8 @@ RUN export Python3_ROOT_DIR=/usr && \
     export CPPFLAGS="-I/usr/include/python3.10" && \
     export CMAKE_ARGS="-DPython3_EXECUTABLE=/usr/bin/python3.10 -DPython3_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so -DPython3_INCLUDE_DIR=/usr/include/python3.10 -DCMAKE_PREFIX_PATH=/usr" && \
     echo "=== 开始构建 ===" && \
-    python3 -m pip install --no-build-isolation --verbose .
+    python3 -m pip install --no-build-isolation --no-cache-dir --verbose .
+
 
 # 创建必要的目录
 RUN mkdir -p /app/logs /app/data /app/config
@@ -121,10 +146,10 @@ RUN mkdir -p /app/logs /app/data /app/config
 RUN chmod +x /app/scripts/*.sh || true && chmod +x /app/csrc/*.sh || true
 
 # 暴露端口
-EXPOSE 443 6379 8080
+EXPOSE 443 6379 8080 39000 28516
 
 # 设置环境变量用于运行时
-ENV SPDLOG_LEVEL=info
+ENV SPDLOG_LEVEL=debug
 ENV MORPHLING_HOME=/app
 
 # 健康检查

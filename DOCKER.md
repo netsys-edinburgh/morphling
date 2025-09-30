@@ -78,12 +78,12 @@ docker-compose logs -f device-emulator
 ## 服务说明
 
 ### 服务列表
-- **redis**: Redis数据库服务（端口6380）
+- **redis**: Redis数据库服务（端口6379）
 - **device-emulator**: 主要的DeviceEmulator服务
 - **nginx-proxy**: 可选的Nginx代理服务（使用profile启动）
 
 ### 端口映射
-- `6380`: Redis服务
+- `6379`: Redis服务
 - `8080`: DeviceEmulator HTTP服务
 - `443`: DeviceEmulator HTTPS服务
 
@@ -139,7 +139,7 @@ docker-compose exec device-emulator morphling_emulator --num_devices 2
 #### 3. 端口冲突
 ```bash
 # 检查端口使用情况
-netstat -tulpn | grep -E ':(6380|8080|443)'
+netstat -tulpn | grep -E ':(6379|8080|443)'
 
 # 修改docker-compose.yml中的端口映射
 ```
