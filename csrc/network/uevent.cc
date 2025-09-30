@@ -106,7 +106,7 @@ void UeventLoop::DoPendingFunctors() {
   std::vector<void*> tasks;
   {
     base::MutexLockGuard lock(mutex_);
-    //使用swap减少了加锁时间，也防止嵌套调用QueueInLoop死锁
+    // 使用swap减少了加锁时间，也防止嵌套调用QueueInLoop死锁
     functors.swap(pending_functors_);
     tasks.swap(pending_tasks_);
   }
@@ -153,7 +153,7 @@ int UeventLoop::QueueInLoop(void* arg) {
     pending_tasks_.push_back(arg);
   }
   // TODO 这里使用event base 的循环无法修改，每次QueueInLoop
-  //都需要唤醒，多次唤醒会触发几次可读事件回调 ？？？
+  // 都需要唤醒，多次唤醒会触发几次可读事件回调 ？？？
   //  if (fake_pending_wake_ && fake_wake_count_ < 100) {
   //    ++fake_wake_count_;
   //  } else {
@@ -243,8 +243,8 @@ void ListenerUevent::RemoveConnectionInLoop(const ConnectionUeventPtr& conn) {
   LOG_DEBUG << "RemoveConnectionInLoop, listener name:" << name_
             << "connection name:" << it->second->GetName()
             << " connection id:" << it->second->GetId();
-  //必须放在ForceClose之前,否则在同一个线程中时直接进入ClosedCb,
-  //会又触发remove, 会触发core
+  // 必须放在ForceClose之前,否则在同一个线程中时直接进入ClosedCb,
+  // 会又触发remove, 会触发core
   connections_.erase(it);
   conn->ForceClose();
 }

@@ -126,7 +126,7 @@ void Logger::Impl::formatTime() {
       tm_time = g_logTimeZone.toLocalTime(seconds);
     } else {
       //::gmtime_r(&seconds, &tm_time); // FIXME TimeZone::fromUtcTime
-      ::localtime_r(&seconds, &tm_time);  //使用本地时间
+      ::localtime_r(&seconds, &tm_time);  // 使用本地时间
     }
 
     int len =
@@ -176,7 +176,7 @@ Logger::~Logger() {
 }
 
 void Logger::setLogLevel(Logger::LogLevel level) { g_logLevel = level; }
-//通过传入string 类型设置，用来从配置文件读取
+// 通过传入string 类型设置，用来从配置文件读取
 void Logger::setLogLevel(const std::string& level) {
   if (log_level_map.find(level) != log_level_map.end()) {
     g_logLevel = log_level_map[level];

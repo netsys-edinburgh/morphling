@@ -409,4 +409,3 @@ function(define_gpu_extension_target GPU_MOD_NAME)
 
   install(TARGETS ${GPU_MOD_NAME} LIBRARY DESTINATION ${GPU_DESTINATION})
 endfunction()
-

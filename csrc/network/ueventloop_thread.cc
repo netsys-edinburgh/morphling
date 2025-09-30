@@ -40,7 +40,7 @@ UeventLoop* UeventLoopThread::StartLoop() {
 }
 
 void UeventLoopThread::ThreadFunc() {
-  //将来使用RDMA 这里进行替换即可
+  // 将来使用RDMA 这里进行替换即可
   UeventLoop* loop = new EventLoopLibevent(name_, create_loop_handle_cb_);
   if (thread_init_cb_) {
     thread_init_cb_(loop);
@@ -50,7 +50,7 @@ void UeventLoopThread::ThreadFunc() {
     loop_ = loop;
     cond_.notify();
   }
-  loop_->Start();  //开始循环
+  loop_->Start();  // 开始循环
   loop_ = NULL;
 }
 
