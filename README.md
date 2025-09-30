@@ -27,7 +27,7 @@ docker run -dit --rm --name redis -p 6379:6379 redis
 sleep 5
 
 cd /scripts
-SPDLOG_LEVEL=debug python run_devices.py     --num_devices 4     --model_name facebook/opt-125m     --backend proxy     --seq_length 128     --batch_size 1 --cfg ../config/proxy/svr.ini 
+SPDLOG_LEVEL=debug python run_devices.py     --num_devices 4     --model_name facebook/opt-125m     --backend proxy     --seq_length 128     --batch_size 1 --cfg ../config/proxy/svr.ini
 ```
 ## Physical Device Usage
 
@@ -121,4 +121,7 @@ export LD_LIBRARY_PATH="/path/to/rttr/install/lib:$LD_LIBRARY_PATH"
 
 # Example for local build artifacts (e.g., C++ .so files)
 export LD_LIBRARY_PATH="/path/to/emulator/build/lib.linux-x86_64-cpython-310/morphling:$LD_LIBRARY_PATH"
+morphling_cmd save --model "facebook/opt-125m" --output <path to model checkpoint>
+morphling_emulator --ckpt_path <path to model checkpoint>
+SPDLOG_LEVEL=<level> MORPHLING_SERVER_ADDRESS=localhost:50051 MORPHLING_PIN_SIZE=10000000000  python tests/python/test_loaded_lib.py
 ```

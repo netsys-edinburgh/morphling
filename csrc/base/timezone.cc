@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "date.h"
-//#define _BSD_SOURCE
+// #define _BSD_SOURCE
 #include <endian.h>
 #include <stdint.h>
 #include <stdio.h>

@@ -364,3 +364,10 @@ void ProxyCli::Initialize(const std::string& cfg_file) {
 }
 
 void ProxyCli::Start() { loop_thread_->StartLoop(); }
+
+void ProxyCli::Send(const torch::Tensor& tensor, std::optional<int64_t> rank) {}
+void ProxyCli::Receive(torch::Tensor& tensor, std::optional<int64_t> rank) {}
+void ProxyCli::AsyncSend(const torch::Tensor& tensor,
+                         std::optional<int64_t> rank) {}
+void ProxyCli::AsyncReceive(torch::Tensor& tensor,
+                            std::optional<int64_t> rank) {}

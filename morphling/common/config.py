@@ -277,9 +277,9 @@ class EmulatorConfig:
         os.environ["MORPHLING_PIN_SIZE"] = str(pin_mem_size)
         os.environ["MORPHLING_SHM_SIZE"] = str(self.cpu_memory - pin_mem_size)
 
-        assert (
-            self.cpu_memory > pin_mem_size
-        ), "CPU memory should be greater than model size"
+        assert self.cpu_memory > pin_mem_size, (
+            "CPU memory should be greater than model size"
+        )
 
     @classmethod
     def load_from_file(self, config_path):

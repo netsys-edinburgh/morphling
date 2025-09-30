@@ -26,7 +26,7 @@ n_iterations = 100
 discrepancies = 0
 
 for i in range(n_iterations):
-    logging.info(f"Iteration {i+1}")
+    logging.info(f"Iteration {i + 1}")
     C_intercepted = torch.matmul(A, B)
 
     if not compare_matrices(C_intercepted, C_expected):
