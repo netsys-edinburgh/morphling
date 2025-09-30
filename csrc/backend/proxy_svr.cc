@@ -164,6 +164,10 @@ ProxySvrImpl::ProxySvrImpl(ProxyEnvCfg& ctx)
     : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(5) {}
 
 void ProxySvrImpl::Initialize(UeventLoop* loop) {
+  LOG_INFO << "[ProxySvrImpl::Initialize] Starting server initialization";
+  LOG_INFO << "[ProxySvrImpl::Initialize] Config - listen_ip=" << ctx_.listen_ip << ", listen_port=" << ctx_.listen_port;
+  LOG_INFO << "[ProxySvrImpl::Initialize] Config - num_device=" << ctx_.num_device << ", thread=" << ctx_.thread;
+  
   auto create_handle_cb = bind(ProxySvrHandle::CreateMyself, ref(ctx_), _1);
   UsockAddress addr(ctx_.listen_ip, ctx_.listen_port);
   listener_ =
@@ -178,7 +182,7 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   listener_->SetThreadNum(ctx_.thread);
   listener_->StartPrimaryLoop();
 
-  LOG_DEBUG << "ProxySvrImpl listen on:" << ctx_.listen_ip << ":"
+  LOG_INFO << "[ProxySvrImpl::Initialize] ProxySvrImpl listen on:" << ctx_.listen_ip << ":"
             << ctx_.listen_port;
 
   ctx_.instance = this;
@@ -194,6 +198,8 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
     outputs_[i] = torch::empty({0, 0});
     rsp_cb_counts_[i] = 0;
   }
+  
+  LOG_INFO << "[ProxySvrImpl::Initialize] Server initialization completed. Waiting for connections...";
 }
 
 void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -204,6 +210,12 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   handle->ConnectionSuccessCb(conn);
 
   conn_map_[conn->GetPeerAddress().ToString()] = conn;
+  
+  LOG_INFO << "[ConnectionSuccessCb] New connection added. Total connections: " << conn_map_.size();
+  LOG_INFO << "[ConnectionSuccessCb] Connection map contents:";
+  for (const auto& conn_pair : conn_map_) {
+    LOG_INFO << "  - " << conn_pair.first << " -> " << (conn_pair.second ? "valid" : "null");
+  }
 }
 
 void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
@@ -214,6 +226,12 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   handle->ConnectionClosedCb(conn);
 
   conn_map_.erase(conn->GetPeerAddress().ToString());
+  
+  LOG_INFO << "[ConnectionClosedCb] Connection removed. Remaining connections: " << conn_map_.size();
+  LOG_INFO << "[ConnectionClosedCb] Connection map contents:";
+  for (const auto& conn_pair : conn_map_) {
+    LOG_INFO << "  - " << conn_pair.first << " -> " << (conn_pair.second ? "valid" : "null");
+  }
 }
 
 void ProxySvrImpl::RequestWriteCb(const uevent::ConnectionUeventPtr& conn) {
@@ -253,49 +271,86 @@ void ProxySvrImpl::RequestCb(const ConnectionUeventPtr& conn) {
 
 void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
                                        torch::Tensor& mat_b) {
+  LOG_INFO << "[DispatchMatMulAsync] Starting dispatch - mm_count=" << mm_count_ 
+           << ", conn_map_.size()=" << conn_map_.size();
+  
   outputs_[mm_count_].set_data(CreateOutputMatrix(mat_a, mat_b));
   auto partitions = PartitionMatrices(mat_a, mat_b, ctx_.block_size);
   auto a_shape = mat_a.sizes().vec();
   auto b_shape = mat_b.sizes().vec();
 
+  if (partitions.empty()) {
+    LOG_ERROR << "[DispatchMatMulAsync] No partitions generated!";
+    return;
+  }
+
   auto cur_ver = partitions[0].version;
   LOG_INFO << "[" << cur_ver << "] Number of partitions: " << partitions.size()
            << " for A: " << a_shape << " and B: " << b_shape;
 
+  LOG_INFO << "[DispatchMatMulAsync] Before random_shuffle - partitions.size()=" << partitions.size();
   std::random_shuffle(partitions.begin(), partitions.end());
+  
+  LOG_INFO << "[DispatchMatMulAsync] Before RephrasePartitions - ctx_.num_device=" << ctx_.num_device;
+  LOG_INFO << "[DispatchMatMulAsync] Current connections:";
+  for (const auto& conn_pair : conn_map_) {
+    LOG_INFO << "  - " << conn_pair.first << " -> " << (conn_pair.second ? "valid" : "null");
+  }
+  
   RephrasePartitions(partitions);
+  // make shared partitions
   std::vector<MatrixPartitionPtr> shared_partitions;
   for (auto& partition : partitions) {
     shared_partitions.push_back(std::make_shared<MatrixPartition>(partition));
   }
+  
+  LOG_INFO << "[DispatchMatMulAsync] After RephrasePartitions - created " << shared_partitions.size() << " shared partitions";
+  
   auto start = std::chrono::high_resolution_clock::now();
 
   DecRspCbCount(mm_count_, partitions.size());
+  
+  LOG_INFO << "[DispatchMatMulAsync] Starting to dispatch partitions - conn_map_.size()=" << conn_map_.size();
+  
   for (auto& partition : shared_partitions) {
     partition->oid = mm_count_;
-    
-  
+    // Debug:
+    LOG_DEBUG << "[DispatchMatMulAsync] partition dev_id=" << partition->dev_id
+              << ", conn_map_.size()=" << conn_map_.size();
     if (conn_map_.empty()) {
-      return;
+      LOG_ERROR << "[DispatchMatMulAsync] conn_map_ is empty!";
+      continue;
+    }
+    if (partition->dev_id < 0 || static_cast<size_t>(partition->dev_id) >= conn_map_.size()) {
+      LOG_ERROR << "[DispatchMatMulAsync] partition->dev_id " << partition->dev_id << " out of range! conn_map_.size()=" << conn_map_.size();
+      continue;
     }
     
-  
-    size_t dev_index = partition->dev_id;
-    if (dev_index >= conn_map_.size()) {
-
-      dev_index = dev_index % conn_map_.size();
-    }
-
-  
+    LOG_DEBUG << "[DispatchMatMulAsync] Looking for connection at index " << partition->dev_id;
+    
     auto it = conn_map_.begin();
-    std::advance(it, dev_index);
-  
+    std::advance(it, partition->dev_id);
+    if (it == conn_map_.end() || !it->second) {
+      LOG_ERROR << "[DispatchMatMulAsync] Invalid connection for dev_id " << partition->dev_id;
+      continue;
+    }
+    
+    LOG_DEBUG << "[DispatchMatMulAsync] Found connection for dev_id " << partition->dev_id << ": " << it->first;
+    
     auto* loop = it->second->GetLoop();
+    if (!loop) {
+      LOG_ERROR << "[DispatchMatMulAsync] loop is nullptr for dev_id " << partition->dev_id;
+      continue;
+    }
     auto* handle = reinterpret_cast<ProxySvrHandle*>(loop->GetLoopHandle());
-  
-    loop->RunInLoop(bind(&ProxySvrHandle::SendInLoop, handle, it->second, partition));
+    if (!handle) {
+      LOG_ERROR << "[DispatchMatMulAsync] handle is nullptr for dev_id " << partition->dev_id;
+      continue;
+    }
+    LOG_DEBUG << "[DispatchMatMulAsync] SendInLoop for dev_id=" << partition->dev_id;
+    loop->RunInLoop(
+        bind(&ProxySvrHandle::SendInLoop, handle, it->second, partition));
   }
-  
   auto end = std::chrono::high_resolution_clock::now();
   LOG_INFO << "Publish time: "
            << std::chrono::duration_cast<std::chrono::microseconds>(end - start)
@@ -321,31 +376,33 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
   return outputs_[oid];
 }
 
-void ProxySvrImpl::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
-  // Use the lesser of the configured device count and the number of connected devices.
-  size_t num_devices = ctx_.num_device;
-  if (!conn_map_.empty()) {
-    num_devices = std::min((size_t)ctx_.num_device, conn_map_.size());
-  }
-  std::vector<float> device_time(num_devices, 0);
-  std::vector<std::unordered_set<TensorKey>> device_tensors(num_devices);
+void ProxySvrImpl::RephrasePartitions(
+    std::vector<MatrixPartition>& partitions) {
+  LOG_INFO << "[RephrasePartitions] Starting with " << partitions.size() << " partitions, num_device=" << ctx_.num_device;
+  
+  std::vector<float> device_time(ctx_.num_device, 0);
+  std::vector<std::unordered_set<TensorKey>> device_tensors(ctx_.num_device);
 
-  // For each partition, choose a device based on cost.
-  for (auto& partition : partitions) {
+  LOG_INFO << "[RephrasePartitions] Initialized device_time vector with size " << device_time.size();
+
+  // greedy algorithm to select the minimal time
+  for (size_t part_idx = 0; part_idx < partitions.size(); ++part_idx) {
+    auto& partition = partitions[part_idx];
+    LOG_DEBUG << "[RephrasePartitions] Processing partition " << part_idx << "/" << partitions.size();
+    
     float min_time = std::numeric_limits<float>::max();
-    int min_device = -1;
+    int min_device = 0;
+    auto version = partition.version;
     auto tensor_key_row = partition.GetRowKey();
     auto tensor_key_col = partition.GetColKey();
     bool min_r_cached = false;
     bool min_c_cached = false;
+    
+    LOG_INFO << "[RephrasePartitions] Processing partition " << part_idx << " - checking " << ctx_.num_device << " devices";
+    
+    for (int i = 0; i < ctx_.num_device; i++) {
+      auto& tensors = device_tensors[i];
 
-    // Create and shuffle device indices to randomize tie-breaking.
-    std::vector<size_t> device_indices(num_devices);
-    std::iota(device_indices.begin(), device_indices.end(), 0);
-    std::random_shuffle(device_indices.begin(), device_indices.end());
-
-    for (size_t idx : device_indices) {
-      auto& tensors = device_tensors[idx];
       bool r_cached = tensors.find(tensor_key_row) != tensors.end();
       bool c_cached = tensors.find(tensor_key_col) != tensors.end();
 
@@ -357,21 +414,26 @@ void ProxySvrImpl::RephrasePartitions(std::vector<MatrixPartition>& partitions) 
       int64_t num_rows = r_size / partition.h_dim / sizeof(float);
       int64_t num_cols = c_size / partition.h_dim / sizeof(float);
 
-      float ul_time = (num_rows * num_cols * sizeof(float)) / MB;
-      float dl_time = (cached_r_size + cached_c_size) / MB;
-      float flops = (2.0f * num_rows * num_cols * partition.h_dim) / TB;
+      float ul_time = (float)(num_rows * num_cols) * sizeof(float) / MB;
+      float dl_time = (float)(cached_r_size + cached_c_size) / MB;
+      float flops = (float)2.0 * num_rows * num_cols * partition.h_dim / TB;
 
-      float cost = std::max({ul_time, dl_time, flops}) + device_time[idx];
-      if (cost < min_time) {
-        min_time = cost;
-        min_device = idx;
+      float time = std::max(std::max(ul_time, dl_time), flops) + device_time[i];
+      // ul_time + dl_time + flops + device_time[i];
+      if (time < min_time) {
+        min_time = time;
+        min_device = i;
         min_r_cached = r_cached;
         min_c_cached = c_cached;
+        // fprintf(stderr, "Device: %d, UL time: %f, DL time: %f, FLOPS: %f,
+        // Time: %f\n", i, ul_time, dl_time, flops, time);
       }
     }
-    if (min_device < 0) {
-      min_device = 0;  // Fallback (should not happen)
-    }
+    
+    LOG_INFO << "[RephrasePartitions] Partition " << part_idx << " assigned to device " << min_device << " with time " << min_time;
+    
+    assert(min_time != std::numeric_limits<float>::max());
+    // update the time for the device
     device_time[min_device] = min_time;
     partition.dev_id = min_device;
     device_tensors[min_device].insert(tensor_key_row);
@@ -384,10 +446,10 @@ void ProxySvrImpl::RephrasePartitions(std::vector<MatrixPartition>& partitions) 
       partition.mat[1] = {nullptr, 0};
     }
   }
+  
+  LOG_INFO << "[RephrasePartitions] Completed partitioning";
   LOG_INFO << "Device time: " << device_time;
 }
-
-
 
 /*********************************ProxySvr***************************************/
 typedef ProxySvr::Status ProxyStatus;

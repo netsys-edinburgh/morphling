@@ -9,4 +9,4 @@ pre-commit
 psutil
 redis
 torch==2.3.0
-transformers>=4.37.2
+transformers==4.37.2
