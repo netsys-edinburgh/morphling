@@ -16,8 +16,8 @@ CheckpointHandle::CheckpointHandle(const std::filesystem::path& prefix)
   auto json_reader = JsonReader<ParamMeta>(param_meta_map_file.string());
   param_meta_map_ = json_reader.ParseIntoMap();
 
-  LOG_DEBUG("param_meta_map_file: {}, size {}", param_meta_map_file.c_str(),
-            param_meta_map_.size());
+  LOG_DEBUG << "param_meta_map_file: " << param_meta_map_file.c_str()
+            << ", size " << param_meta_map_.size();
 }
 
 std::filesystem::path CheckpointHandle::GetFilePathByID(
@@ -31,19 +31,20 @@ void CheckpointHandle::ReadCheckpoint() {
   auto param_filename = GetFilePathByID(file_id);
   auto index_filename = prefix_ / std::string(ARCHER_IHDEX_NAME);
 
-  LOG_DEBUG("param_filename: {}", param_filename.c_str());
+  LOG_DEBUG << "param_filename: " << param_filename.c_str();
 
   // get param_filename file size
   struct stat st;
   if (stat(param_filename.c_str(), &st) == -1) {
-    LOG_FATAL("Invalid prefix: {} does not exist", param_filename.c_str());
+    LOG_FATAL << "Invalid prefix: " << param_filename.c_str()
+              << " does not exist";
   }
   auto file_size = st.st_size;
 
   auto [pin_mem_size, pin_mem_offsets] = ComputePinOffsets();
 
-  LOG_WARN_IF(pin_mem_size != file_size, "Pin memory size {} != file size {}",
-              pin_mem_size, file_size);
+  LOG_WARN_IF(pin_mem_size != file_size)
+      << "Pin memory size " << pin_mem_size << " != file size " << file_size;
   // LOG_FATAL_IF(buffer_ != nullptr, "Buffer is not null, should only load
   // once");
 
@@ -92,8 +93,8 @@ void CheckpointHandle::ReadCheckpoint() {
     void* temp_buffer = aligned_alloc(4096, aligned_bytes);
     // read using pread
     int ret = pread(fd, temp_buffer, aligned_bytes, file_offset);
-    LOG_FATAL_IF(ret == -1, "pread failed: errno {}, message {}", errno,
-                 strerror(errno));
+    LOG_FATAL_IF(ret == -1)
+        << "pread failed: errno " << errno << ", message " << strerror(errno);
     // check if temp_buffer contains all zeros
     bool is_zero = true;
     for (size_t i = 0; i < num_bytes; i++) {
@@ -167,8 +168,8 @@ CheckpointHandle::ComputePinOffsets() {
     pin_mem_offsets[param_name] = pin_mem_size;
     // current_offset += param_meta.size;
     pin_mem_size += param_meta.size;
-    LOG_DEBUG("param_name: {}, size: {}, offset: {}", param_name,
-              param_meta.size, pin_mem_offsets[param_name]);
+    LOG_DEBUG << "param_name: " << param_name << ", size: " << param_meta.size
+              << ", offset: " << pin_mem_offsets[param_name];
   }
 
   return {pin_mem_size, pin_mem_offsets};

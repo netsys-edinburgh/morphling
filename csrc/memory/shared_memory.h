@@ -22,7 +22,7 @@ void DetachSharedMemory(void* ptr, int fd, size_t size);
 
 struct ShmDeleter {
   void operator()(void* ptr) const {
-    LOG_DEBUG("ShmDeleter: ptr: {}", ptr);
+    LOG_DEBUG << "ShmDeleter: ptr: " << ptr;
     DetachSharedMemory(ptr, fd, size);
   }
   size_t size;

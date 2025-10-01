@@ -5,13 +5,11 @@
 
 #pragma once
 
-#include <spdlog/spdlog.h>
-
 #include <iostream>
 #include <mutex>
 
+#include "base/logging.h"
 #include "common/types_and_defs.h"  // for TensorKey
-#include "noncopyable.h"
 
 #define PRINT_ARGS(...)                \
   do {                                 \
@@ -45,84 +43,51 @@ extern std::mutex kLogMutex;
 
 extern void InitLogger();
 
-#define LOG_DEBUG(...) spdlog::debug(__VA_ARGS__)
-#define LOG_INFO(...) spdlog::info(__VA_ARGS__)
-#define LOG_ERROR(...) spdlog::error(__VA_ARGS__)
-#define LOG_WARN(...) spdlog::warn(__VA_ARGS__)
-#define LOG_FATAL(...)                                 \
-  do {                                                 \
-    spdlog::critical(__VA_ARGS__);                     \
-    throw(std::runtime_error("Logged a FATAL error")); \
-  } while (0)
+// Use base/logging.h macros: LOG_DEBUG, LOG_INFO, LOG_WARN, LOG_ERROR,
+// LOG_FATAL These use streaming interface: LOG_INFO << "message" << variable;
 
-#define LOG_FATAL_IF(cond, ...) \
-  if (cond) {                   \
-    LOG_FATAL(__VA_ARGS__);     \
-  }
-#define LOG_ERROR_IF(cond, ...) \
-  if (cond) {                   \
-    LOG_ERROR(__VA_ARGS__);     \
-  }
-#define LOG_WARN_IF(cond, ...) \
-  if (cond) {                  \
-    LOG_WARN(__VA_ARGS__);     \
-  }
-#define LOG_INFO_IF(cond, ...) \
-  if (cond) {                  \
-    LOG_INFO(__VA_ARGS__);     \
+#define LOG_FATAL_IF(cond) \
+  if (cond) LOG_FATAL
+
+#define LOG_ERROR_IF(cond) \
+  if (cond) LOG_ERROR
+
+#define LOG_WARN_IF(cond) \
+  if (cond) LOG_WARN
+
+#define LOG_INFO_IF(cond) \
+  if (cond) LOG_INFO
+
+#define CHECK_CUBLAS_ERROR(call)                                    \
+  {                                                                 \
+    cublasStatus_t err = (call);                                    \
+    LOG_FATAL_IF(err != CUBLAS_STATUS_SUCCESS)                      \
+        << "CUBLAS error. message: " << cublasGetStatusString(err); \
   }
 
-#define CHECK_CUBLAS_ERROR(call)                                            \
-  {                                                                         \
-    cublasStatus_t err = (call);                                            \
-    LOG_FATAL_IF(err != CUBLAS_STATUS_SUCCESS, "CUBLAS error. message: {}", \
-                 cublasGetStatusString(err));                               \
+#define CHECK_CUDA_ERROR(call)                                 \
+  {                                                            \
+    cudaError_t err = (call);                                  \
+    LOG_FATAL_IF(err != cudaSuccess)                           \
+        << "CUDA error. message: " << cudaGetErrorString(err); \
   }
 
-#define CHECK_CUDA_ERROR(call)                                  \
-  {                                                             \
-    cudaError_t err = (call);                                   \
-    LOG_FATAL_IF(err != cudaSuccess, "CUDA error. message: {}", \
-                 cudaGetErrorString(err));                      \
-  }
-
-// fmt::formatter for std::vector
-
-namespace fmt {
+// Streaming operators for common types used in logging
 template <typename T>
-struct formatter<std::vector<T>> {
-  template <typename ParseContext>
-  constexpr auto parse(ParseContext& ctx) {
-    return ctx.begin();
+inline base::LogStream& operator<<(base::LogStream& stream,
+                                   const std::vector<T>& v) {
+  stream << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) stream << ",";
+    stream << v[i];
   }
+  stream << "]";
+  return stream;
+}
 
-  template <typename FormatContext>
-  auto format(const std::vector<T>& v, FormatContext& ctx) {
-    auto it = ctx.out();
-    *it = '[';
-    ++it;
-    for (size_t i = 0; i < v.size(); i++) {
-      if (i > 0) {
-        *it = ',';
-        ++it;
-      }
-      it = format_to(it, "{}", v[i]);
-    }
-    *it = ']';
-    return ++it;
-  }
-};
-
-// create a spdlog fmt for TensorKey
-template <>
-struct formatter<TensorKey> {
-  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
-  template <typename FormatContext>
-  auto format(const TensorKey& p, FormatContext& ctx) {
-    return format_to(ctx.out(), "[{}:{}:{}:{}]", std::get<0>(p), std::get<1>(p),
-                     std::get<2>(p), std::get<3>(p));
-  }
-};
-
-}  // namespace fmt
+inline base::LogStream& operator<<(base::LogStream& stream,
+                                   const TensorKey& key) {
+  stream << "[" << std::get<0>(key) << ":" << std::get<1>(key) << ":"
+         << std::get<2>(key) << ":" << std::get<3>(key) << "]";
+  return stream;
+}

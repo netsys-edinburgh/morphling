@@ -5,10 +5,10 @@
 
 #include "logger.h"
 
-#include <spdlog/cfg/env.h>
 #include <stdio.h>
 #include <string.h>
 
+#include <cstdlib>
 #include <iostream>
 
 std::once_flag kLoggerFlag;
@@ -73,9 +73,15 @@ std::string formatstr() {
 
 void InitLogger() {
   std::call_once(kLoggerFlag, []() {
-    spdlog::cfg::load_env_levels();
-    spdlog::set_pattern("[%D %T.%e] [%^%=7l%$] [thread %t] %v");
+    // Set log level from environment variable
+    const char* log_level_env = getenv("LOG_LEVEL");
+    if (log_level_env) {
+      base::Logger::setLogLevel(std::string(log_level_env));
+    } else {
+      base::Logger::setLogLevel(base::Logger::INFO);
+    }
 
-    spdlog::info("LOG_LEVEL : {}", getenv("SPDLOG_LEVEL"));
+    LOG_INFO << "Logger initialized with level: "
+             << (log_level_env ? log_level_env : "INFO");
   });
 }

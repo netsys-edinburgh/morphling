@@ -131,10 +131,8 @@ echo "All processes have completed. Logs are available in the '$LOG_DIR' directo
 
 g++ -g -fPIC -shared -o -std=c++17 "csrc/intercept/interceptor.so" \
     "csrc/intercept/interceptor.cpp" \
-    "csrc/intercept/client.cpp" \
     "csrc/utils/logger.cpp" \
     "csrc/memory/caching_allocator.cpp" \
-    "build/temp.linux-x86_64-cpython-39/morphling.grpc.pb.cc" \
     "build/temp.linux-x86_64-cpython-39/morphling.pb.cc" \
     -D_GLIBCXX_USE_CXX11_ABI=0 \
     -I"csrc" \
