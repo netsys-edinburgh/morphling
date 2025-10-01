@@ -10,7 +10,6 @@
 #include <unistd.h>
 
 #include "common/generator.h"
-#include "common/rttr_registration.h"
 #include "common/types_and_defs.h"
 #include "utils/logger.h"
 
@@ -25,7 +24,7 @@ void* CachingAllocator::Allocate(const size_t bytes) {
   if (it == available_map_.end() || it->second.empty()) {
     if (bytes == 0) {
       ptr = malloc(bytes);
-      LOG_WARN("Attempted to allocate 0 bytes, return {:p}", ptr);
+      LOG_WARN << "Attempted to allocate 0 bytes, return " << ptr;
     } else {
       ptr = AllocateAndCache(bytes);
     }
@@ -43,8 +42,8 @@ void CachingAllocator::Free(void* ptr) {
   std::lock_guard<std::mutex> guard(mutex_);
   // LOG_DEBUG("Try Free: {:p}", ptr);
   const auto& it = allocation_map_.find(ptr);
-  LOG_FATAL_IF(it == allocation_map_.end(),
-               "Attempted to free unallocated memory {:p}", ptr);
+  LOG_FATAL_IF(it == allocation_map_.end())
+      << "Attempted to free unallocated memory " << ptr;
   const size_t alloc_size = it->second;
   available_map_[alloc_size].push_back(ptr);
   used_bytes_ -= alloc_size;
@@ -67,13 +66,12 @@ ShmMeta CachingAllocator::FindShmMetaByRange(void* ptr) {
   }
   for (const auto& it : shm_id_map_) {
     if (it.first <= ptr && ptr < it.first + it.second.size) {
-      LOG_WARN_IF(it.first != ptr,
-                  "FindShmMetaByRange not exact: expected {:p}, got {:p}", ptr,
-                  it.first);
+      LOG_WARN_IF(it.first != ptr) << "FindShmMetaByRange not exact: expected "
+                                   << ptr << ", got " << it.first;
       return it.second;
     }
   }
-  LOG_FATAL("Cannot find shm meta by range {:p}", ptr);
+  LOG_FATAL << "Cannot find shm meta by range " << ptr;
   return {};
 }
 
@@ -119,11 +117,10 @@ void* CachingAllocator::AllocateAndCache(const size_t bytes) {
   // LOG_DEBUG("AllocateAndCache: size: {}, used: {}", bytes, used_bytes_);
   if (allocated_bytes_ + bytes > max_bytes_) {
     FreeCached();
-    LOG_FATAL_IF(allocated_bytes_ + bytes > max_bytes_,
-                 "Out of memory; attempted to allocate {}GB, allocated {}GB, "
-                 "but only {}GB available",
-                 bytes / GB, allocated_bytes_ / GB,
-                 (max_bytes_ - allocated_bytes_) / GB);
+    LOG_FATAL_IF(allocated_bytes_ + bytes > max_bytes_)
+        << "Out of memory; attempted to allocate " << bytes / GB
+        << "GB, allocated " << allocated_bytes_ / GB << "GB, but only "
+        << (max_bytes_ - allocated_bytes_) / GB << "GB available";
   }
   void* ptr = AllocateMemory(bytes);
   return ptr;
@@ -140,7 +137,7 @@ void* CachingAllocator::AllocateMemory(size_t bytes) {
     case MemoryType::PIN_SHM:
       return AllocPinShmMemory(bytes);
   }
-  LOG_FATAL("Unknown memory type");
+  LOG_FATAL << "Unknown memory type";
   return nullptr;
 }
 void* CachingAllocator::AllocCudaMemory(size_t bytes) {
@@ -162,8 +159,8 @@ void* CachingAllocator::AllocPinMemory(size_t bytes) {
 void* CachingAllocator::AllocShmMemory(size_t bytes) {
   int shm_id = shmget(IPC_PRIVATE, bytes, IPC_CREAT | 0666);
   void* ptr = shmat(shm_id, nullptr, 0);
-  LOG_FATAL_IF(ptr == (void*)-1, "shmat failed: errno {}, message {}", errno,
-               strerror(errno));
+  LOG_FATAL_IF(ptr == (void*)-1)
+      << "shmat failed: errno " << errno << ", message " << strerror(errno);
   shm_id_map_[ptr] = {shm_id, ptr, bytes, ""};
   return ptr;
 }
@@ -174,11 +171,10 @@ void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
   // LOG_DEBUG("shm_meta name: {}", shm_meta.name);
 
   int shm_fd = shm_open(shm_meta.name.c_str(), O_CREAT | O_RDWR, 0666);
-  LOG_FATAL_IF(shm_fd == -1, "shm_open failed: errno {}, message {}", errno,
-               strerror(errno));
-  LOG_FATAL_IF(ftruncate(shm_fd, bytes) == -1,
-               "ftruncate failed: errno {}, message {}", errno,
-               strerror(errno));
+  LOG_FATAL_IF(shm_fd == -1)
+      << "shm_open failed: errno " << errno << ", message " << strerror(errno);
+  LOG_FATAL_IF(ftruncate(shm_fd, bytes) == -1)
+      << "ftruncate failed: errno " << errno << ", message " << strerror(errno);
 
   size_t page_size = sysconf(_SC_PAGESIZE);
   size_t aligned_bytes = ((bytes + page_size - 1) / page_size) * page_size;
@@ -191,11 +187,11 @@ void* CachingAllocator::AllocPinShmMemory(size_t bytes) {
   //           bytes, buf, aligned_bytes);
   void* shm_addr = mmap(buf, aligned_bytes, PROT_READ | PROT_WRITE,
                         MAP_SHARED | MAP_FIXED | MAP_LOCKED, shm_fd, 0);
-  LOG_FATAL_IF(shm_addr == MAP_FAILED, "mmap failed: errno {}, message {}",
-               errno, strerror(errno));
+  LOG_FATAL_IF(shm_addr == MAP_FAILED)
+      << "mmap failed: errno " << errno << ", message " << strerror(errno);
 
-  LOG_FATAL_IF(shm_addr != buf, "mmap failed: expected addr: {:p}, got {:p}",
-               buf, shm_addr);
+  LOG_FATAL_IF(shm_addr != buf)
+      << "mmap failed: expected addr: " << buf << ", got " << shm_addr;
 
   shm_meta.id = shm_fd;
   shm_meta.ptr = shm_addr;

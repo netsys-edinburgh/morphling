@@ -2,7 +2,6 @@
 
 #include "checkpoint/archer_tensor_handle.h"
 #include "checkpoint/checkpoint_handle.h"
-#include "intercept/client.h"
 #include "memory/shared_memory.h"
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
@@ -41,16 +40,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             .is_remote = true,
         };
         kCachingAllocator->InsertShmMeta(meta);
-        LOG_DEBUG("set_tensor_shm: name: {}, size: {}, ptr: {}", name, size,
-                  ptr);
+        LOG_DEBUG << "set_tensor_shm: name: " << name << ", size: " << size
+                  << ", ptr: " << ptr;
         tensor.set_data(torch::from_blob(ptr, tensor.sizes(), tensor.strides(),
                                          DoNothingDeleter<void>{},
                                          tensor.options()));
       },
       "Set tensor shared memory");
 
-  py::class_<MemoryManagerClient>(m, "MemoryManagerClient")
-      .def(py::init<>())
-      .def("get_model_param", &MemoryManagerClient::GetModelParam,
-           "Get model parameter from server");
+  // Removed MemoryManagerClient bindings since gRPC client was removed
 }

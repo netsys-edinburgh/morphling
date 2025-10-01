@@ -9,7 +9,6 @@
 #include <unordered_map>
 
 #include "common/types_and_defs.h"
-#include "common/rttr_registration.h"  // For full ShmMeta definition
 #include "memory/shared_memory.h"
 #include "utils/logger.h"
 #include "utils/noncopyable.h"
@@ -95,31 +94,32 @@ extern std::once_flag kInitCachingAllocatorFlag;
 static void InitCachingAllocator(MemoryType type, int device_id = -1) {
   std::call_once(kInitCachingAllocatorFlag, [&]() {
     size_t bytes = 0;
-    LOG_DEBUG("InitCachingAllocator: type: {}, device_id: {}", type, device_id);
+    LOG_DEBUG << "InitCachingAllocator: type: " << MemoryTypeToString(type)
+              << " device_id: " << device_id;
     if (type == MemoryType::CUDA) {
-      LOG_FATAL_IF(device_id < 0, "Invalid device id");
+      LOG_FATAL_IF(device_id < 0) << "Invalid device id";
       // Get environment variable MORPHLING_SHM_SIZE
       const char* size = std::getenv("MORPHLING_GPU_SIZE");
-      LOG_FATAL_IF(size == nullptr, "MORPHLING_GPU_SIZE is not set");
+      LOG_FATAL_IF(size == nullptr) << "MORPHLING_GPU_SIZE is not set";
       bytes = std::stoull(size);
     } else if (type == MemoryType::SHM) {
       // Get environment variable MORPHLING_SHM_SIZE
       const char* size = std::getenv("MORPHLING_SHM_SIZE");
-      LOG_FATAL_IF(size == nullptr, "MORPHLING_SHM_SIZE is not set");
+      LOG_FATAL_IF(size == nullptr) << "MORPHLING_SHM_SIZE is not set";
       bytes = std::stoull(size);
     } else if (type == MemoryType::PIN or type == MemoryType::PIN_SHM) {
       const char* size = std::getenv("MORPHLING_PIN_SIZE");
-      LOG_FATAL_IF(size == nullptr, "MORPHLING_PIN_SIZE is not set");
+      LOG_FATAL_IF(size == nullptr) << "MORPHLING_PIN_SIZE is not set";
       bytes = std::stoull(size);
     } else {
-      LOG_FATAL("Unknown memory type");
+      LOG_FATAL << "Unknown memory type";
     }
-    LOG_FATAL_IF(kCachingAllocator != nullptr,
-                 "Caching allocator is already initialized");
+    LOG_FATAL_IF(kCachingAllocator != nullptr)
+        << "Caching allocator is already initialized";
 
     kCachingAllocator =
         std::make_unique<CachingAllocator>(bytes, type, device_id);
-    LOG_INFO("Caching allocator initialized with {}GB, type: {}", bytes / GB,
-             type);
+    LOG_INFO << "Caching allocator initialized with" << bytes / GB
+             << "GB, type:" << MemoryTypeToString(type);
   });
 }

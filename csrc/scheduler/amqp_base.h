@@ -40,16 +40,16 @@ class AMQPBase {
 
     int status = amqp_socket_open(socket_, host_.c_str(), 5672);
     if (status) {
-      LOG_ERROR("Failed to open TCP socket, status: {}", status);
+      LOG_ERROR << "Failed to open TCP socket, status: " << status;
       throw std::runtime_error("Failed to open TCP socket");
     }
 
-    LOG_DEBUG("Opened TCP socket to AMQP server");
+    LOG_DEBUG << "Opened TCP socket to AMQP server";
     {
       auto r = amqp_login(conn_, "/", 0, 131072, 0, AMQP_SASL_METHOD_PLAIN,
                           "guest", "guest");
       die_on_amqp_error(r, "Logging in to AMQP server");
-      LOG_DEBUG("Logged in to AMQP server");
+      LOG_DEBUG << "Logged in to AMQP server";
     }
 
     {
@@ -64,10 +64,10 @@ class AMQPBase {
                         "Opening channel 1 for responses");
     }
 
-    LOG_DEBUG("Opened channel to AMQP server");
+    LOG_DEBUG << "Opened channel to AMQP server";
     DeclareQueues();
 
-    LOG_DEBUG("Connected to AMQP server");
+    LOG_DEBUG << "Connected to AMQP server";
     // for (int i = 0; i < 10; i++) {
     //   consume_threads_.emplace_back([this]() { ConsumeResponse(); });
     // }
@@ -80,7 +80,7 @@ class AMQPBase {
           conn_, req_channel_, req_queuename, 0, 0, 0, 0, amqp_empty_table);
       die_on_amqp_error(amqp_get_rpc_reply(conn_),
                         "Declaring queue mm_request_queue");
-      LOG_DEBUG("Declared request queue");
+      LOG_DEBUG << "Declared request queue";
 
       // amqp_queue_bind(conn_, req_channel_, req_queuename,
       // amqp_cstring_bytes(""),
@@ -95,7 +95,7 @@ class AMQPBase {
           conn_, rsp_channel_, rsp_queuename, 0, 0, 0, 0, amqp_empty_table);
       die_on_amqp_error(amqp_get_rpc_reply(conn_),
                         "Declaring queue mm_response_queue");
-      LOG_DEBUG("Declared response queue");
+      LOG_DEBUG << "Declared response queue";
 
       // amqp_queue_bind(conn_, rsp_channel_, rsp_queuename,
       // amqp_cstring_bytes(""),
@@ -114,8 +114,8 @@ class AMQPBase {
     }
   }
 
-  virtual void HandleReq() { LOG_FATAL("HandleReq not implemented"); }
-  virtual void HandleRsp() { LOG_FATAL("HandleRsp not implemented"); }
+  virtual void HandleReq() { LOG_FATAL << "HandleReq not implemented"; }
+  virtual void HandleRsp() { LOG_FATAL << "HandleRsp not implemented"; }
 
  protected:
   amqp_connection_state_t conn_;

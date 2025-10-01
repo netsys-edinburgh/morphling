@@ -86,11 +86,6 @@ message HeartBeatResponse {
 
 message Empty {}
 
-service MemoryManager {
-    rpc ScheduleGemmSync (ScheduleGemmRequest) returns (ScheduleGemmResponse) {}
-    rpc GetModelParam (ModelParamRequest) returns (ModelParamResponse) {}
-}
-
 message Response {
     required string message = 1;
     required uint32 code = 2;

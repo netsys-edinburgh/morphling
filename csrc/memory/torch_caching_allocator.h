@@ -12,7 +12,8 @@ struct TorchCachingAllocator : public torch::Allocator {
   }
 
   void copy_data(void* dest, const void* src, size_t count) const override {
-    LOG_DEBUG("Copy data from {:p} to {:p}, size: {}", src, dest, count);
+    LOG_DEBUG << "Copy data from " << src << " to " << dest
+              << ", size: " << count;
     memcpy(dest, src, count);
   }
 
@@ -30,9 +31,9 @@ class ReplaceTorchAllocatorOnLoad {
     std::call_once(flag_, [&]() {
       InitCachingAllocator(MemoryType::PIN_SHM);
       torch_caching_allocator_ = new TorchCachingAllocator();
-      LOG_INFO("Replace torch allocator with caching allocator");
+      LOG_INFO << "Replace torch allocator with caching allocator";
       torch::SetAllocator(torch::DeviceType::CPU, torch_caching_allocator_);
-      LOG_INFO("Torch allocator replaced");
+      LOG_INFO << "Torch allocator replaced";
     });
   }
 

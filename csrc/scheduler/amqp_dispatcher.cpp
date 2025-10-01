@@ -13,10 +13,10 @@ void AMQPBackend::CallMatMulBlock(torch::Tensor& mat_a, torch::Tensor& mat_b,
 
   if (mat_a.dim() == 2 && mat_b.dim() == 2) {
     // print("call 2D-2D", mat_a.sizes(), mat_b.sizes())
-    LOG_DEBUG("Calling 2D-2D matmul block");
+    LOG_DEBUG << "Calling 2D-2D matmul block";
     DispatchMatMulBlock(mat_a, mat_b, r, c, {});
   } else if (mat_a.dim() > 2 && mat_b.dim() == 2) {
-    LOG_DEBUG("Calling >2D-2D matmul block");
+    LOG_DEBUG << "Calling >2D-2D matmul block";
     auto ld = mat_a.sizes().slice(0, mat_a.dim() - 2);
     auto ld_combinations = cartesian_product(ld.vec());
     for (const auto ld : ld_combinations) {
@@ -27,7 +27,7 @@ void AMQPBackend::CallMatMulBlock(torch::Tensor& mat_a, torch::Tensor& mat_b,
   } else {
     auto ld = mat_a.sizes().slice(0, mat_a.dim() - 2);
     // get all combinations of indices for the leading dimensions
-    LOG_DEBUG("Calling >2D->2D matmul block");
+    LOG_DEBUG << "Calling >2D->2D matmul block";
     auto ld_combinations = cartesian_product(ld.vec());
     for (const auto ld : ld_combinations) {
       // convert to torch::tensor
@@ -82,26 +82,26 @@ torch::Tensor AMQPBackend::DispatchMatMul(torch::Tensor& mat_a,
       auto func = [this, &mat_a, &mat_b, r, c]() {
         CallMatMulBlock(mat_a, mat_b, r, c);
       };
-      LOG_DEBUG("Dispatching block {}, {}", r, c);
+      LOG_DEBUG << "Dispatching block " << r << ", " << c;
       futures.push_back(
           std::async(std::launch::async, std::forward<decltype(func)>(func)));
     }
   }
 
-  LOG_DEBUG("Waiting for futures to finish");
+  LOG_DEBUG << "Waiting for futures to finish";
   for (auto& future : futures) {
     future.wait();
   }
 
   // wait for output matrix to be filled
-  LOG_DEBUG("Waiting for output matrix to be filled");
+  LOG_DEBUG << "Waiting for output matrix to be filled";
   // std::unique_lock<std::mutex> lock(mutex_);
   // cv_.wait(lock, [this] { return request_map_.empty(); });
   while (!request_map_.empty()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 
-  LOG_DEBUG("Output matrix filled");
+  LOG_DEBUG << "Output matrix filled";
   return output_matrix_;
 }
 
@@ -110,8 +110,8 @@ void AMQPBackend::CreateOutputMatrix(const torch::Tensor& mat_a,
   auto a_shape = mat_a.sizes().vec();
   auto b_shape = mat_b.sizes().vec();
 
-  LOG_DEBUG("Creating output matrix, A shape: {}, B shape: {}", a_shape,
-            b_shape);
+  LOG_DEBUG << "Creating output matrix, A shape: " << a_shape
+            << ", B shape: " << b_shape;
 
   int64_t in_dim = a_shape[a_shape.size() - 2];
   int64_t out_dim = b_shape[b_shape.size() - 1];
@@ -137,7 +137,7 @@ void AMQPBackend::CreateOutputMatrix(const torch::Tensor& mat_a,
   output_matrix_ = torch::empty(c_shape);
   // fill with nan
   output_matrix_.fill_(std::nan(""));
-  LOG_DEBUG("Output matrix shape: {}", output_matrix_.sizes().vec());
+  LOG_DEBUG << "Output matrix shape: " << output_matrix_.sizes().vec();
 }
 
 void AMQPBackend::HandleRsp() {
@@ -168,8 +168,8 @@ void AMQPBackend::HandleRsp() {
     MatMulResponseMessage response_message;
     response_message.Deserialize(response);
 
-    LOG_DEBUG("Received response, row: {}, col: {}", response_message.row,
-              response_message.col);
+    LOG_DEBUG << "Received response, row: " << response_message.row
+              << ", col: " << response_message.col;
 
     // Update output matrix
     int64_t r = response_message.row;
@@ -186,29 +186,29 @@ void AMQPBackend::HandleRsp() {
     int64_t end_c =
         std::min(offset_c + block_size_, out_shape[out_shape.size() - 1]);
 
-    LOG_DEBUG("Updating output matrix, row: {}, col: {}, with mat size {}", r,
-              c, response_message.mat.sizes().vec());
+    LOG_DEBUG << "Updating output matrix, row: " << r << ", col: " << c
+              << ", with mat size " << response_message.mat.sizes().vec();
 
     {
       // std::lock_guard<std::mutex> lock(mutex_);
-      LOG_DEBUG("Updating output matrix, row: {}, col: {}", r, c);
+      LOG_DEBUG << "Updating output matrix, row: " << r << ", col: " << c;
       if (ld.size() > 0) {
         torch::Tensor ld_vec = torch::tensor(ld);
         // output_matrix_.index_put_(
         //     {ld_vec, torch::indexing::Slice(offset_r, end_r),
         //      torch::indexing::Slice(offset_c, end_c)},
         //     response_message.mat);
-        LOG_DEBUG("Updated output matrix, row: {}, col: {}", r, c);
+        LOG_DEBUG << "Updated output matrix, row: " << r << ", col: " << c;
       } else {
         // output_matrix_.index_put_({torch::indexing::Slice(offset_r, end_r),
         //                            torch::indexing::Slice(offset_c, end_c)},
         //                           response_message.mat);
-        LOG_DEBUG("Updated output matrix, row: {}, col: {}", r, c);
+        LOG_DEBUG << "Updated output matrix, row: " << r << ", col: " << c;
       }
 
       uint64_t req_key = (r << 32) | c;
       request_map_.erase(req_key);
-      LOG_DEBUG("Erased request, row: {}, col: {}", r, c);
+      LOG_DEBUG << "Erased request, row: " << r << ", col: " << c;
       // amqp_basic_ack(conn_, rsp_channel_, envelope.delivery_tag, 0);
       amqp_destroy_envelope(&envelope);
     }
@@ -220,7 +220,7 @@ void AMQPBackend::HandleRsp() {
     // ack message
 
     // lock.unlock();
-    LOG_DEBUG("Acked message, row: {}, col: {}", r, c);
+    LOG_DEBUG << "Acked message, row: " << r << ", col: " << c;
   }
 }
 
@@ -260,7 +260,7 @@ void AMQPBackend::DispatchMatMulBlock(torch::Tensor mat_a, torch::Tensor mat_b,
     request_map_[req_key]->mat.emplace_back(b_cols);
     request_map_[req_key]->Serialize();
 
-    LOG_DEBUG("Dispatching message, row: {}, col: {}", r, c);
+    LOG_DEBUG << "Dispatching message, row: " << r << ", col: " << c;
   }
 
   // Generate UUID
@@ -285,7 +285,7 @@ void AMQPBackend::DispatchMatMulBlock(torch::Tensor mat_a, torch::Tensor mat_b,
   amqp_basic_publish(conn_, req_channel_, amqp_cstring_bytes(""),
                      amqp_cstring_bytes("mm_request_queue"), 0, 0, &props,
                      message_bytes);
-  LOG_DEBUG("Published message, row: {}, col: {}", r, c);
+  LOG_DEBUG << "Published message, row: " << r << ", col: " << c;
 }
 
 // //

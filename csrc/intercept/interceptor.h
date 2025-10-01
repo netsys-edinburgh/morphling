@@ -1,6 +1,6 @@
 #pragma once
 
-#include "client.h"
+// #include "client.h"
 #include "memory/caching_allocator.h"
 #include "utils/logger.h"
 
@@ -42,10 +42,10 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
                T* c, const int* ldc) {                                         \
     if (!orig_##name) {                                                        \
       void* handle_lib = dlopen(LIB, RTLD_LAZY);                               \
-      LOG_FATAL_IF(!handle_lib, "Error loading MKL library: {}", dlerror());   \
+      LOG_FATAL_IF(!handle_lib) << "Error loading MKL library: " << dlerror(); \
       orig_##name = (name##_type)dlsym(handle_lib, #name "_");                 \
-      LOG_FATAL_IF(!orig_##name, "Error loading original " #name "_: {}",      \
-                   dlerror());                                                 \
+      LOG_FATAL_IF(!orig_##name)                                               \
+          << "Error loading original " << #name << "_: " << dlerror();         \
     }                                                                          \
     LOG_DEBUG(                                                                 \
         "Intercepted {}; args transa: {}, transb: {}, m: {}, n: {}, k: "       \

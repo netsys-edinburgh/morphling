@@ -1,4 +1,6 @@
 #pragma once
+#include <rapidjson/document.h>
+
 #include <cstdint>
 #include <string>
 #include <tuple>
@@ -19,7 +21,33 @@ typedef std::size_t NodeID;
 typedef std::uint64_t GraphID;
 typedef std::uint64_t RequestID;
 
-struct ShmMeta;
+struct ShmMeta {
+  int id;
+  void* ptr;
+  size_t size;
+  std::string name;
+  bool is_remote = false;
+};
+
+struct ParamMeta {
+  uint32_t id;
+  size_t size;
+  // size_t shm_offset;
+  size_t file_offset;
+
+  void FromJson(const rapidjson::Value& json_obj) {
+    if (json_obj.HasMember("id")) {
+      id = json_obj["id"].GetUint();
+    }
+    if (json_obj.HasMember("size")) {
+      size = json_obj["size"].GetUint64();
+    }
+    if (json_obj.HasMember("file_offset")) {
+      file_offset = json_obj["file_offset"].GetUint64();
+    }
+  }
+};
+
 typedef std::unordered_map<std::string, ShmMeta> ParamShmMap;
 
 // #define KB 1024
@@ -84,29 +112,20 @@ constexpr void* pointer_to_void(const T* ptr) {
   if (s == #value) return EnumType::value;
 
 // Macro to define enum class, enum to string, and string to enum functions
-#define DEFINE_ENUM_CLASS(EnumType, ENUM_VALUES)                              \
-  enum class EnumType { ENUM_VALUES(ENUM_ENTRY_COMMA, EnumType) Unknown };    \
-                                                                              \
-  /* Enum to string function */                                               \
-  inline const char* EnumType##ToString(EnumType v) {                         \
-    switch (v) {                                                              \
-      ENUM_VALUES(ENUM_CASE, EnumType)                                        \
-      default:                                                                \
-        return "Unknown";                                                     \
-    }                                                                         \
-  }                                                                           \
-                                                                              \
-  /* String to enum function */                                               \
-  inline EnumType StringTo##EnumType(const std::string& s) {                  \
-    ENUM_VALUES(STRING_CASE, EnumType)                                        \
-    return EnumType::Unknown;                                                 \
-  }                                                                           \
-                                                                              \
-  /* Specialize fmt::formatter for spdlog support */                          \
-  template <>                                                                 \
-  struct fmt::formatter<EnumType> : fmt::formatter<std::string> {             \
-    template <typename FormatContext>                                         \
-    auto format(EnumType v, FormatContext& ctx) {                             \
-      return fmt::formatter<std::string>::format(EnumType##ToString(v), ctx); \
-    }                                                                         \
-  };
+#define DEFINE_ENUM_CLASS(EnumType, ENUM_VALUES)                           \
+  enum class EnumType { ENUM_VALUES(ENUM_ENTRY_COMMA, EnumType) Unknown }; \
+                                                                           \
+  /* Enum to string function */                                            \
+  inline const char* EnumType##ToString(EnumType v) {                      \
+    switch (v) {                                                           \
+      ENUM_VALUES(ENUM_CASE, EnumType)                                     \
+      default:                                                             \
+        return "Unknown";                                                  \
+    }                                                                      \
+  }                                                                        \
+                                                                           \
+  /* String to enum function */                                            \
+  inline EnumType StringTo##EnumType(const std::string& s) {               \
+    ENUM_VALUES(STRING_CASE, EnumType)                                     \
+    return EnumType::Unknown;                                              \
+  }

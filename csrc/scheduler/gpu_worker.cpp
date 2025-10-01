@@ -13,18 +13,18 @@ void GPUWorker::RunCublasGemm(std::shared_ptr<GemmArgs> args) {
   //   LOG_FATAL("Grouped gemm not supported yet");
   // }
 
-  LOG_DEBUG("Running cublasSgemm_v2 on GPU {} with {}", gpu_id_,
-            args->DebugString());
+  LOG_DEBUG << "Running cublasSgemm_v2 on GPU " << gpu_id_ << " with "
+            << args->DebugString();
 
   // allocate device memory for matrices A, B, and C
   auto [size_a, size_b, size_c] = CalculateTaskSizes(args.get());
-  LOG_DEBUG("Allocating device memory for matrices A: {}, B: {}, and C: {}",
-            size_a, size_b, size_c);
+  LOG_DEBUG << "Allocating device memory for matrices A: " << size_a
+            << ", B: " << size_b << ", and C: " << size_c;
   auto* d_A = (float*)allocator_->Allocate(size_a);
   auto* d_B = (float*)allocator_->Allocate(size_b);
   auto* d_C = (float*)allocator_->Allocate(size_c);
 
-  LOG_DEBUG("Allocated device memory for matrices A, B, and C");
+  LOG_DEBUG << "Allocated device memory for matrices A, B, and C";
 
   // validate leading dimensions
   CUDA_MEMCPY_LOOP(args->transa[0], d_A, args->a[0], args->lda[0], args->m[0],
@@ -32,13 +32,13 @@ void GPUWorker::RunCublasGemm(std::shared_ptr<GemmArgs> args) {
   CUDA_MEMCPY_LOOP(args->transb[0], d_B, args->b[0], args->ldb[0], args->k[0],
                    args->n[0], cudaMemcpyHostToDevice);
 
-  LOG_DEBUG("Copied matrices A and B to device");
+  LOG_DEBUG << "Copied matrices A and B to device";
 
   // Set cuBLAS operation modes
   cublasOperation_t transa = CUDA_TRANS_OP(args->transa[0]);
   cublasOperation_t transb = CUDA_TRANS_OP(args->transb[0]);
 
-  LOG_DEBUG("Set cuBLAS operation modes");
+  LOG_DEBUG << "Set cuBLAS operation modes";
 
   // Perform matrix multiplication
   CHECK_CUBLAS_ERROR(cublasSgemm_v2(
@@ -51,11 +51,11 @@ void GPUWorker::RunCublasGemm(std::shared_ptr<GemmArgs> args) {
       args->lda[0], args->ldb[0], args->ldc[0]);
   CUDA_MEMCPY_LOOP('N', args->c[0], d_C, args->ldc[0], args->m[0], args->n[0],
                    cudaMemcpyDeviceToHost);
-  LOG_DEBUG("Copied matrix C back to host");
+  LOG_DEBUG << "Copied matrix C back to host";
   allocator_->Free(d_A);
   allocator_->Free(d_B);
   allocator_->Free(d_C);
-  LOG_DEBUG("Freed device memory for matrices A, B, and C");
+  LOG_DEBUG << "Freed device memory for matrices A, B, and C";
 }
 
 // void GPUWorker::EnqueueGemm(std::shared_ptr<GemmArgs> args) {
@@ -91,15 +91,15 @@ GPUWorker::GPUWorker(int gpu_id, size_t size)
       out_stream_(nullptr),
       comp_stream_(nullptr) {
   worker_ = std::thread([this] { Run(); });
-  LOG_INFO("GPUWorker created on {} with buffer size {}GB", gpu_id,
-           int(size / GB));
+  LOG_INFO << "GPUWorker created on " << gpu_id << " with buffer size "
+           << int(size / GB) << "GB";
 }
 
 GPUWorker::~GPUWorker() {
   cudaStreamDestroy(in_stream_);
   cudaStreamDestroy(out_stream_);
   cudaStreamDestroy(comp_stream_);
-  LOG_INFO("GPUWorker destroyed on {}", gpu_id_);
+  LOG_INFO << "GPUWorker destroyed on " << gpu_id_;
 }
 
 GPUWorkerPool::GPUWorkerPool(size_t size, SchedulingPolicyType policy)
@@ -115,11 +115,12 @@ GPUWorkerPool::GPUWorkerPool(size_t size, SchedulingPolicyType policy)
       scheduler_ = std::make_unique<RoundRobinGemmPolicy>(device_count);
       break;
     default:
-      LOG_FATAL("Unsupported scheduling policy type: {}", policy);
+      LOG_FATAL << "Unsupported scheduling policy type: "
+                << SchedulingPolicyTypeToString(policy);
   }
 
-  LOG_INFO("GPUWorkerPool created with {} workers, policy: {}", device_count,
-           policy);
+  LOG_INFO << "GPUWorkerPool created with " << device_count
+           << " workers, policy: " << SchedulingPolicyTypeToString(policy);
 }
 
 GPUWorkerPool::~GPUWorkerPool() {

@@ -97,17 +97,19 @@ RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && \
 
 # 升级 pip 并安装基础 Python 包
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
-
+RUN python3 -m pip install --no-cache-dir torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu121
 
 # 创建工作目录
 WORKDIR /app
 
+# copy requirements.txt first to leverage Docker cache
+COPY requirements.txt /app/
+# 安装 Python 依赖和 PyTorch（直接用 pip）
+RUN python3 -m pip install --no-cache-dir -r /app/requirements.txt
+
+
 # 复制项目文件
 COPY . /app/
-
-# 安装 Python 依赖和 PyTorch（直接用 pip）
-RUN python3 -m pip install --no-cache-dir torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu121 && \
-    python3 -m pip install --no-cache-dir -r /app/requirements.txt
 
 # 构建和安装项目（使用系统 python）
 # 先设置CMake环境变量来帮助找到Python库
@@ -120,12 +122,12 @@ RUN if [ -f /usr/lib/x86_64-linux-gnu/libpython3.10.so.1.0 ]; then \
 fi && \
 ls -la /usr/lib/x86_64-linux-gnu/libpython3.10* || echo "Warning: No libpython3.10 found"
 
-# 安装 RTTR (librttr) v0.9.6 from GitHub
-RUN git clone --branch v0.9.6 --depth=1 https://github.com/rttrorg/rttr.git /tmp/rttr && \
-    mkdir -p /tmp/rttr/build && cd /tmp/rttr/build && \
-    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=OFF -DBUILD_UNIT_TESTS=OFF -DBUILD_DOCUMENTATION=OFF -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
-    make -j && make install && \
-    rm -rf /tmp/rttr
+# # 安装 RTTR (librttr) v0.9.6 from GitHub
+# RUN git clone --branch v0.9.6 --depth=1 https://github.com/rttrorg/rttr.git /tmp/rttr && \
+#     mkdir -p /tmp/rttr/build && cd /tmp/rttr/build && \
+#     cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=OFF -DBUILD_UNIT_TESTS=OFF -DBUILD_DOCUMENTATION=OFF -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+#     make -j && make install && \
+#     rm -rf /tmp/rttr
 # 临时修复CMakeLists.txt以启用Python Development包查找
 RUN sed -i 's/# find_package(Python COMPONENTS Development REQUIRED)/find_package(Python COMPONENTS Development REQUIRED)/' /app/CMakeLists.txt
 

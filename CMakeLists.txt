@@ -36,7 +36,6 @@ message(STATUS "CMAKE_BINARY_DIR: ${CMAKE_BINARY_DIR}")
 # set(UMPIRE_INCLUDE_DIRS ${EXTERNAL_DIR}/umpire/src ${EXTERNAL_DIR}/umpire/build/include)
 # set(UMPIRE_LIBRARY_DIRS ${EXTERNAL_DIR}/umpire/build/lib)
 
-# RTTR Support Flags
 set(BUILD_UNIT_TESTS OFF)
 set(BUILD_EXAMPLES OFF)
 
@@ -74,26 +73,14 @@ FetchContent_Declare(
 # GIT_REPOSITORY https://github.com/google/glog.git
 # GIT_TAG v0.6.0
 # )
-FetchContent_Declare(
-  rttr
-  GIT_REPOSITORY https://github.com/rttrorg/rttr.git
-  GIT_TAG v0.9.6
-)
+
 FetchContent_Declare(
   rapidjson
   GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
   GIT_TAG v1.1.0
 )
-FetchContent_Declare(
-  grpc
-  GIT_REPOSITORY https://github.com/grpc/grpc.git
-  GIT_TAG v1.48.4
-)
-FetchContent_Declare(
-  spdlog
-  GIT_REPOSITORY https://github.com/gabime/spdlog.git
-  GIT_TAG v1.14.1
-)
+
+
 FetchContent_Declare(
   rabbitmq
   GIT_REPOSITORY https://github.com/alanxz/rabbitmq-c.git
@@ -118,14 +105,15 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
   GIT_TAG 1.3.13
 )
-FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags rabbitmq mosquitto redis tcmalloc)
+FetchContent_MakeAvailable(rapidjson gflags rabbitmq mosquitto redis tcmalloc)
 
 # if(NOT rabbitmq_POPULATED)
 #     FetchContent_Populate(rabbitmq)
 #     add_subdirectory(${rabbitmq_SOURCE_DIR} ${rabbitmq_BINARY_DIR})
 # endif()
 
-set(gRPC_INSTALL ON) # Install gRPC for TARGET_FILE
+# Use system-installed protobuf
+find_package(Protobuf REQUIRED)
 
 if(DEFINED ENV{CONDA_PREFIX})
   set(CONDA_PREFIX_PATH $ENV{CONDA_PREFIX})
@@ -193,18 +181,9 @@ find_library(torch_python_LIBRARY torch_python PATHS
 message(STATUS "torch_python_LIBRARY: ${torch_python_LIBRARY}")
 
 # Find the protoc executable
-# find_program(_PROTOBUF_PROTOC protoc)
-# find_program(_GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin)
-set(_PROTOBUF_LIBPROTOBUF libprotobuf)
-set(_PROTOBUF_PROTOC $<TARGET_FILE:protoc>)
-set(_GRPC_GRPCPP grpc++)
-set(_GRPC_CPP_PLUGIN_EXECUTABLE $<TARGET_FILE:grpc_cpp_plugin>)
-
-# Protobuf and gRPC libraries
-# set(_PROTOBUF_LIBPROTOBUF libprotobuf)
-# set(_PROTOBUF_PROTOC $<TARGET_FILE:protoc>)
-# set(_GRPC_GRPCPP grpc++)
-# set(_GRPC_CPP_PLUGIN_EXECUTABLE $<TARGET_FILE:grpc_cpp_plugin>)
+# Use system protobuf
+set(_PROTOBUF_LIBPROTOBUF ${Protobuf_LIBRARIES})
+set(_PROTOBUF_PROTOC ${Protobuf_PROTOC_EXECUTABLE})
 
 # Proto file
 get_filename_component(hw_proto "proto/morphling.proto" ABSOLUTE)
@@ -213,11 +192,8 @@ get_filename_component(hw_proto_path "${hw_proto}" PATH)
 # Generated sources
 set(hw_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/morphling.pb.cc")
 set(hw_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/morphling.pb.h")
-set(hw_grpc_srcs "${CMAKE_CURRENT_BINARY_DIR}/morphling.grpc.pb.cc")
-set(hw_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/morphling.grpc.pb.h")
 
 message(STATUS "_PROTOBUF_PROTOC: ${_PROTOBUF_PROTOC}")
-message(STATUS "_GRPC_CPP_PLUGIN_EXECUTABLE: ${_GRPC_CPP_PLUGIN_EXECUTABLE}")
 
 message(STATUS "Python3_LIBRARIES: ${Python3_LIBRARIES}")
 
@@ -253,17 +229,15 @@ message(STATUS "Python3_LIBRARIES: ${Python3_LIBRARIES}")
 # endforeach()
 add_custom_target(
   generate_proto_files ALL
-  DEPENDS "${hw_proto_srcs}" "${hw_proto_hdrs}" "${hw_grpc_srcs}" "${hw_grpc_hdrs}"
+  DEPENDS "${hw_proto_srcs}" "${hw_proto_hdrs}"
 )
 
 add_custom_command(
-  OUTPUT "${hw_proto_srcs}" "${hw_proto_hdrs}" "${hw_grpc_srcs}" "${hw_grpc_hdrs}"
+  OUTPUT "${hw_proto_srcs}" "${hw_proto_hdrs}"
   COMMAND ${_PROTOBUF_PROTOC}
-  ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
-  --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+  ARGS --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
   --python_out "${CMAKE_CURRENT_BINARY_DIR}"
   -I "${hw_proto_path}"
-  --plugin=protoc-gen-grpc=${_GRPC_CPP_PLUGIN_EXECUTABLE}
   "${hw_proto}"
   DEPENDS "${hw_proto}"
   VERBATIM
@@ -274,19 +248,9 @@ include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Python3_INCLUDE_DIRS}
   ${CONDA_PREFIX_PATH}/include
-  ${rttr_SOURCE_DIR}/src
-  ${rttr_BINARY_DIR}/src
   ${absl_SOURCE_DIR}
-  ${grpc_SOURCE_DIR}/include
   ${protobuf_SOURCE_DIR}/src
-  ${spdlog_SOURCE_DIR}/include
   ${rabbitmq_SOURCE_DIR}/include
-  ${rabbitmq_BINARY_DIR}/include
-  ${mosquitto_SOURCE_DIR}/include
-  ${redis_SOURCE_DIR}/src
-  ${redis_SOURCE_DIR}/src/sw/redis++/cxx17
-  ${redis_SOURCE_DIR}/src/sw/redis++/no_tls
-  ${redis_BINARY_DIR}/src
 )
 
 link_directories(
@@ -319,29 +283,28 @@ file(GLOB BASE_SRC "csrc/base/*.cc")
 # )
 # target_include_directories(morphling PUBLIC "csrc" ${CUDA_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS})
 
-message(STATUS "rttr_SOURCE_DIR: ${rttr_SOURCE_DIR}")
 message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
 
 # set (MORPHLING_EXT_INCLUDE_DIRS
 
 # )
 
-add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs}
-  "csrc/scheduler/gpu_worker.cpp" ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC}
-)
-add_dependencies(morphling_server generate_proto_files)
-target_link_libraries(morphling_server PRIVATE
-  gflags::gflags fmt
-  ${_PROTOBUF_LIBPROTOBUF}
-  grpc++ grpc++_reflection
-  libspdlog.so
-  rttr_core uuid
-  CUDA::cublas CUDA::cudart
-  libpython${Python_VERSION}.so
-  ${TORCH_LIBRARIES}
-  rabbitmq
-)
-target_include_directories(morphling_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
+# Removed morphling_server executable since gRPC server is no longer needed
+# add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs}
+#   "csrc/scheduler/gpu_worker.cpp" ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC}
+# )
+# add_dependencies(morphling_server generate_proto_files)
+# target_link_libraries(morphling_server PRIVATE
+#   gflags::gflags fmt
+#   ${_PROTOBUF_LIBPROTOBUF}
+#   libspdlog.so
+#   uuid
+#   CUDA::cublas CUDA::cudart
+#   libpython${Python_VERSION}.so
+#   ${TORCH_LIBRARIES}
+#   rabbitmq
+# )
+# target_include_directories(morphling_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
 
 # add_executable(morphling_worker_server "csrc/worker_server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs})
 # add_dependencies(morphling_worker_server generate_proto_files)
@@ -381,20 +344,17 @@ get_torch_gpu_compiler_flags(MORPHLING_GPU_FLAGS ${MORPHLING_GPU_LANG})
 # _C extension
 #
 set(MORPHLING_EXT_SRC
-  ${CHECKPOINT_SRC}
-  ${MEMORY_SRC}
   ${UTILS_SRC}
+  ${BASE_SRC}
   ${INTERCEPT_SRC}
   ${hw_proto_srcs}
-  ${hw_grpc_srcs}
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
   # ${TORCH_LIBRARIES}
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
-  libspdlog.so rttr_core
-  grpc++ grpc++_reflection
+  ${Protobuf_LIBRARIES}
   rabbitmq
 )
 
@@ -426,9 +386,9 @@ set(MORPHLING_MSG_SRC
 )
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
-  uuid Threads::Threads fmt rttr_core
+  uuid Threads::Threads fmt
   rabbitmq libmosquitto
-  libspdlog.so
+  ${Protobuf_LIBRARIES}
   redis++
   hiredis
   event

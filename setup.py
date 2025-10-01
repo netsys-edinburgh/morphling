@@ -294,9 +294,9 @@ setup(
     ext_modules=[
         CMakeExtension(name="morphling._C", target_type="shared"),
         CMakeExtension(name="morphling._Msg", target_type="shared"),
-        CMakeExtension(
-            name="morphling.morphling_server", target_type="executable"
-        ),
+        # CMakeExtension(
+        #     name="morphling.morphling_server", target_type="executable"
+        # ),
         # CMakeExtension(
         #     name="morphling.morphling_worker_server", target_type="executable"
         # ),
@@ -319,7 +319,7 @@ setup(
         "morphling": [
             "py.typed",
             "*.so",
-            "morphling_server",
+            # "morphling_server",
             "morphling_worker_server",
         ],
     },
