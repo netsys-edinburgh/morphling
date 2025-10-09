@@ -22,19 +22,23 @@ show_help() {
     echo "Usage: $0 [COMMAND] [ARGS...]"
     echo ""
     echo "Commands:"
-    echo "  build     - 重新构建 Docker 镜像"
-    echo "  start     - 启动开发容器"
-    echo "  stop      - 停止容器"
-    echo "  restart   - 重启容器"
-    echo "  shell     - 进入容器 shell"
-    echo "  rebuild   - 在容器内重新编译 morphling"
-    echo "  test      - 运行测试"
-    echo "  run [cmd] - 在容器内运行命令"
-    echo "  logs      - 查看容器日志"
-    echo "  clean     - 清理容器和卷"
+    echo "  build          - 重新构建 Docker 镜像 (GPU 模式)"
+    echo "  build-cpu      - 重新构建 Docker 镜像 (CPU 模式)"
+    echo "  start          - 启动开发容器 (GPU 模式)"
+    echo "  start-cpu      - 启动开发容器 (CPU 模式)"
+    echo "  stop           - 停止容器"
+    echo "  restart        - 重启容器 (GPU 模式)"
+    echo "  restart-cpu    - 重启容器 (CPU 模式)"
+    echo "  shell          - 进入容器 shell"
+    echo "  rebuild        - 在容器内重新编译 morphling"
+    echo "  test           - 运行测试"
+    echo "  run [cmd]      - 在容器内运行命令"
+    echo "  logs           - 查看容器日志"
+    echo "  clean          - 清理容器和卷"
     echo ""
     echo "Examples:"
-    echo "  $0 start"
+    echo "  $0 start          # 启动GPU模式"
+    echo "  $0 start-cpu      # 启动CPU模式"
     echo "  $0 shell"
     echo "  $0 rebuild"
     echo "  $0 run python3 scripts/run_devices.py --num_devices 4 --model_name facebook/opt-125m --backend proxy"
@@ -50,15 +54,30 @@ check_docker_compose() {
 
 # 函数：构建镜像
 build_image() {
-    echo -e "${YELLOW}Building Docker image...${NC}"
+    echo -e "${YELLOW}Building Docker image (GPU mode)...${NC}"
     docker-compose build device-emulator
+    echo -e "${GREEN}Build completed${NC}"
+}
+
+# 函数：构建镜像 (CPU模式)
+build_image_cpu() {
+    echo -e "${YELLOW}Building Docker image (CPU mode)...${NC}"
+    docker-compose -f docker-compose.yml -f docker-compose.cpu.yml build device-emulator
     echo -e "${GREEN}Build completed${NC}"
 }
 
 # 函数：启动容器
 start_container() {
-    echo -e "${YELLOW}Starting development container...${NC}"
+    echo -e "${YELLOW}Starting development container (GPU mode)...${NC}"
     docker-compose up -d device-emulator
+    echo -e "${GREEN}Container started${NC}"
+    echo -e "${BLUE}Run '$0 shell' to enter the container${NC}"
+}
+
+# 函数：启动容器 (CPU模式)
+start_container_cpu() {
+    echo -e "${YELLOW}Starting development container (CPU mode)...${NC}"
+    docker-compose -f docker-compose.yml -f docker-compose.cpu.yml up -d device-emulator
     echo -e "${GREEN}Container started${NC}"
     echo -e "${BLUE}Run '$0 shell' to enter the container${NC}"
 }
@@ -72,8 +91,15 @@ stop_container() {
 
 # 函数：重启容器
 restart_container() {
-    echo -e "${YELLOW}Restarting containers...${NC}"
+    echo -e "${YELLOW}Restarting containers (GPU mode)...${NC}"
     docker-compose restart device-emulator
+    echo -e "${GREEN}Container restarted${NC}"
+}
+
+# 函数：重启容器 (CPU模式)
+restart_container_cpu() {
+    echo -e "${YELLOW}Restarting containers (CPU mode)...${NC}"
+    docker-compose -f docker-compose.yml -f docker-compose.cpu.yml restart device-emulator
     echo -e "${GREEN}Container restarted${NC}"
 }
 
@@ -124,14 +150,23 @@ case "${1:-help}" in
     "build")
         build_image
         ;;
+    "build-cpu")
+        build_image_cpu
+        ;;
     "start")
         start_container
+        ;;
+    "start-cpu")
+        start_container_cpu
         ;;
     "stop")
         stop_container
         ;;
     "restart")
         restart_container
+        ;;
+    "restart-cpu")
+        restart_container_cpu
         ;;
     "shell")
         enter_shell
