@@ -1,15 +1,12 @@
-#include  py::class_<ProxySvr>(m, "ProxySvr")
-      .def(py::init<>())
-      .def("initialize", &ProxySvr::Initialize)
-      .def("start", &ProxySvr::Start)
-      .def("async_dispatch_matmul", &ProxySvr::DispatchMatMulAsync)
-      .def("wait_matmul", &ProxySvr::WaitMatMul)
-      .def("get_connection_count", &ProxySvr::GetConnectionCount);h/extension.h>
+#include <pybind11/pybind11.h>
+#include <torch/extension.h>
 
 #include "backend/mqtt_server.h"
 #include "backend/mqtt_worker.h"
 #include "backend/proxy_cli.h"
 #include "backend/proxy_svr.h"
+
+namespace py = pybind11;
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<ProxySvr>(m, "ProxySvr")
