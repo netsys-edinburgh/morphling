@@ -12,6 +12,8 @@
 #include "scheduler/amqp_dispatcher.h"
 #include "scheduler/amqp_worker.h"
 
+namespace py = pybind11;
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<AMQPBackend>(m, "AMQPBackend")
       .def(py::init<const std::string&, uint32_t>())
@@ -23,7 +25,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("initialize", &ProxySvr::Initialize)
       .def("start", &ProxySvr::Start)
       .def("async_dispatch_matmul", &ProxySvr::DispatchMatMulAsync)
-      .def("wait_matmul", &ProxySvr::WaitMatMul);
+      .def("wait_matmul", &ProxySvr::WaitMatMul)
+      .def("get_connection_count", &ProxySvr::GetConnectionCount);
 
   py::class_<ProxyCli>(m, "ProxyCli")
       .def(py::init<>())
