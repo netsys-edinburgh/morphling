@@ -378,10 +378,17 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
 
 void ProxySvrImpl::RephrasePartitions(
     std::vector<MatrixPartition>& partitions) {
-  LOG_INFO << "[RephrasePartitions] Starting with " << partitions.size() << " partitions, num_device=" << ctx_.num_device;
+  // Use actual number of connected devices instead of configured num_device
+  int actual_num_devices = static_cast<int>(conn_map_.size());
+  LOG_INFO << "[RephrasePartitions] Starting with " << partitions.size() << " partitions, configured num_device=" << ctx_.num_device << ", actual connected devices=" << actual_num_devices;
   
-  std::vector<float> device_time(ctx_.num_device, 0);
-  std::vector<std::unordered_set<TensorKey>> device_tensors(ctx_.num_device);
+  if (actual_num_devices == 0) {
+    LOG_ERROR << "[RephrasePartitions] No devices connected!";
+    return;
+  }
+  
+  std::vector<float> device_time(actual_num_devices, 0);
+  std::vector<std::unordered_set<TensorKey>> device_tensors(actual_num_devices);
 
   LOG_INFO << "[RephrasePartitions] Initialized device_time vector with size " << device_time.size();
 
@@ -398,9 +405,9 @@ void ProxySvrImpl::RephrasePartitions(
     bool min_r_cached = false;
     bool min_c_cached = false;
     
-    LOG_INFO << "[RephrasePartitions] Processing partition " << part_idx << " - checking " << ctx_.num_device << " devices";
+    LOG_INFO << "[RephrasePartitions] Processing partition " << part_idx << " - checking " << actual_num_devices << " devices";
     
-    for (int i = 0; i < ctx_.num_device; i++) {
+    for (int i = 0; i < actual_num_devices; i++) {
       auto& tensors = device_tensors[i];
 
       bool r_cached = tensors.find(tensor_key_row) != tensors.end();
