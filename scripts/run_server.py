@@ -51,11 +51,17 @@ def start_backend_sync(backend_name: str, block_size: int):
         backend = AutoBackend.from_name(backend_name)
         # proxy/mqtt backends expose start() instead of async connect
         if hasattr(backend, "initialize"):
-            try:
-                backend.initialize()
-            except TypeError:
-                # initialize may accept args in some versions; ignore
-                backend.initialize(None)
+            if backend_name == "proxy":
+                # ProxySvr.initialize() expects a config file path
+                import os
+                config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "proxy", "svr.ini")
+                backend.initialize(config_path)
+            else:
+                try:
+                    backend.initialize()
+                except TypeError:
+                    # initialize may accept args in some versions; ignore
+                    backend.initialize(None)
         if hasattr(backend, "start"):
             backend.start()
     else:
