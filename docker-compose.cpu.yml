@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Docker Compose override for CPU-only deployment
 services:
   device-emulator:
@@ -45,10 +43,9 @@ services:
     
     # CPU模式下使用更小的共享内存
     shm_size: 8g
-    
-    deploy:
-      resources: {}  # 移除GPU资源要求
-    
+
+    deploy: ~  # remove deploy block so GPU device requests from base are not merged
+
     # 使用入口点脚本
     entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
     # 保持容器运行
