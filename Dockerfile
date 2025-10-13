@@ -1,7 +1,7 @@
 # DeviceEmulator Dockerfile
 # Based on Ubuntu 22.04 with CUDA support
 
-FROM nvidia/cuda:12.6.0-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
 
 # 设置环境变量
 ENV DEBIAN_FRONTEND=noninteractive
@@ -95,17 +95,22 @@ RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && \
     # 检查Python开发包头文件
     ls -la /usr/include/python3.10/ || true
 
-# 升级 pip 并安装基础 Python 包
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
-RUN python3 -m pip install --no-cache-dir torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu121
+# 安装 uv (快速 Python 包管理器) pip install
+RUN pip install uv && \
+    # 检查 uv 是否安装成功
+    uv --version
+
+
+# 升级基础 Python 包并安装 PyTorch
+RUN uv pip install --system --no-cache torch==2.3.1 torchvision==0.18.1 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121
 
 # 创建工作目录
 WORKDIR /app
 
 # copy requirements.txt first to leverage Docker cache
 COPY requirements.txt /app/
-# 安装 Python 依赖和 PyTorch（直接用 pip）
-RUN python3 -m pip install --no-cache-dir -r /app/requirements.txt
+# 安装 Python 依赖和 PyTorch（使用 uv）
+RUN uv pip install --system --no-cache -r /app/requirements.txt
 
 
 # 复制项目文件
@@ -138,7 +143,7 @@ RUN export Python3_ROOT_DIR=/usr && \
     export CPPFLAGS="-I/usr/include/python3.10" && \
     export CMAKE_ARGS="-DPython3_EXECUTABLE=/usr/bin/python3.10 -DPython3_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so -DPython3_INCLUDE_DIR=/usr/include/python3.10 -DCMAKE_PREFIX_PATH=/usr" && \
     echo "=== 开始构建 ===" && \
-    python3 -m pip install --no-build-isolation --no-cache-dir --verbose .
+    uv pip install --system --no-build-isolation --no-cache --verbose .
 
 
 # 创建必要的目录
