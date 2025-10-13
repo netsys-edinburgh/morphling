@@ -185,13 +185,19 @@ message(STATUS "torch_python_LIBRARY: ${torch_python_LIBRARY}")
 set(_PROTOBUF_LIBPROTOBUF ${Protobuf_LIBRARIES})
 set(_PROTOBUF_PROTOC ${Protobuf_PROTOC_EXECUTABLE})
 
-# Proto file
+# Proto files
 get_filename_component(hw_proto "proto/morphling.proto" ABSOLUTE)
 get_filename_component(hw_proto_path "${hw_proto}" PATH)
+
+get_filename_component(global_api_proto "proto/global_api.proto" ABSOLUTE)
+get_filename_component(global_api_proto_path "${global_api_proto}" PATH)
 
 # Generated sources
 set(hw_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/morphling.pb.cc")
 set(hw_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/morphling.pb.h")
+
+set(global_api_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/global_api.pb.cc")
+set(global_api_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/global_api.pb.h")
 
 message(STATUS "_PROTOBUF_PROTOC: ${_PROTOBUF_PROTOC}")
 
@@ -229,7 +235,7 @@ message(STATUS "Python3_LIBRARIES: ${Python3_LIBRARIES}")
 # endforeach()
 add_custom_target(
   generate_proto_files ALL
-  DEPENDS "${hw_proto_srcs}" "${hw_proto_hdrs}"
+  DEPENDS "${hw_proto_srcs}" "${hw_proto_hdrs}" "${global_api_proto_srcs}" "${global_api_proto_hdrs}"
 )
 
 add_custom_command(
@@ -240,6 +246,18 @@ add_custom_command(
   -I "${hw_proto_path}"
   "${hw_proto}"
   DEPENDS "${hw_proto}"
+  VERBATIM
+)
+
+add_custom_command(
+  OUTPUT "${global_api_proto_srcs}" "${global_api_proto_hdrs}"
+  COMMAND ${_PROTOBUF_PROTOC}
+  ARGS --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+  --python_out "${CMAKE_CURRENT_BINARY_DIR}"
+  -I "${global_api_proto_path}"
+  -I "${hw_proto_path}"
+  "${global_api_proto}"
+  DEPENDS "${global_api_proto}" "${hw_proto}"
   VERBATIM
 )
 
@@ -377,6 +395,8 @@ set(MORPHLING_MSG_SRC
   ${NETWORK_SRC}
   ${BASE_SRC}
   ${COMMON_SRC}
+  ${hw_proto_srcs}
+  ${global_api_proto_srcs}
   "csrc/scheduler/amqp_dispatcher.cpp"
   "csrc/scheduler/amqp_worker.cpp"
   "csrc/python/client_py.cpp"
