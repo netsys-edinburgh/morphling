@@ -5,6 +5,8 @@
 #include <future>
 
 #include "common/types_and_defs.h"
+#include "morphling.pb.h"
+#include "global_api.pb.h"
 
 template <typename T>
 std::vector<std::vector<T>> CartesianProduct(const std::vector<T>& list) {
@@ -91,6 +93,10 @@ struct MatrixPartition {
   int64_t size_ = 0;         // size of the data
   std::tuple<void*, int64_t> Serialize() const;
   void Deserialize(const void* data, int64_t size);
+
+  // Protobuf serialization/deserialization
+  std::tuple<void*, int64_t> SerializeToProto() const;
+  void DeserializeFromProto(const void* data, int64_t size);
 
   TensorKey GetRowKey() const {
     return std::make_tuple(version, pivot, row, true);

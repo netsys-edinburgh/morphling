@@ -4,6 +4,7 @@
 #include <sys/mman.h>
 
 #include "common/generator.h"
+#include "global_api.pb.h"
 
 void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
                          int64_t c, int64_t pivot, int64_t block_size) {
@@ -336,4 +337,137 @@ std::string MatrixPartition::DebugString() const {
     oss << ", m_size: " << std::get<1>(mat_data);
   }
   return oss.str();
+}
+
+std::tuple<void*, int64_t> MatrixPartition::SerializeToProto() const {
+  // Create UMessage with ComputeGemmRequest
+  morphling::UMessage umsg;
+
+  // Set header fields
+  auto* head = umsg.mutable_head();
+  head->set_version(1);
+  head->set_magic_flag(0x12340987);
+  head->set_random_num(0);
+  head->set_flow_no(0);
+  head->set_session_no("");
+  head->set_message_type(morphling::global_api::COMPUTE_GEMM_REQUEST);
+
+  // Set body with ComputeGemmRequest extension
+  auto* body = umsg.mutable_body();
+  auto* gemm_req = body->MutableExtension(morphling::global_api::compute_gemm_request);
+
+  gemm_req->set_version(version);
+  gemm_req->set_row(row);
+  gemm_req->set_col(col);
+  gemm_req->set_pivot(pivot);
+  gemm_req->set_h_dim(h_dim);
+  gemm_req->set_dev_id(dev_id);
+  gemm_req->set_oid(oid);
+  gemm_req->set_timestamp(timestamp);
+
+  // Set matrix payloads (only metadata, actual data follows proto)
+  if (mat.size() > 0) {
+    auto* payload_a = gemm_req->mutable_matrix_a();
+    payload_a->set_offset(0);
+    payload_a->set_size(std::get<1>(mat[0]));
+  }
+
+  if (mat.size() > 1) {
+    auto* payload_b = gemm_req->mutable_matrix_b();
+    payload_b->set_offset(std::get<1>(mat[0]));
+    payload_b->set_size(std::get<1>(mat[1]));
+  }
+
+  // Serialize proto
+  std::string proto_str = umsg.SerializeAsString();
+  uint32_t proto_size = proto_str.size();
+
+  // Calculate total tensor size
+  int64_t tensor_size = 0;
+  for (const auto& m : mat) {
+    tensor_size += std::get<1>(m);
+  }
+
+  // Total size: 8 bytes header (proto_size + tensor_size) + proto + tensors
+  int64_t total_size = 8 + proto_size + tensor_size;
+  uint8_t* ptr = (uint8_t*)malloc(total_size);
+
+  // Write header (proto_size and tensor_size in big-endian)
+  uint32_t proto_size_be = htonl(proto_size);
+  uint32_t tensor_size_be = htonl(tensor_size);
+  memcpy(ptr, &proto_size_be, sizeof(uint32_t));
+  memcpy(ptr + 4, &tensor_size_be, sizeof(uint32_t));
+
+  // Write proto data
+  memcpy(ptr + 8, proto_str.data(), proto_size);
+
+  // Write tensor data
+  int64_t offset = 8 + proto_size;
+  for (const auto& m : mat) {
+    if (std::get<1>(m) > 0 && std::get<0>(m) != nullptr) {
+      memcpy(ptr + offset, std::get<0>(m), std::get<1>(m));
+      offset += std::get<1>(m);
+    }
+  }
+
+  return std::make_tuple(ptr, total_size);
+}
+
+void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
+  uint8_t* ptr = (uint8_t*)data;
+
+  // Read header
+  uint32_t proto_size_be, tensor_size_be;
+  memcpy(&proto_size_be, ptr, sizeof(uint32_t));
+  memcpy(&tensor_size_be, ptr + 4, sizeof(uint32_t));
+
+  uint32_t proto_size = ntohl(proto_size_be);
+  uint32_t tensor_size = ntohl(tensor_size_be);
+
+  // Parse proto
+  morphling::UMessage umsg;
+  if (!umsg.ParseFromArray(ptr + 8, proto_size)) {
+    throw std::runtime_error("Failed to parse UMessage from proto");
+  }
+
+  // Extract ComputeGemmRequest
+  const auto& body = umsg.body();
+  if (!body.HasExtension(morphling::global_api::compute_gemm_request)) {
+    throw std::runtime_error("UMessage does not contain compute_gemm_request");
+  }
+
+  const auto& gemm_req = body.GetExtension(morphling::global_api::compute_gemm_request);
+
+  // Fill MatrixPartition fields
+  version = gemm_req.version();
+  row = gemm_req.row();
+  col = gemm_req.col();
+  pivot = gemm_req.pivot();
+  h_dim = gemm_req.h_dim();
+  dev_id = gemm_req.dev_id();
+  oid = gemm_req.oid();
+  timestamp = gemm_req.timestamp();
+
+  // Extract tensor data pointers
+  int64_t tensor_offset = 8 + proto_size;
+
+  mat.clear();
+  if (gemm_req.has_matrix_a()) {
+    int64_t a_size = gemm_req.matrix_a().size();
+    if (a_size > 0) {
+      mat.push_back({ptr + tensor_offset, a_size});
+      tensor_offset += a_size;
+    }
+  }
+
+  if (gemm_req.has_matrix_b()) {
+    int64_t b_size = gemm_req.matrix_b().size();
+    if (b_size > 0) {
+      mat.push_back({ptr + tensor_offset, b_size});
+      tensor_offset += b_size;
+    }
+  }
+
+  ptr_ = ptr;
+  size_ = size;
 }

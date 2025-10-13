@@ -88,7 +88,8 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
 void ProxySvrHandle::HandleMatMul(const void* payload, size_t size) {
   auto start = std::chrono::high_resolution_clock::now();
   MatrixPartition partition;
-  partition.Deserialize(payload, size);
+  // Use protobuf deserialization instead of binary
+  partition.DeserializeFromProto(payload, size);
   auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
   LOG_DEBUG << part_key << " RSP Deserialization time: "
@@ -131,7 +132,8 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
                                 const MatrixPartitionPtr partition) {
   string client_addr = conn->GetPeerAddress().ToString();
   task_queue_.push_back([this, conn, partition, client_addr]() {
-    auto [data, size] = partition->Serialize();
+    // Use protobuf serialization instead of binary
+    auto [data, size] = partition->SerializeToProto();
     conn->SendData(data, size);
     free(data);
     conn_inflight_[client_addr] += 1;
