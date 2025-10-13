@@ -1,10 +1,52 @@
-version: '3.8'
-
 # Docker Compose override for CPU-only deployment
 services:
   device-emulator:
+    # 确保使用相同的构建配置
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - BUILD_TYPE=cpu  # 可选：构建时指定CPU模式
+    
+    # 保持相同的端口映射
+    ports:
+      - "8080:8080"
+      - "443:443"
+      - "39000:39000"
+      - "28516:28516"
+    
+    # 保持相同的卷挂载
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./config:/app/config
+      # 挂载源码目录用于开发
+      - ./csrc:/app/csrc
+      - ./morphling:/app/morphling
+      - ./scripts:/app/scripts
+      - ./proto:/app/proto
+      - ./op_builder:/app/op_builder
+      - ./examples:/app/examples
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./setup.py:/app/setup.py
+      - ./CMakeLists.txt:/app/CMakeLists.txt
+      - ./requirements.txt:/app/requirements.txt
+      # 挂载构建目录，避免重复构建
+      - morphling_build:/app/build
+    
     environment:
       - SPDLOG_LEVEL=debug
-      # 移除CUDA相关环境变量
-    deploy:
-      resources: {}  # 移除GPU资源要求
+      - MORPHLING_DEV_MODE=1  # 开发模式标志
+      # 移除CUDA相关环境变量，强制使用CPU
+      - CUDA_VISIBLE_DEVICES=""
+      - MORPHLING_BACKEND=cpu
+    
+    # CPU模式下使用更小的共享内存
+    shm_size: 8g
+
+    deploy: ~  # remove deploy block so GPU device requests from base are not merged
+
+    # 使用入口点脚本
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    # 保持容器运行
+    command: ["tail", "-f", "/dev/null"]
