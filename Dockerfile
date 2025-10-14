@@ -137,7 +137,7 @@ ls -la /usr/lib/x86_64-linux-gnu/libpython3.10* || echo "Warning: No libpython3.
 # 临时修复CMakeLists.txt以启用Python Development包查找
 RUN sed -i 's/# find_package(Python COMPONENTS Development REQUIRED)/find_package(Python COMPONENTS Development REQUIRED)/' /app/CMakeLists.txt
 
-ARG PROTOBUF_VER=v4.25.4
+ARG PROTOBUF_VER=v3.21.12
 RUN git clone -b ${PROTOBUF_VER} https://github.com/protocolbuffers/protobuf.git /tmp/protobuf \
     && cd /tmp/protobuf \
     && git submodule update --init --recursive \
