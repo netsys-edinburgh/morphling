@@ -165,9 +165,28 @@ def main():
         print(f"Warning: Only {connected} device(s) connected, but {args.min_devices} required.")
         print("Continuing anyway...")
 
-    # Run test if requested
-    if args.test_matmul and connected > 0:
-        test_matrix_multiplication(backend)
+    # 自动推理任务分发（无需 --test-matmul）
+    if connected > 0 and model is not None and tokenizer is not None:
+        print("\n=== Running Text Generation Inference ===")
+        input_text = ["Hello, my dog is cute. He is a good " * 128]
+        inputs = tokenizer(
+            input_text,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=128,
+        )
+        print("inputs:", inputs)
+        inputs = inputs.to("cpu")
+        model = model.to("cpu")
+        start = time.time()
+        outputs = model(**inputs, return_dict=True)
+        end = time.time()
+        print(f"Inference finished in {end-start:.2f}s")
+        print("outputs:", outputs)
+        if hasattr(outputs, "logits"):
+            print("logits shape:", outputs.logits.shape)
+        print("=== Inference Done ===\n")
 
     # Graceful shutdown handling
     stop = False
