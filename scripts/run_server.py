@@ -216,8 +216,9 @@ def main():
                 loop.run_until_complete(backend.disconnect())
         except Exception as e:
             print("Error while stopping backend:", e)
-
-    print("Server shutdown complete.")
+        print("Server shutdown complete.")
+        import sys
+        sys.exit(0)
 
 
 if __name__ == "__main__":
