@@ -191,7 +191,7 @@ def main():
         outputs = model(**inputs, return_dict=True)
         end = time.time()
         print(f"Inference finished in {end-start:.2f}s")
-        print("outputs:", outputs)
+        #print("outputs:", outputs)
         if hasattr(outputs, "logits"):
             print("logits shape:", outputs.logits.shape)
         print("=== Inference Done ===\n")
