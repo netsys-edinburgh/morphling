@@ -114,6 +114,16 @@ COPY requirements.txt /app/
 RUN uv pip install --system --no-cache -r /app/requirements.txt
 
 
+ARG PROTOBUF_VER=v3.21.12
+RUN git clone -b ${PROTOBUF_VER} https://github.com/protocolbuffers/protobuf.git /tmp/protobuf \
+    && cd /tmp/protobuf \
+    && git submodule update --init --recursive \
+    && cmake -S . -B build -Dprotobuf_BUILD_TESTS=OFF -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" \
+    && cmake --build build -j \
+    && cmake --install build && \
+    rm -rf /tmp/protobuf
+
+
 # 复制项目文件
 COPY . /app/
 
@@ -137,14 +147,6 @@ ls -la /usr/lib/x86_64-linux-gnu/libpython3.10* || echo "Warning: No libpython3.
 # 临时修复CMakeLists.txt以启用Python Development包查找
 RUN sed -i 's/# find_package(Python COMPONENTS Development REQUIRED)/find_package(Python COMPONENTS Development REQUIRED)/' /app/CMakeLists.txt
 
-ARG PROTOBUF_VER=v3.21.12
-RUN git clone -b ${PROTOBUF_VER} https://github.com/protocolbuffers/protobuf.git /tmp/protobuf \
-    && cd /tmp/protobuf \
-    && git submodule update --init --recursive \
-    && cmake -S . -B build -Dprotobuf_BUILD_TESTS=OFF -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" \
-    && cmake --build build -j \
-    && cmake --install build && \
-    rm -rf /tmp/protobuf
 
 RUN export Python3_ROOT_DIR=/usr && \
     export Python3_EXECUTABLE=/usr/bin/python3.10 && \
@@ -163,7 +165,7 @@ RUN mkdir -p /app/logs /app/data /app/config
 RUN chmod +x /app/scripts/*.sh || true && chmod +x /app/csrc/*.sh || true
 
 # 暴露端口
-EXPOSE 443 6379 8080 39000 28516
+EXPOSE 39000
 
 # 设置环境变量用于运行时
 ENV SPDLOG_LEVEL=debug

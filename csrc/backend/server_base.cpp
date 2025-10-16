@@ -435,27 +435,39 @@ std::tuple<void*, int64_t> MatrixPartition::SerializeToProto() const {
   std::string proto_str = umsg.SerializeAsString();
   uint32_t proto_size = proto_str.size();
 
-  // Calculate total tensor size
-  int64_t tensor_size = 0;
+  // Calculate total tensor size (sum of all matrix data)
+  uint64_t tensor_size = 0;
   for (const auto& m : mat) {
     tensor_size += std::get<1>(m);
   }
 
-  // Total size: 8 bytes header (proto_size + tensor_size) + proto + tensors
-  int64_t total_size = 8 + proto_size + tensor_size;
+  // Layout: [4B: payload_size] [4B: proto_size] [8B: tensor_size] [proto...] [tensors...]
+  // payload_size does NOT include the 4-byte size field itself (compatible with network protocol)
+  uint32_t payload_size = sizeof(uint32_t) + sizeof(size_t) + proto_size + tensor_size;  // proto_size + tensor_size + header
+  uint64_t total_size = sizeof(uint32_t) + payload_size;     // 4 + payload_size
   uint8_t* ptr = (uint8_t*)malloc(total_size);
 
-  // Write header (proto_size and tensor_size in big-endian)
-  uint32_t proto_size_be = htonl(proto_size);
-  uint32_t tensor_size_be = htonl(tensor_size);
-  memcpy(ptr, &proto_size_be, sizeof(uint32_t));
-  memcpy(ptr + 4, &tensor_size_be, sizeof(uint32_t));
+  // Write payload size in network byte order (compatible with receiver's protocol)
+  // [0-3]: payload_size (4 bytes, network byte order)
+  uint32_t payload_size_be = htonl(payload_size);
+  memcpy(ptr, &payload_size_be, sizeof(uint32_t));
+  size_t offset = sizeof(uint32_t);
 
-  // Write proto data
-  memcpy(ptr + 8, proto_str.data(), proto_size);
+  // Write header in big-endian format
+  // [4-7]: proto_size (4 bytes, big-endian)
+  // [8-15]: tensor_size (8 bytes, big-endian)
+  memcpy(ptr + offset, &proto_size, sizeof(uint32_t));
+  offset += sizeof(uint32_t);
+  memcpy(ptr + offset, &tensor_size, sizeof(uint64_t));
+  offset += sizeof(uint64_t);
 
-  // Write tensor data
-  int64_t offset = 8 + proto_size;
+  // Write proto data at offset 16
+  // [16-...]: serialized protobuf message
+  memcpy(ptr + offset, proto_str.data(), proto_size);
+  offset += proto_size;
+
+  // Write tensor data starting at offset 16 + proto_size
+  // [16+proto_size-...]: matrix data (A, then B, etc.)
   for (const auto& m : mat) {
     if (std::get<1>(m) > 0 && std::get<0>(m) != nullptr) {
       memcpy(ptr + offset, std::get<0>(m), std::get<1>(m));
@@ -463,6 +475,10 @@ std::tuple<void*, int64_t> MatrixPartition::SerializeToProto() const {
     }
   }
 
+  LOG_DEBUG << "SerializeToProto completed: total_size=" << total_size
+            << ", payload_size=" << payload_size
+            << ", proto_size=" << proto_size
+            << ", tensor_size=" << tensor_size;
   return std::make_tuple(ptr, total_size);
 }
 
@@ -474,24 +490,27 @@ void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
     throw std::runtime_error("DeserializeFromProto: data pointer is nullptr");
   }
 
-  if (size < 8) {
+  if (size < 16) {
     LOG_ERROR << "DeserializeFromProto: size too small, size=" << size;
     throw std::runtime_error("DeserializeFromProto: size too small");
   }
 
   uint8_t* ptr = (uint8_t*)data;
+  size_t offset = sizeof(uint32_t);
 
-  // Read header
-  uint32_t proto_size_be, tensor_size_be;
-  LOG_DEBUG << "Reading header at ptr=" << (void*)ptr;
-  memcpy(&proto_size_be, ptr, sizeof(uint32_t));
-  memcpy(&tensor_size_be, ptr + 4, sizeof(uint32_t));
+  // Read header: proto_size (4 bytes) + tensor_size (8 bytes)
+  // [4-7]: proto_size in big-endian (skip first 4 bytes which is payload_size)
+  // [8-15]: tensor_size in big-endian
+  uint32_t proto_size;
+  size_t tensor_size;
+  
+  memcpy(&proto_size, ptr + offset, sizeof(uint32_t));
+  offset += sizeof(uint32_t);
+  memcpy(&tensor_size, ptr + offset, sizeof(uint64_t));
+  offset += sizeof(uint64_t);
 
-  uint32_t proto_size = ntohl(proto_size_be);
-  uint32_t tensor_size = ntohl(tensor_size_be);
-
-  LOG_INFO << "Header parsed: proto_size=" << proto_size << ", tensor_size=" << tensor_size;
-  LOG_DEBUG << "proto_size_be=" << proto_size_be << ", tensor_size_be=" << tensor_size_be;
+  LOG_DEBUG << "Read header: proto_size=" << proto_size
+            << ", tensor_size=" << tensor_size;
 
   // Validate sizes
   if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {  // 100MB sanity check
@@ -504,20 +523,22 @@ void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
     throw std::runtime_error("Invalid tensor_size");
   }
 
-  if (8 + proto_size + tensor_size > size) {
-    LOG_ERROR << "Total size mismatch: 8 + " << proto_size << " + " << tensor_size
-              << " = " << (8 + proto_size + tensor_size) << " > " << size;
+  // Validate: payload_size + proto + tensors should fit in buffer
+  if (16ull + proto_size + tensor_size > (uint64_t)size) {
+    LOG_ERROR << "Total size mismatch: 16 + " << proto_size << " + " << tensor_size
+              << " = " << (16ull + proto_size + tensor_size) << " > " << size;
     throw std::runtime_error("Total size exceeds provided buffer");
   }
 
   // Parse proto
-  LOG_DEBUG << "Parsing protobuf at offset 8, proto_size=" << proto_size;
+  LOG_DEBUG << "Parsing protobuf at offset 16, proto_size=" << proto_size;
   morphling::UMessage umsg;
-  if (!umsg.ParseFromArray(ptr + 8, proto_size)) {
+  if (!umsg.ParseFromArray(ptr + offset, proto_size)) {
     LOG_ERROR << "Failed to parse UMessage from proto";
     throw std::runtime_error("Failed to parse UMessage from proto");
   }
-  LOG_DEBUG << "Protobuf parsed successfully";
+  offset += proto_size;
+  LOG_DEBUG << "Protobuf parsed successfully";    
 
   // Extract ComputeGemmRequest
   const auto& body = umsg.body();
@@ -543,9 +564,9 @@ void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
            << ", col=" << col << ", pivot=" << pivot << ", h_dim=" << h_dim
            << ", dev_id=" << dev_id << ", oid=" << oid << ", timestamp=" << timestamp;
 
-  // Extract tensor data pointers
-  int64_t tensor_offset = 8 + proto_size;
-  LOG_DEBUG << "Tensor data starts at offset=" << tensor_offset;
+  // // Extract tensor data pointers
+  // uint64_t tensor_offset = offset + proto_size;
+  // LOG_DEBUG << "Tensor data starts at offset=" << tensor_offset;
 
   mat.clear();
   if (gemm_req.has_matrix_a()) {
@@ -553,16 +574,16 @@ void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
     LOG_DEBUG << "Matrix A: size=" << a_size;
 
     if (a_size > 0) {
-      if (tensor_offset + a_size > size) {
-        LOG_ERROR << "Matrix A exceeds buffer: offset=" << tensor_offset
-                  << ", a_size=" << a_size << ", total=" << (tensor_offset + a_size)
+      if (offset + a_size > size) {
+        LOG_ERROR << "Matrix A exceeds buffer: offset=" << offset
+                  << ", a_size=" << a_size << ", total=" << (offset + a_size)
                   << ", size=" << size;
         throw std::runtime_error("Matrix A exceeds buffer size");
       }
 
-      LOG_DEBUG << "Adding Matrix A: ptr=" << (void*)(ptr + tensor_offset) << ", size=" << a_size;
-      mat.push_back({ptr + tensor_offset, a_size});
-      tensor_offset += a_size;
+      LOG_DEBUG << "Adding Matrix A: ptr=" << (void*)(ptr + offset) << ", size=" << a_size;
+      mat.push_back({ptr + offset, a_size});
+      offset += a_size;
     }
   } else {
     LOG_DEBUG << "Matrix A not present";
@@ -573,16 +594,16 @@ void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
     LOG_DEBUG << "Matrix B: size=" << b_size;
 
     if (b_size > 0) {
-      if (tensor_offset + b_size > size) {
-        LOG_ERROR << "Matrix B exceeds buffer: offset=" << tensor_offset
-                  << ", b_size=" << b_size << ", total=" << (tensor_offset + b_size)
+      if (offset + b_size > size) {
+        LOG_ERROR << "Matrix B exceeds buffer: offset=" << offset
+                  << ", b_size=" << b_size << ", total=" << (offset + b_size)
                   << ", size=" << size;
         throw std::runtime_error("Matrix B exceeds buffer size");
       }
 
-      LOG_DEBUG << "Adding Matrix B: ptr=" << (void*)(ptr + tensor_offset) << ", size=" << b_size;
-      mat.push_back({ptr + tensor_offset, b_size});
-      tensor_offset += b_size;
+      LOG_DEBUG << "Adding Matrix B: ptr=" << (void*)(ptr + offset) << ", size=" << b_size;
+      mat.push_back({ptr + offset, b_size});
+      offset += b_size;
     }
   } else {
     LOG_DEBUG << "Matrix B not present";
