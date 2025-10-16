@@ -166,12 +166,12 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
       return;
     }
     packsize = ntohl(packsize);
-    uint32_t datasize = packsize + sizeof(uint32_t);
+    size_t datasize = packsize + sizeof(size_t);
 
-    if (static_cast<uint32_t>(readable) < datasize) {
-      return;
+    if (readable < datasize) {
+      continue;
     }
-    LOG_TRACE << "packsize: " << packsize << ", datasize: " << datasize
+    LOG_DEBUG << "packsize: " << packsize << ", datasize: " << datasize
               << ", readable: " << readable;
 
     std::unique_ptr<char[]> data(new char[datasize]);
@@ -190,6 +190,7 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
 
     auto partition = DecodeRequest(raw_data, datasize);
     HandleMatMul(conn, partition);
+    LOG_DEBUG << "Processed partition: " << partition.DebugString();
   }
 }
 
@@ -291,7 +292,7 @@ void ProxyCliImpl::HandlePartition(const ConnectionUeventPtr& conn,
 MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size) {
   auto start = std::chrono::high_resolution_clock::now();
   MatrixPartition partition;
-  partition.Deserialize(payload, size);
+  partition.DeserializeFromProto(payload, size);
   auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
@@ -303,18 +304,60 @@ MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size) {
 
 void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
                                int64_t h_dim) {
+  // Add debug logging for all parameters
+  LOG_INFO << "CacheTensor called: ptr=" << ptr << ", size=" << size
+           << ", h_dim=" << h_dim;
+
   if (cached_tensors_.Exist(key)) {
+    LOG_DEBUG << "Tensor already cached, skipping";
     return;
   }
+
+  // Validate parameters before proceeding
+  if (ptr == nullptr) {
+    LOG_ERROR << "CacheTensor: ptr is nullptr!";
+    return;
+  }
+
+  if (size <= 0) {
+    LOG_ERROR << "CacheTensor: invalid size=" << size;
+    return;
+  }
+
+  if (h_dim <= 0) {
+    LOG_ERROR << "CacheTensor: invalid h_dim=" << h_dim;
+    return;
+  }
+
+  LOG_DEBUG << "Allocating memory: size=" << size << " bytes";
   void* cpy_ptr = malloc(size);
+
+  if (cpy_ptr == nullptr) {
+    LOG_ERROR << "CacheTensor: malloc failed for size=" << size;
+    return;
+  }
+
+  LOG_DEBUG << "malloc succeeded: cpy_ptr=" << cpy_ptr;
+
   int64_t ld_size = size / h_dim / sizeof(float);
+  LOG_DEBUG << "Calculated ld_size=" << ld_size
+            << " (size=" << size << " / h_dim=" << h_dim
+            << " / sizeof(float)=" << sizeof(float) << ")";
+
+  LOG_DEBUG << "Copying data: from " << ptr << " to " << cpy_ptr
+            << ", size=" << size << " bytes";
   std::memcpy(cpy_ptr, ptr, size);
+
+  LOG_DEBUG << "memcpy completed successfully";
+
   cached_tensors_.Put(
       key,
       torch::from_blob(
           cpy_ptr, {ld_size, h_dim}, [](void* ptr) { free(ptr); },
           FLOAT32_TENSOR_OPTIONS(torch::kCPU)),
       size);
+
+  LOG_INFO << "CacheTensor completed successfully";
 }
 
 void ProxyCliImpl::FillPartition(MatrixPartition& partition) {
