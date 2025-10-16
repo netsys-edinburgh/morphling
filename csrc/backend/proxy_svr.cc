@@ -48,16 +48,16 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
       return;
     }
     packsize = ntohl(packsize);
-    uint32_t datasize = packsize + sizeof(uint32_t);
+    size_t datasize = packsize + sizeof(size_t);
 
     // LOG_DEBUG << "packsize: " << packsize << ", datasize: " << datasize
     //           << ", readable: " << readable;
 
-    if (static_cast<uint32_t>(readable) < datasize) {
-      return;
+    if (readable < datasize) {
+      continue;
     }
 
-    LOG_TRACE << "packsize: " << packsize << ", datasize: " << datasize
+    LOG_DEBUG << "packsize: " << packsize << ", datasize: " << datasize
               << ", readable: " << readable;
 
     std::unique_ptr<char[]> data(new char[datasize]);
