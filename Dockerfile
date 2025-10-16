@@ -168,15 +168,3 @@ EXPOSE 443 6379 8080 39000 28516
 # 设置环境变量用于运行时
 ENV SPDLOG_LEVEL=debug
 ENV MORPHLING_HOME=/app
-
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python3 -c "import morphling; print('OK')" || exit 1
-
-# 复制并设置入口点脚本
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-# 设置入口点和默认命令
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["bash"]

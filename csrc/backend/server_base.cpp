@@ -5,6 +5,7 @@
 
 #include "common/generator.h"
 #include "global_api.pb.h"
+#include "utils/logging.h"
 
 void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
                          int64_t c, int64_t pivot, int64_t block_size) {
@@ -279,51 +280,103 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
 }
 
 void MatrixPartition::Deserialize(const void* data, int64_t size) {
+  LOG_INFO << "Deserialize called: data=" << data << ", size=" << size;
+
+  if (data == nullptr) {
+    LOG_ERROR << "Deserialize: data pointer is nullptr!";
+    return;
+  }
+
+  if (size <= 0) {
+    LOG_ERROR << "Deserialize: invalid size=" << size;
+    return;
+  }
+
   uint8_t* ptr = (uint8_t*)data;
   int64_t offset = sizeof(uint32_t);
 
   ptr_ = ptr;
   size_ = size;
 
-  // if (mlock(ptr, size) != 0) {
-  //   LOG_FATAL("Failed to pin memory in deserialization");
-  // }
-
+  LOG_DEBUG << "Reading version at offset=" << offset;
   memcpy(&version, ptr + offset, sizeof(uint64_t));
   offset += sizeof(uint64_t);
+  LOG_DEBUG << "version=" << version;
+
+  LOG_DEBUG << "Reading row at offset=" << offset;
   memcpy(&row, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
+  LOG_DEBUG << "row=" << row;
+
+  LOG_DEBUG << "Reading col at offset=" << offset;
   memcpy(&col, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
+  LOG_DEBUG << "col=" << col;
+
+  LOG_DEBUG << "Reading pivot at offset=" << offset;
   memcpy(&pivot, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
+  LOG_DEBUG << "pivot=" << pivot;
+
+  LOG_DEBUG << "Reading h_dim at offset=" << offset;
   memcpy(&h_dim, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
+  LOG_DEBUG << "h_dim=" << h_dim;
+
+  LOG_DEBUG << "Reading dev_id at offset=" << offset;
   memcpy(&dev_id, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
+  LOG_DEBUG << "dev_id=" << dev_id;
+
+  LOG_DEBUG << "Reading oid at offset=" << offset;
   memcpy(&oid, ptr + offset, sizeof(int64_t));
   offset += sizeof(int64_t);
+  LOG_DEBUG << "oid=" << oid;
+
+  LOG_DEBUG << "Reading timestamp at offset=" << offset;
   memcpy(&timestamp, ptr + offset, sizeof(uint64_t));
   offset += sizeof(uint64_t);
+  LOG_DEBUG << "timestamp=" << timestamp;
 
-  // fprintf(stderr, "Deserialized partition: %ld, %ld, %ld, %ld, %ld, %ld\n",
-  // version, row,
-  //         col, pivot, h_dim, dev_id);
-
+  LOG_DEBUG << "Starting matrix data loop, offset=" << offset << ", size=" << size;
+  int mat_count = 0;
   while (offset < size) {
+    LOG_DEBUG << "Reading mat_size at offset=" << offset << ", remaining=" << (size - offset);
+
+    if (offset + sizeof(int64_t) > size) {
+      LOG_ERROR << "Not enough data for mat_size at offset=" << offset;
+      break;
+    }
+
     int64_t mat_size;
     memcpy(&mat_size, ptr + offset, sizeof(int64_t));
     offset += sizeof(int64_t);
+    LOG_DEBUG << "mat[" << mat_count << "] size=" << mat_size;
+
     if (mat_size == 0) {
       mat.push_back({nullptr, 0});
+      mat_count++;
       continue;
     }
 
+    if (mat_size < 0) {
+      LOG_ERROR << "Invalid mat_size=" << mat_size << " at mat[" << mat_count << "]";
+      break;
+    }
+
+    if (offset + mat_size > size) {
+      LOG_ERROR << "Not enough data for matrix at offset=" << offset
+                << ", mat_size=" << mat_size << ", remaining=" << (size - offset);
+      break;
+    }
+
+    LOG_DEBUG << "Adding matrix data: ptr=" << (void*)(ptr + offset) << ", size=" << mat_size;
     mat.push_back({ptr + offset, mat_size});
     offset += mat_size;
+    mat_count++;
   }
 
-  // fprintf(stderr, "Deserialized partition, size: %ld\n", mat.size());
+  LOG_INFO << "Deserialize completed: parsed " << mat_count << " matrices, final offset=" << offset;
 }
 
 std::string MatrixPartition::DebugString() const {
@@ -414,29 +467,67 @@ std::tuple<void*, int64_t> MatrixPartition::SerializeToProto() const {
 }
 
 void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
+  LOG_INFO << "DeserializeFromProto called: data=" << data << ", size=" << size;
+
+  if (data == nullptr) {
+    LOG_ERROR << "DeserializeFromProto: data pointer is nullptr!";
+    throw std::runtime_error("DeserializeFromProto: data pointer is nullptr");
+  }
+
+  if (size < 8) {
+    LOG_ERROR << "DeserializeFromProto: size too small, size=" << size;
+    throw std::runtime_error("DeserializeFromProto: size too small");
+  }
+
   uint8_t* ptr = (uint8_t*)data;
 
   // Read header
   uint32_t proto_size_be, tensor_size_be;
+  LOG_DEBUG << "Reading header at ptr=" << (void*)ptr;
   memcpy(&proto_size_be, ptr, sizeof(uint32_t));
   memcpy(&tensor_size_be, ptr + 4, sizeof(uint32_t));
 
   uint32_t proto_size = ntohl(proto_size_be);
   uint32_t tensor_size = ntohl(tensor_size_be);
 
+  LOG_INFO << "Header parsed: proto_size=" << proto_size << ", tensor_size=" << tensor_size;
+  LOG_DEBUG << "proto_size_be=" << proto_size_be << ", tensor_size_be=" << tensor_size_be;
+
+  // Validate sizes
+  if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {  // 100MB sanity check
+    LOG_ERROR << "Invalid proto_size=" << proto_size;
+    throw std::runtime_error("Invalid proto_size");
+  }
+
+  if (tensor_size > 10ull * 1024 * 1024 * 1024) {  // 10GB sanity check
+    LOG_ERROR << "Invalid tensor_size=" << tensor_size;
+    throw std::runtime_error("Invalid tensor_size");
+  }
+
+  if (8 + proto_size + tensor_size > size) {
+    LOG_ERROR << "Total size mismatch: 8 + " << proto_size << " + " << tensor_size
+              << " = " << (8 + proto_size + tensor_size) << " > " << size;
+    throw std::runtime_error("Total size exceeds provided buffer");
+  }
+
   // Parse proto
+  LOG_DEBUG << "Parsing protobuf at offset 8, proto_size=" << proto_size;
   morphling::UMessage umsg;
   if (!umsg.ParseFromArray(ptr + 8, proto_size)) {
+    LOG_ERROR << "Failed to parse UMessage from proto";
     throw std::runtime_error("Failed to parse UMessage from proto");
   }
+  LOG_DEBUG << "Protobuf parsed successfully";
 
   // Extract ComputeGemmRequest
   const auto& body = umsg.body();
   if (!body.HasExtension(morphling::global_api::compute_gemm_request)) {
+    LOG_ERROR << "UMessage does not contain compute_gemm_request";
     throw std::runtime_error("UMessage does not contain compute_gemm_request");
   }
 
   const auto& gemm_req = body.GetExtension(morphling::global_api::compute_gemm_request);
+  LOG_DEBUG << "ComputeGemmRequest extracted";
 
   // Fill MatrixPartition fields
   version = gemm_req.version();
@@ -448,26 +539,57 @@ void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
   oid = gemm_req.oid();
   timestamp = gemm_req.timestamp();
 
+  LOG_INFO << "Partition fields: version=" << version << ", row=" << row
+           << ", col=" << col << ", pivot=" << pivot << ", h_dim=" << h_dim
+           << ", dev_id=" << dev_id << ", oid=" << oid << ", timestamp=" << timestamp;
+
   // Extract tensor data pointers
   int64_t tensor_offset = 8 + proto_size;
+  LOG_DEBUG << "Tensor data starts at offset=" << tensor_offset;
 
   mat.clear();
   if (gemm_req.has_matrix_a()) {
     int64_t a_size = gemm_req.matrix_a().size();
+    LOG_DEBUG << "Matrix A: size=" << a_size;
+
     if (a_size > 0) {
+      if (tensor_offset + a_size > size) {
+        LOG_ERROR << "Matrix A exceeds buffer: offset=" << tensor_offset
+                  << ", a_size=" << a_size << ", total=" << (tensor_offset + a_size)
+                  << ", size=" << size;
+        throw std::runtime_error("Matrix A exceeds buffer size");
+      }
+
+      LOG_DEBUG << "Adding Matrix A: ptr=" << (void*)(ptr + tensor_offset) << ", size=" << a_size;
       mat.push_back({ptr + tensor_offset, a_size});
       tensor_offset += a_size;
     }
+  } else {
+    LOG_DEBUG << "Matrix A not present";
   }
 
   if (gemm_req.has_matrix_b()) {
     int64_t b_size = gemm_req.matrix_b().size();
+    LOG_DEBUG << "Matrix B: size=" << b_size;
+
     if (b_size > 0) {
+      if (tensor_offset + b_size > size) {
+        LOG_ERROR << "Matrix B exceeds buffer: offset=" << tensor_offset
+                  << ", b_size=" << b_size << ", total=" << (tensor_offset + b_size)
+                  << ", size=" << size;
+        throw std::runtime_error("Matrix B exceeds buffer size");
+      }
+
+      LOG_DEBUG << "Adding Matrix B: ptr=" << (void*)(ptr + tensor_offset) << ", size=" << b_size;
       mat.push_back({ptr + tensor_offset, b_size});
       tensor_offset += b_size;
     }
+  } else {
+    LOG_DEBUG << "Matrix B not present";
   }
 
   ptr_ = ptr;
   size_ = size;
+
+  LOG_INFO << "DeserializeFromProto completed: parsed " << mat.size() << " matrices";
 }
