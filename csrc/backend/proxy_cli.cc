@@ -291,7 +291,7 @@ void ProxyCliImpl::HandlePartition(const ConnectionUeventPtr& conn,
 MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size) {
   auto start = std::chrono::high_resolution_clock::now();
   MatrixPartition partition;
-  partition.Deserialize(payload, size);
+  partition.DeserializeFromProto(payload, size);
   auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
