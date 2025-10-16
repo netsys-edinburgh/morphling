@@ -20,6 +20,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import morphling
 from morphling.backend import AutoBackend
+from morphling.hooks import apply_hooks
 from morphling.entrypoint import ModelConfigArguments, DeviceConfigArguments
 
 
@@ -158,6 +159,9 @@ def main():
     backend = start_backend_sync(args.backend, args.block_size)
     print("Backend started. Server is now listening for device connections.")
 
+    # Set backend for morphling hooks
+    morphling.hooks.autograd._backend = backend
+
     # Wait for minimum devices to connect
     connected = wait_for_devices(backend, args.min_devices)
 
@@ -177,6 +181,10 @@ def main():
             max_length=128,
         )
         print("inputs:", inputs)
+
+        # Apply hooks for distributed computation (similar to run_devices.py line 236)
+        apply_hooks("linear")
+
         inputs = inputs.to("cpu")
         model = model.to("cpu")
         start = time.time()
