@@ -48,7 +48,7 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
     return;
   }
 
-  auto [data, size] = partition.Serialize();
+  auto [data, size] = partition.SerializeToProto();
   conn->SendData(data, size);
 
   // LOG_DEBUG << "Response sent to " << client_addr;
@@ -159,20 +159,20 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
     size_t readable = conn->ReadableLength();
 
     int ret = 0;
-    size_t packsize;
-    ret = conn->ReceiveData(&packsize, sizeof(size_t));
+    uint32_t packsize;
+    ret = conn->ReceiveData(&packsize, sizeof(uint32_t));
     if (ret < 0) {
       LOG_ERROR << "ReceiveData packsize err";
       return;
     }
     packsize = ntohl(packsize);
-    size_t datasize = packsize + sizeof(size_t);
+    size_t datasize = packsize + sizeof(packsize);
 
-    if (readable < datasize) {
-      continue;
-    }
     LOG_DEBUG << "packsize: " << packsize << ", datasize: " << datasize
               << ", readable: " << readable;
+    if (readable < datasize) {
+      return;
+    }
 
     std::unique_ptr<char[]> data(new char[datasize]);
     char* raw_data = data.get();
@@ -340,9 +340,9 @@ void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
   LOG_DEBUG << "malloc succeeded: cpy_ptr=" << cpy_ptr;
 
   int64_t ld_size = size / h_dim / sizeof(float);
-  LOG_DEBUG << "Calculated ld_size=" << ld_size
-            << " (size=" << size << " / h_dim=" << h_dim
-            << " / sizeof(float)=" << sizeof(float) << ")";
+  LOG_DEBUG << "Calculated ld_size=" << ld_size << " (size=" << size
+            << " / h_dim=" << h_dim << " / sizeof(float)=" << sizeof(float)
+            << ")";
 
   LOG_DEBUG << "Copying data: from " << ptr << " to " << cpy_ptr
             << ", size=" << size << " bytes";

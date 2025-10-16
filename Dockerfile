@@ -145,8 +145,7 @@ ls -la /usr/lib/x86_64-linux-gnu/libpython3.10* || echo "Warning: No libpython3.
 #     make -j && make install && \
 #     rm -rf /tmp/rttr
 # 临时修复CMakeLists.txt以启用Python Development包查找
-RUN sed -i 's/# find_package(Python COMPONENTS Development REQUIRED)/find_package(Python COMPONENTS Development REQUIRED)/' /app/CMakeLists.txt
-
+# RUN sed -i 's/# find_package(Python COMPONENTS Development REQUIRED)/find_package(Python COMPONENTS Development REQUIRED)/' /app/CMakeLists.txt
 
 RUN export Python3_ROOT_DIR=/usr && \
     export Python3_EXECUTABLE=/usr/bin/python3.10 && \
