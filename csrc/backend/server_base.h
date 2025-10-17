@@ -5,8 +5,8 @@
 #include <future>
 
 #include "common/types_and_defs.h"
-#include "morphling.pb.h"
 #include "global_api.pb.h"
+#include "morphling.pb.h"
 
 template <typename T>
 std::vector<std::vector<T>> CartesianProduct(const std::vector<T>& list) {
@@ -90,13 +90,13 @@ struct MatrixPartition {
                              // entry need to be fetched from cache first mat is
                              // row block, second mat is col block
   void* ptr_ = nullptr;      // pointer to the data
-  int64_t size_ = 0;         // size of the data
-  std::tuple<void*, int64_t> Serialize() const;
-  void Deserialize(const void* data, int64_t size);
+  size_t size_ = 0;          // size of the data
+  std::tuple<void*, size_t> Serialize() const;
+  void Deserialize(const void* data, size_t size);
 
   // Protobuf serialization/deserialization
-  std::tuple<void*, int64_t> SerializeToProto() const;
-  void DeserializeFromProto(const void* data, int64_t size);
+  std::tuple<void*, size_t> SerializeToProto() const;
+  void DeserializeFromProto(const void* data, size_t size);
 
   TensorKey GetRowKey() const {
     return std::make_tuple(version, pivot, row, true);
@@ -142,3 +142,9 @@ MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
 std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
                                                const torch::Tensor& mat_b,
                                                int64_t block_size);
+
+class DataCodec {
+ public:
+  static std::tuple<void*, int64_t> Encode(const MatrixPartition& partition);
+  static MatrixPartition Decode(const void* data, int64_t size);
+};

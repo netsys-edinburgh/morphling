@@ -227,7 +227,7 @@ std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
   return partitions;
 }
 
-std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
+std::tuple<void*, size_t> MatrixPartition::Serialize() const {
   uint32_t size = sizeof(int64_t) * 6 + sizeof(uint64_t) * 2;
   for (const auto& mat : mat) {
     size += std::get<1>(mat) + sizeof(int64_t);
@@ -279,7 +279,7 @@ std::tuple<void*, int64_t> MatrixPartition::Serialize() const {
   return std::make_tuple(ptr, size + sizeof(uint32_t));
 }
 
-void MatrixPartition::Deserialize(const void* data, int64_t size) {
+void MatrixPartition::Deserialize(const void* data, size_t size) {
   LOG_INFO << "Deserialize called: data=" << data << ", size=" << size;
 
   if (data == nullptr) {
@@ -338,10 +338,12 @@ void MatrixPartition::Deserialize(const void* data, int64_t size) {
   offset += sizeof(uint64_t);
   LOG_DEBUG << "timestamp=" << timestamp;
 
-  LOG_DEBUG << "Starting matrix data loop, offset=" << offset << ", size=" << size;
+  LOG_DEBUG << "Starting matrix data loop, offset=" << offset
+            << ", size=" << size;
   int mat_count = 0;
   while (offset < size) {
-    LOG_DEBUG << "Reading mat_size at offset=" << offset << ", remaining=" << (size - offset);
+    LOG_DEBUG << "Reading mat_size at offset=" << offset
+              << ", remaining=" << (size - offset);
 
     if (offset + sizeof(int64_t) > size) {
       LOG_ERROR << "Not enough data for mat_size at offset=" << offset;
@@ -360,23 +362,27 @@ void MatrixPartition::Deserialize(const void* data, int64_t size) {
     }
 
     if (mat_size < 0) {
-      LOG_ERROR << "Invalid mat_size=" << mat_size << " at mat[" << mat_count << "]";
+      LOG_ERROR << "Invalid mat_size=" << mat_size << " at mat[" << mat_count
+                << "]";
       break;
     }
 
     if (offset + mat_size > size) {
       LOG_ERROR << "Not enough data for matrix at offset=" << offset
-                << ", mat_size=" << mat_size << ", remaining=" << (size - offset);
+                << ", mat_size=" << mat_size
+                << ", remaining=" << (size - offset);
       break;
     }
 
-    LOG_DEBUG << "Adding matrix data: ptr=" << (void*)(ptr + offset) << ", size=" << mat_size;
+    LOG_DEBUG << "Adding matrix data: ptr=" << (void*)(ptr + offset)
+              << ", size=" << mat_size;
     mat.push_back({ptr + offset, mat_size});
     offset += mat_size;
     mat_count++;
   }
 
-  LOG_INFO << "Deserialize completed: parsed " << mat_count << " matrices, final offset=" << offset;
+  LOG_INFO << "Deserialize completed: parsed " << mat_count
+           << " matrices, final offset=" << offset;
 }
 
 std::string MatrixPartition::DebugString() const {
@@ -392,7 +398,7 @@ std::string MatrixPartition::DebugString() const {
   return oss.str();
 }
 
-std::tuple<void*, int64_t> MatrixPartition::SerializeToProto() const {
+std::tuple<void*, size_t> MatrixPartition::SerializeToProto() const {
   // Create UMessage with ComputeGemmRequest
   morphling::UMessage umsg;
 
@@ -403,32 +409,26 @@ std::tuple<void*, int64_t> MatrixPartition::SerializeToProto() const {
   head->set_random_num(0);
   head->set_flow_no(0);
   head->set_session_no("");
-  head->set_message_type(morphling::global_api::COMPUTE_GEMM_REQUEST);
+  head->set_message_type(morphling::global_api::COMPUTE_GEMM_DATA);
 
   // Set body with ComputeGemmRequest extension
   auto* body = umsg.mutable_body();
-  auto* gemm_req = body->MutableExtension(morphling::global_api::compute_gemm_request);
+  auto* gemm_data =
+      body->MutableExtension(morphling::global_api::compute_gemm_data);
 
-  gemm_req->set_version(version);
-  gemm_req->set_row(row);
-  gemm_req->set_col(col);
-  gemm_req->set_pivot(pivot);
-  gemm_req->set_h_dim(h_dim);
-  gemm_req->set_dev_id(dev_id);
-  gemm_req->set_oid(oid);
-  gemm_req->set_timestamp(timestamp);
+  gemm_data->set_version(version);
+  gemm_data->set_row(row);
+  gemm_data->set_col(col);
+  gemm_data->set_pivot(pivot);
+  gemm_data->set_h_dim(h_dim);
+  gemm_data->set_dev_id(dev_id);
+  gemm_data->set_oid(oid);
+  gemm_data->set_timestamp(timestamp);
 
-  // Set matrix payloads (only metadata, actual data follows proto)
-  if (mat.size() > 0) {
-    auto* payload_a = gemm_req->mutable_matrix_a();
-    payload_a->set_offset(0);
-    payload_a->set_size(std::get<1>(mat[0]));
-  }
-
-  if (mat.size() > 1) {
-    auto* payload_b = gemm_req->mutable_matrix_b();
-    payload_b->set_offset(std::get<1>(mat[0]));
-    payload_b->set_size(std::get<1>(mat[1]));
+  for (const auto& m : mat) {
+    auto* mat_payload = gemm_data->add_matrices();  // use matrix_a for all mats
+    mat_payload->set_offset(0);  // actual offset handled in payload
+    mat_payload->set_size(std::get<1>(m));
   }
 
   // Serialize proto
@@ -441,25 +441,29 @@ std::tuple<void*, int64_t> MatrixPartition::SerializeToProto() const {
     tensor_size += std::get<1>(m);
   }
 
-  // Layout: [4B: payload_size] [4B: proto_size] [8B: tensor_size] [proto...] [tensors...]
-  // payload_size does NOT include the 4-byte size field itself (compatible with network protocol)
-  uint32_t payload_size = sizeof(uint32_t) + sizeof(size_t) + proto_size + tensor_size;  // proto_size + tensor_size + header
-  uint64_t total_size = sizeof(uint32_t) + payload_size;     // 4 + payload_size
+  // Layout: [4B: payload_size] [4B: proto_size] [8B: tensor_size] [proto...]
+  // [tensors...] payload_size does NOT include the 4-byte size field itself
+  // (compatible with network protocol)
+  uint32_t payload_size = sizeof(proto_size) + sizeof(tensor_size) +
+                          proto_size +
+                          tensor_size;  // proto_size + tensor_size + header
+  uint64_t total_size =
+      sizeof(payload_size) + payload_size;  // 8 + payload_size
   uint8_t* ptr = (uint8_t*)malloc(total_size);
 
-  // Write payload size in network byte order (compatible with receiver's protocol)
-  // [0-3]: payload_size (4 bytes, network byte order)
+  // Write payload size in network byte order (compatible with receiver's
+  // protocol) [0-3]: payload_size (4 bytes, network byte order)
   uint32_t payload_size_be = htonl(payload_size);
-  memcpy(ptr, &payload_size_be, sizeof(uint32_t));
-  size_t offset = sizeof(uint32_t);
+  memcpy(ptr, &payload_size_be, sizeof(payload_size_be));
+  uint32_t offset = sizeof(payload_size_be);
 
   // Write header in big-endian format
   // [4-7]: proto_size (4 bytes, big-endian)
   // [8-15]: tensor_size (8 bytes, big-endian)
   memcpy(ptr + offset, &proto_size, sizeof(uint32_t));
-  offset += sizeof(uint32_t);
+  offset += sizeof(proto_size);
   memcpy(ptr + offset, &tensor_size, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
+  offset += sizeof(tensor_size);
 
   // Write proto data at offset 16
   // [16-...]: serialized protobuf message
@@ -477,12 +481,11 @@ std::tuple<void*, int64_t> MatrixPartition::SerializeToProto() const {
 
   LOG_DEBUG << "SerializeToProto completed: total_size=" << total_size
             << ", payload_size=" << payload_size
-            << ", proto_size=" << proto_size
-            << ", tensor_size=" << tensor_size;
+            << ", proto_size=" << proto_size << ", tensor_size=" << tensor_size;
   return std::make_tuple(ptr, total_size);
 }
 
-void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
+void MatrixPartition::DeserializeFromProto(const void* data, size_t size) {
   LOG_INFO << "DeserializeFromProto called: data=" << data << ", size=" << size;
 
   if (data == nullptr) {
@@ -496,37 +499,38 @@ void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
   }
 
   uint8_t* ptr = (uint8_t*)data;
-  size_t offset = sizeof(uint32_t);
+  uint32_t offset = sizeof(uint32_t);
 
   // Read header: proto_size (4 bytes) + tensor_size (8 bytes)
   // [4-7]: proto_size in big-endian (skip first 4 bytes which is payload_size)
   // [8-15]: tensor_size in big-endian
   uint32_t proto_size;
   size_t tensor_size;
-  
-  memcpy(&proto_size, ptr + offset, sizeof(uint32_t));
-  offset += sizeof(uint32_t);
-  memcpy(&tensor_size, ptr + offset, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
+
+  memcpy(&proto_size, ptr + offset, sizeof(proto_size));
+  offset += sizeof(proto_size);
+  memcpy(&tensor_size, ptr + offset, sizeof(tensor_size));
+  offset += sizeof(tensor_size);
 
   LOG_DEBUG << "Read header: proto_size=" << proto_size
             << ", tensor_size=" << tensor_size;
 
   // Validate sizes
-  if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {  // 100MB sanity check
+  if (proto_size == 0 ||
+      proto_size > 100 * 1024 * 1024) {  // 100MB sanity check
     LOG_ERROR << "Invalid proto_size=" << proto_size;
     throw std::runtime_error("Invalid proto_size");
   }
 
-  if (tensor_size > 10ull * 1024 * 1024 * 1024) {  // 10GB sanity check
+  if (tensor_size > 1ull * 1024 * 1024 * 1024) {  // 1GB sanity check
     LOG_ERROR << "Invalid tensor_size=" << tensor_size;
     throw std::runtime_error("Invalid tensor_size");
   }
 
   // Validate: payload_size + proto + tensors should fit in buffer
-  if (16ull + proto_size + tensor_size > (uint64_t)size) {
-    LOG_ERROR << "Total size mismatch: 16 + " << proto_size << " + " << tensor_size
-              << " = " << (16ull + proto_size + tensor_size) << " > " << size;
+  if (offset + proto_size + tensor_size > size) {
+    LOG_ERROR << "Total size mismatch: " << (offset + proto_size + tensor_size)
+              << " > " << size;
     throw std::runtime_error("Total size exceeds provided buffer");
   }
 
@@ -538,79 +542,48 @@ void MatrixPartition::DeserializeFromProto(const void* data, int64_t size) {
     throw std::runtime_error("Failed to parse UMessage from proto");
   }
   offset += proto_size;
-  LOG_DEBUG << "Protobuf parsed successfully";    
+  LOG_DEBUG << "Protobuf parsed successfully";
 
   // Extract ComputeGemmRequest
   const auto& body = umsg.body();
-  if (!body.HasExtension(morphling::global_api::compute_gemm_request)) {
-    LOG_ERROR << "UMessage does not contain compute_gemm_request";
-    throw std::runtime_error("UMessage does not contain compute_gemm_request");
+  if (!body.HasExtension(morphling::global_api::compute_gemm_data)) {
+    LOG_ERROR << "UMessage does not contain compute_gemm_data";
+    throw std::runtime_error("UMessage does not contain compute_gemm_data");
   }
 
-  const auto& gemm_req = body.GetExtension(morphling::global_api::compute_gemm_request);
+  const auto& gemm_data =
+      body.GetExtension(morphling::global_api::compute_gemm_data);
   LOG_DEBUG << "ComputeGemmRequest extracted";
 
   // Fill MatrixPartition fields
-  version = gemm_req.version();
-  row = gemm_req.row();
-  col = gemm_req.col();
-  pivot = gemm_req.pivot();
-  h_dim = gemm_req.h_dim();
-  dev_id = gemm_req.dev_id();
-  oid = gemm_req.oid();
-  timestamp = gemm_req.timestamp();
+  version = gemm_data.version();
+  row = gemm_data.row();
+  col = gemm_data.col();
+  pivot = gemm_data.pivot();
+  h_dim = gemm_data.h_dim();
+  dev_id = gemm_data.dev_id();
+  oid = gemm_data.oid();
+  timestamp = gemm_data.timestamp();
 
   LOG_INFO << "Partition fields: version=" << version << ", row=" << row
            << ", col=" << col << ", pivot=" << pivot << ", h_dim=" << h_dim
-           << ", dev_id=" << dev_id << ", oid=" << oid << ", timestamp=" << timestamp;
+           << ", dev_id=" << dev_id << ", oid=" << oid
+           << ", timestamp=" << timestamp;
 
   // // Extract tensor data pointers
   // uint64_t tensor_offset = offset + proto_size;
   // LOG_DEBUG << "Tensor data starts at offset=" << tensor_offset;
 
   mat.clear();
-  if (gemm_req.has_matrix_a()) {
-    int64_t a_size = gemm_req.matrix_a().size();
-    LOG_DEBUG << "Matrix A: size=" << a_size;
-
-    if (a_size > 0) {
-      if (offset + a_size > size) {
-        LOG_ERROR << "Matrix A exceeds buffer: offset=" << offset
-                  << ", a_size=" << a_size << ", total=" << (offset + a_size)
-                  << ", size=" << size;
-        throw std::runtime_error("Matrix A exceeds buffer size");
-      }
-
-      LOG_DEBUG << "Adding Matrix A: ptr=" << (void*)(ptr + offset) << ", size=" << a_size;
-      mat.push_back({ptr + offset, a_size});
-      offset += a_size;
-    }
-  } else {
-    LOG_DEBUG << "Matrix A not present";
-  }
-
-  if (gemm_req.has_matrix_b()) {
-    int64_t b_size = gemm_req.matrix_b().size();
-    LOG_DEBUG << "Matrix B: size=" << b_size;
-
-    if (b_size > 0) {
-      if (offset + b_size > size) {
-        LOG_ERROR << "Matrix B exceeds buffer: offset=" << offset
-                  << ", b_size=" << b_size << ", total=" << (offset + b_size)
-                  << ", size=" << size;
-        throw std::runtime_error("Matrix B exceeds buffer size");
-      }
-
-      LOG_DEBUG << "Adding Matrix B: ptr=" << (void*)(ptr + offset) << ", size=" << b_size;
-      mat.push_back({ptr + offset, b_size});
-      offset += b_size;
-    }
-  } else {
-    LOG_DEBUG << "Matrix B not present";
+  for (const auto& payload : gemm_data.matrices()) {
+    LOG_DEBUG << "Matrix payload: size=" << payload.size();
+    mat.push_back({ptr + offset, payload.size()});
+    offset += payload.size();
   }
 
   ptr_ = ptr;
   size_ = size;
 
-  LOG_INFO << "DeserializeFromProto completed: parsed " << mat.size() << " matrices";
+  LOG_INFO << "DeserializeFromProto completed: parsed " << mat.size()
+           << " matrices";
 }
