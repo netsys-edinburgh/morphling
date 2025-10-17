@@ -153,7 +153,7 @@ else()
 endif()
 
 # find_package(Protobuf REQUIRED HINTS ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/torch/share/cmake/Caffe2/public)
-# find_package(Python COMPONENTS Development REQUIRED)
+find_package(Python COMPONENTS Development REQUIRED)
 # find_package(gRPC CONFIG REQUIRED)
 # find_package(gflags REQUIRED)
 
