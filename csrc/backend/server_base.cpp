@@ -452,14 +452,14 @@ std::tuple<void*, size_t> MatrixPartition::SerializeToProto() const {
   uint8_t* ptr = (uint8_t*)malloc(total_size);
 
   // Write payload size in network byte order (compatible with receiver's
-  // protocol) [0-3]: payload_size (4 bytes, network byte order)
+  // protocol) [0-3]: payload_size (4 bytes, network byte order - BIG_ENDIAN with htonl)
   uint32_t payload_size_be = htonl(payload_size);
   memcpy(ptr, &payload_size_be, sizeof(payload_size_be));
   uint32_t offset = sizeof(payload_size_be);
 
-  // Write header in big-endian format
-  // [4-7]: proto_size (4 bytes, big-endian)
-  // [8-15]: tensor_size (8 bytes, big-endian)
+  // Write header in NATIVE byte order (LITTLE_ENDIAN on x86/ARM, NO byte order conversion!)
+  // [4-7]: proto_size (4 bytes, LITTLE_ENDIAN - native byte order, NO htonl!)
+  // [8-15]: tensor_size (8 bytes, LITTLE_ENDIAN - native byte order, NO conversion!)
   memcpy(ptr + offset, &proto_size, sizeof(uint32_t));
   offset += sizeof(proto_size);
   memcpy(ptr + offset, &tensor_size, sizeof(uint64_t));
@@ -501,9 +501,10 @@ void MatrixPartition::DeserializeFromProto(const void* data, size_t size) {
   uint8_t* ptr = (uint8_t*)data;
   uint32_t offset = sizeof(uint32_t);
 
-  // Read header: proto_size (4 bytes) + tensor_size (8 bytes)
-  // [4-7]: proto_size in big-endian (skip first 4 bytes which is payload_size)
-  // [8-15]: tensor_size in big-endian
+  // Read header in MIXED byte order (matching SerializeToProto format):
+  // [0-3]: payload_size (already skipped, was in BIG_ENDIAN with htonl)
+  // [4-7]: proto_size (4 bytes, LITTLE_ENDIAN - native byte order, NO conversion!)
+  // [8-15]: tensor_size (8 bytes, LITTLE_ENDIAN - native byte order, NO conversion!)
   uint32_t proto_size;
   size_t tensor_size;
 
@@ -517,7 +518,8 @@ void MatrixPartition::DeserializeFromProto(const void* data, size_t size) {
 
   // Validate sizes
   if (proto_size == 0 ||
-      proto_size > 100 * 1024 * 1024) {  // 100MB sanity check
+      proto_size > 100 * 1024 * 1024)  // 100MB sanity check
+  {
     LOG_ERROR << "Invalid proto_size=" << proto_size;
     throw std::runtime_error("Invalid proto_size");
   }
