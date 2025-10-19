@@ -474,6 +474,8 @@ void ProxySvrImpl::RephrasePartitions(
     device_tensors[min_device].insert(tensor_key_row);
     device_tensors[min_device].insert(tensor_key_col);
 
+    if (!ctx_.enable_cli_cache) continue;
+
     if (min_r_cached) {
       partition.mat[0] = {nullptr, 0};
     }

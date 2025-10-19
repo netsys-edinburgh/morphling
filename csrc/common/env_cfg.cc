@@ -50,6 +50,7 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
 
   PARSE_INT_ENVCFG(parser, "internal", "cleanup_wait", false, 60, cleanup_wait);
   PARSE_INT_ENVCFG(parser, "internal", "tcp_timeout", false, 5, tcp_timeout);
+  PARSE_INT_ENVCFG(parser, "internal", "enable_cli_cache", false, 0, enable_cli_cache);
 
   base::Logger::setLogLevel(log_level);
 
