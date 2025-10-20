@@ -50,7 +50,7 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
     packsize = ntohl(packsize);
     size_t datasize = packsize + sizeof(packsize);
 
-    LOG_DEBUG << "packsize: " << packsize << ", datasize: " << datasize
+    LOG_TRACE  << "packsize: " << packsize << ", datasize: " << datasize
               << ", readable: " << readable;
     if (readable < datasize) {
       return;
