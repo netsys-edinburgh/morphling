@@ -24,6 +24,14 @@ class ModelConfigArguments:
         default="",
         metadata={"help": "Proxy config file path"},
     )
+    redis_host: str = field(
+        default="127.0.0.1:6379",
+        metadata={"help": "Redis server host:port for proxy backend"},
+    )
+    proxy_host: str = field(
+        default="",
+        metadata={"help": "Proxy server host:port (e.g., 155.98.37.203:39000), overrides config file"},
+    )
     log_level: str = field(default="info", metadata={"help": "Log level"})
 
 
