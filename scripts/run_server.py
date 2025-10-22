@@ -38,7 +38,9 @@ def parse_args():
                         help="Minimum number of devices to wait for before starting")
     parser.add_argument("--test-matmul", dest="test_matmul", action="store_true",
                         help="Run a test matrix multiplication after devices connect")
-    parser.set_defaults(load_model=True, test_matmul=False)
+    parser.add_argument("--enable-cache", dest="enable_cache", action="store_true",
+                        help="Enable client-side caching (for proxy backend)")
+    parser.set_defaults(load_model=True, test_matmul=False, enable_cache=False)
     return parser.parse_args()
 
 
@@ -49,7 +51,7 @@ async def start_backend_async(backend_name: str, block_size: int):
     return backend
 
 
-def start_backend_sync(backend_name: str, block_size: int):
+def start_backend_sync(backend_name: str, block_size: int, enable_cache: bool = False):
     # Some backends (like mqtt/proxy) may use synchronous initialization
     backend = None
     if backend_name in ("mqtt", "proxy"):
@@ -57,9 +59,17 @@ def start_backend_sync(backend_name: str, block_size: int):
         # proxy/mqtt backends expose start() instead of async connect
         if hasattr(backend, "initialize"):
             if backend_name == "proxy":
-                # ProxySvr.initialize() expects a config file path
+                # ProxySvr.initialize() expects a config file path and optional cache flag
                 import os
                 config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "proxy", "svr.ini")
+
+                # Check if initialize accepts cache parameter
+                if enable_cache and hasattr(backend, "set_cache_enabled"):
+                    backend.set_cache_enabled(True)
+                    print(f"✓ Client-side caching ENABLED")
+                else:
+                    print(f"Client-side caching disabled")
+
                 backend.initialize(config_path)
             else:
                 try:
@@ -156,7 +166,7 @@ def main():
 
     # Initialize backend
     print("Initializing backend...")
-    backend = start_backend_sync(args.backend, args.block_size)
+    backend = start_backend_sync(args.backend, args.block_size, args.enable_cache)
     print("Backend started. Server is now listening for device connections.")
 
     # Set backend for morphling hooks
