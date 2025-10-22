@@ -126,7 +126,7 @@ class ProxySvr {
   ProxySvr();
   void Initialize(const std::string& cfg_file);
   void Start();
-
+  void SetCacheEnabled(bool enabled) { context_.enable_cli_cache = enabled ? 1 : 0; }
   void DispatchMatMulAsync(torch::Tensor& mat_a, torch::Tensor& mat_b) {
     svr_->DispatchMatMulAsync(mat_a, mat_b);
   }
