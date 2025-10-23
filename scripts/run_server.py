@@ -40,7 +40,9 @@ def parse_args():
                         help="Run a test matrix multiplication after devices connect")
     parser.add_argument("--enable-cache", dest="enable_cache", action="store_true",
                         help="Enable client-side caching (for proxy backend)")
-    parser.set_defaults(load_model=True, test_matmul=False, enable_cache=False)
+    parser.add_argument("--enable-hooks", dest="enable_hooks", action="store_true",
+                        help="Enable hooks for distributed computation (apply_hooks)")
+    parser.set_defaults(load_model=True, test_matmul=False, enable_cache=False, enable_hooks=False)
     return parser.parse_args()
 
 
@@ -193,7 +195,13 @@ def main():
         print("inputs:", inputs)
 
         # Apply hooks for distributed computation (similar to run_devices.py line 236)
-        apply_hooks("linear")
+        if args.enable_hooks:
+            print("✓ Distributed computation mode: apply_hooks('linear') ENABLED")
+            print("  → Linear layer computations will be offloaded to remote devices")
+            apply_hooks("linear")
+        else:
+            print("✗ Local computation mode: apply_hooks('linear') DISABLED")
+            print("  → All computations will run locally using PyTorch")
 
         inputs = inputs.to("cpu")
         model = model.to("cpu")
