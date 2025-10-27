@@ -279,6 +279,13 @@ if __name__ == "__main__":
     out_hidden_states = outputs.hidden_states
     out_attentions = outputs.attentions
     print("out_logits", out_logits)
+    
+    # Save logits to pt file
+    os.makedirs("logits_comparison", exist_ok=True)
+    suffix = "with_hooks" if local_enable_hooks else "without_hooks"
+    logits_path = os.path.join("logits_comparison", f"logits_{suffix}.pt")
+    torch.save(out_logits.cpu().detach(), logits_path)
+    print(f"✓ Saved logits to {logits_path}")
 
     labels = inputs["input_ids"]
     loss = torch.nn.functional.cross_entropy(
