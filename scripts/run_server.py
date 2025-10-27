@@ -12,6 +12,7 @@ Example:
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
 import time
@@ -212,6 +213,14 @@ def main():
         #print("outputs:", outputs)
         if hasattr(outputs, "logits"):
             print("logits shape:", outputs.logits.shape)
+            
+            # Save logits to pt file
+            os.makedirs("logits_comparison", exist_ok=True)
+            suffix = "with_hooks" if args.enable_hooks else "without_hooks"
+            import torch
+            logits_path = os.path.join("logits_comparison", f"logits_{suffix}.pt")
+            torch.save(outputs.logits.cpu().detach(), logits_path)
+            print(f"✓ Saved logits to {logits_path}")
         print("=== Inference Done ===\n")
 
     # Graceful shutdown handling
