@@ -129,11 +129,19 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
             << ctx_.listen_port;
 
   // InitLogger();
-  // CUDA context warmup and do random matmul
-  torch::Tensor warmup_a = torch::rand({128, 4096}).to(torch::kCUDA, 0);
-  torch::Tensor warmup_b = torch::rand({4096, 128}).to(torch::kCUDA, 0);
-
-  torch::mm(warmup_a, warmup_b);
+  // CUDA context warmup and do random matmul (skip if no CUDA available)
+  try {
+    if (torch::cuda::is_available()) {
+      torch::Tensor warmup_a = torch::rand({128, 4096}).to(torch::kCUDA, 0);
+      torch::Tensor warmup_b = torch::rand({4096, 128}).to(torch::kCUDA, 0);
+      torch::mm(warmup_a, warmup_b);
+      LOG_DEBUG << "CUDA warmup completed";
+    } else {
+      LOG_DEBUG << "CUDA not available, skipping CUDA warmup";
+    }
+  } catch (const std::exception& e) {
+    LOG_WARN << "CUDA warmup failed: " << e.what() << ", continuing with CPU";
+  }
 }
 
 void ProxyCliImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
