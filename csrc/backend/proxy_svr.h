@@ -1,9 +1,12 @@
 #pragma once
 
+#include <algorithm>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "common/env_cfg.h"
 #include "common/pytorch_defs.h"
@@ -32,6 +35,11 @@ struct BatchSendRecv {
   bool Complete() { return sent == recv; }
   bool HasIgnore() { return ignore; }
 };
+
+// Partition tracking structure (Dict scheme): device_id -> {partition keys}
+// Used for tracking partition assignment and enabling dynamic redistribution on device failure
+// Using unordered_set for O(1) deletion and existence checking
+typedef std::unordered_map<int64_t, std::unordered_set<std::string>> PartitionTracker;
 
 class ProxySvrHandle : public uevent::LoopHandle {
  public:
@@ -75,6 +83,12 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   
   size_t GetConnectionCount() const { return conn_map_.size(); }
 
+  // Partition tracking methods
+  void AddPartitionToTracker(int64_t device_id, const std::string& partition_key);
+  void RemovePartitionFromTracker(int64_t device_id, const std::string& partition_key);
+  void HandleDeviceFailure(int64_t failed_device_id, int64_t target_device_id);
+  const PartitionTracker& GetPartitionTracker() const { return partition_tracker_; }
+
  private:
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
   void ConnectionClosedCb(const uevent::ConnectionUeventPtr& conn);
@@ -93,6 +107,12 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::vector<torch::Tensor> outputs_;
   std::vector<std::atomic_ullong> rsp_cb_counts_;
   std::vector<std::unordered_set<TensorKey>> device_tensors_;
+  
+  // Partition tracking: device_id -> {partition keys}
+  // Maps each device to the set of partitions assigned to it
+  // Using set for O(1) deletion and existence checking
+  PartitionTracker partition_tracker_;
+  std::mutex partition_tracker_mutex_;  // Protects partition_tracker_
 };
 
 typedef std::shared_ptr<ProxySvrImpl> ProxySvrImplPtr;
