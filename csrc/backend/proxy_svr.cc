@@ -119,6 +119,10 @@ void ProxySvrHandle::HandleMatMul(const void* payload, size_t size) {
                    .count()
             << "us";
 
+  // Remove partition from tracker when completed (completed = delete from dict)
+  reinterpret_cast<ProxySvrImpl*>(ctx_.instance)
+      ->RemovePartitionFromTracker(partition.dev_id, part_key);
+
   // std::string uuid = std::to_string(partition.dev_id);
   reinterpret_cast<ProxySvrImpl*>(ctx_.instance)
       ->IncRspCbCount(partition.oid, 1);
@@ -474,6 +478,9 @@ void ProxySvrImpl::RephrasePartitions(
     device_tensors_[min_device].insert(tensor_key_row);
     device_tensors_[min_device].insert(tensor_key_col);
 
+    // Add partition to tracker (dict: device_id -> {partition_keys})
+    AddPartitionToTracker(min_device, partition.GetPartitionKey());
+
     if (!ctx_.enable_cli_cache) continue;
 
     if (min_r_cached) {
@@ -486,6 +493,69 @@ void ProxySvrImpl::RephrasePartitions(
 
   LOG_INFO << "[RephrasePartitions] Completed partitioning";
   LOG_INFO << "Device time: " << device_time;
+}
+
+void ProxySvrImpl::AddPartitionToTracker(int64_t device_id,
+                                        const std::string& partition_key) {
+  std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
+  partition_tracker_[device_id].insert(partition_key);
+  LOG_DEBUG << "[AddPartitionToTracker] Added partition " << partition_key
+            << " to device " << device_id;
+}
+
+void ProxySvrImpl::RemovePartitionFromTracker(int64_t device_id,
+                                             const std::string& partition_key) {
+  std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
+  auto it = partition_tracker_.find(device_id);
+  if (it != partition_tracker_.end()) {
+    size_t erased = it->second.erase(partition_key);
+    if (erased > 0) {
+      LOG_DEBUG << "[RemovePartitionFromTracker] Removed partition "
+                << partition_key << " from device " << device_id;
+      // If device has no more partitions, remove the device entry
+      if (it->second.empty()) {
+        partition_tracker_.erase(it);
+        LOG_INFO << "[RemovePartitionFromTracker] Device " << device_id
+                 << " removed from tracker (no more partitions)";
+      }
+    } else {
+      LOG_WARN << "[RemovePartitionFromTracker] Partition " << partition_key
+               << " not found on device " << device_id;
+    }
+  } else {
+    LOG_WARN << "[RemovePartitionFromTracker] Device " << device_id
+             << " not found in tracker";
+  }
+}
+
+void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id,
+                                      int64_t target_device_id) {
+  std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
+  auto it = partition_tracker_.find(failed_device_id);
+  if (it != partition_tracker_.end()) {
+    auto& failed_partitions = it->second;
+    LOG_INFO << "[HandleDeviceFailure] Device " << failed_device_id
+             << " failed with " << failed_partitions.size()
+             << " partitions. Redistributing to device " << target_device_id; 
+
+    // Merge all partitions from failed device to target device (set union)
+    // unordered_set::insert with iterators is efficient and automatically handles duplicates
+    auto& target_partitions = partition_tracker_[target_device_id];
+    target_partitions.insert(failed_partitions.begin(),
+                             failed_partitions.end());
+
+    LOG_INFO << "[HandleDeviceFailure] Redistributed " << failed_partitions.size()
+             << " partitions. Target device now has "
+             << target_partitions.size() << " total partitions";
+
+    // Remove failed device from tracker
+    partition_tracker_.erase(it);
+    LOG_INFO << "[HandleDeviceFailure] Device " << failed_device_id
+             << " removed from tracker";
+  } else {
+    LOG_WARN << "[HandleDeviceFailure] Device " << failed_device_id
+             << " not found in tracker";
+  }
 }
 
 /*********************************ProxySvr***************************************/
