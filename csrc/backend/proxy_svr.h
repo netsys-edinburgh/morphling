@@ -36,10 +36,14 @@ struct BatchSendRecv {
   bool HasIgnore() { return ignore; }
 };
 
-// Partition tracking structure (Dict scheme): device_id -> {partition keys}
-// Used for tracking partition assignment and enabling dynamic redistribution on device failure
-// Using unordered_set for O(1) deletion and existence checking
-typedef std::unordered_map<int64_t, std::unordered_set<std::string>> PartitionTracker;
+// Partition tracking structure with OID (Operation ID) tracking
+// device_id -> {partition_key, oid}
+struct PartitionInfo {
+  std::string key;
+  int64_t oid;  // Operation ID to track which MatMul this partition belongs to
+};
+
+typedef std::unordered_map<int64_t, std::vector<PartitionInfo>> PartitionTrackerWithOid;
 
 class ProxySvrHandle : public uevent::LoopHandle {
  public:
@@ -83,11 +87,11 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   
   size_t GetConnectionCount() const { return conn_map_.size(); }
 
-  // Partition tracking methods
-  void AddPartitionToTracker(int64_t device_id, const std::string& partition_key);
+  // Partition tracking methods - now with OID tracking for device failure handling
+  void AddPartitionToTracker(int64_t device_id, const std::string& partition_key, int64_t oid);
   void RemovePartitionFromTracker(int64_t device_id, const std::string& partition_key);
   void HandleDeviceFailure(int64_t failed_device_id, int64_t target_device_id);
-  const PartitionTracker& GetPartitionTracker() const { return partition_tracker_; }
+  const PartitionTrackerWithOid& GetPartitionTracker() const { return partition_tracker_; }
 
  private:
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
@@ -111,10 +115,10 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::vector<std::atomic_ullong> rsp_cb_counts_;
   std::vector<std::unordered_set<TensorKey>> device_tensors_;
   
-  // Partition tracking: device_id -> {partition keys}
-  // Maps each device to the set of partitions assigned to it
-  // Using set for O(1) deletion and existence checking
-  PartitionTracker partition_tracker_;
+  // Partition tracking: device_id -> [(partition_key, oid), ...]
+  // Maps each device to the list of partitions assigned to it, with operation IDs
+  // This allows us to unblock WaitMatMul when a device fails
+  PartitionTrackerWithOid partition_tracker_;
   std::mutex partition_tracker_mutex_;  // Protects partition_tracker_
 };
 
