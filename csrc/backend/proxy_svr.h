@@ -95,7 +95,10 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   void RequestCb(const uevent::ConnectionUeventPtr& conn);
   void RequestWriteCb(const uevent::ConnectionUeventPtr& conn);
 
-  void RephrasePartitions(std::vector<MatrixPartition>& partitions);
+  // Rephrase partitions with optional excluded devices for retry scenarios
+  void RephrasePartitions(
+      std::vector<MatrixPartition>& partitions,
+      const std::unordered_set<int64_t>& excluded_devices = {});
 
  private:
   ProxyEnvCfg& ctx_;

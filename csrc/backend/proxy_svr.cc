@@ -402,12 +402,14 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
 }
 
 void ProxySvrImpl::RephrasePartitions(
-    std::vector<MatrixPartition>& partitions) {
+    std::vector<MatrixPartition>& partitions,
+    const std::unordered_set<int64_t>& excluded_devices) {
   // Use actual number of connected devices instead of configured num_device
   int actual_num_devices = static_cast<int>(conn_map_.size());
   LOG_INFO << "[RephrasePartitions] Starting with " << partitions.size()
            << " partitions, configured num_device=" << ctx_.num_device
-           << ", actual connected devices=" << actual_num_devices;
+           << ", actual connected devices=" << actual_num_devices
+           << ", excluded_devices=" << excluded_devices.size();
 
   if (actual_num_devices == 0) {
     LOG_ERROR << "[RephrasePartitions] No devices connected!";
@@ -438,6 +440,12 @@ void ProxySvrImpl::RephrasePartitions(
              << " - checking " << actual_num_devices << " devices";
 
     for (int i = 0; i < actual_num_devices; i++) {
+      // Skip excluded devices (used for retry scenarios)
+      if (excluded_devices.find(i) != excluded_devices.end()) {
+        LOG_DEBUG << "[RephrasePartitions] Skipping excluded device " << i;
+        continue;
+      }
+
       auto& tensors = device_tensors_[i];
 
       bool r_cached = tensors.find(tensor_key_row) != tensors.end();
@@ -471,7 +479,15 @@ void ProxySvrImpl::RephrasePartitions(
              << " assigned to device " << min_device << " with time "
              << min_time;
 
-    assert(min_time != std::numeric_limits<float>::max());
+    if (min_time == std::numeric_limits<float>::max()) {
+      LOG_ERROR << "[RephrasePartitions] Failed to find available device for partition "
+                << part_idx << ". excluded_devices.size()=" << excluded_devices.size()
+                << ", actual_num_devices=" << actual_num_devices;
+      // This should not happen if there are available devices
+      assert(false && "No available device found for partition");
+      continue;
+    }
+
     // update the time for the device
     device_time[min_device] = min_time;
     partition.dev_id = min_device;
