@@ -232,7 +232,17 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
   handle->ConnectionClosedCb(conn);
 
-  conn_map_.erase(conn->GetPeerAddress().ToString());
+  // Find device ID by connection address
+  std::string conn_addr = conn->GetPeerAddress().ToString();
+  int device_id = -1;
+  for (auto it = conn_map_.begin(); it != conn_map_.end(); ++it) {
+    if (it->first == conn_addr) {
+      device_id = std::distance(conn_map_.begin(), it);
+      break;
+    }
+  }
+
+  conn_map_.erase(conn_addr);
 
   LOG_INFO << "[ConnectionClosedCb] Connection removed. Remaining connections: "
            << conn_map_.size();
@@ -494,8 +504,8 @@ void ProxySvrImpl::RephrasePartitions(
     device_tensors_[min_device].insert(tensor_key_row);
     device_tensors_[min_device].insert(tensor_key_col);
 
-    // Add partition to tracker (dict: device_id -> {partition_keys})
-    AddPartitionToTracker(min_device, partition.GetPartitionKey());
+    // Add partition to tracker (dict: device_id -> [(partition_key, oid), ...])
+    AddPartitionToTracker(min_device, partition.GetPartitionKey(), mm_count_);
 
     if (!ctx_.enable_cli_cache) continue;
 
@@ -512,24 +522,29 @@ void ProxySvrImpl::RephrasePartitions(
 }
 
 void ProxySvrImpl::AddPartitionToTracker(int64_t device_id,
-                                        const std::string& partition_key) {
+                                        const std::string& partition_key,
+                                        int64_t oid) {
   std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
-  partition_tracker_[device_id].insert(partition_key);
+  partition_tracker_[device_id].push_back({partition_key, oid});
   LOG_DEBUG << "[AddPartitionToTracker] Added partition " << partition_key
-            << " to device " << device_id;
+            << " (oid=" << oid << ") to device " << device_id;
 }
-
 void ProxySvrImpl::RemovePartitionFromTracker(int64_t device_id,
                                              const std::string& partition_key) {
   std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
   auto it = partition_tracker_.find(device_id);
   if (it != partition_tracker_.end()) {
-    size_t erased = it->second.erase(partition_key);
-    if (erased > 0) {
+     auto& partitions = it->second;
+    auto part_it = std::find_if(partitions.begin(), partitions.end(),
+                                [&partition_key](const PartitionInfo& p) {
+                                  return p.key == partition_key;
+                                });
+    if (part_it != partitions.end()) {
+      partitions.erase(part_it);
       LOG_DEBUG << "[RemovePartitionFromTracker] Removed partition "
                 << partition_key << " from device " << device_id;
       // If device has no more partitions, remove the device entry
-      if (it->second.empty()) {
+      if (partitions.empty()) {
         partition_tracker_.erase(it);
         LOG_INFO << "[RemovePartitionFromTracker] Device " << device_id
                  << " removed from tracker (no more partitions)";
