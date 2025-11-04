@@ -411,7 +411,7 @@ void ProxySvrImpl::RephrasePartitions(
   }
 
   std::vector<float> device_time(actual_num_devices, 0);
-  std::vector<std::unordered_set<TensorKey>> device_tensors(actual_num_devices);
+  device_tensors_.assign(actual_num_devices, std::unordered_set<TensorKey>());
 
   LOG_INFO << "[RephrasePartitions] Initialized device_time vector with size "
            << device_time.size();
@@ -434,7 +434,7 @@ void ProxySvrImpl::RephrasePartitions(
              << " - checking " << actual_num_devices << " devices";
 
     for (int i = 0; i < actual_num_devices; i++) {
-      auto& tensors = device_tensors[i];
+      auto& tensors = device_tensors_[i];
 
       bool r_cached = tensors.find(tensor_key_row) != tensors.end();
       bool c_cached = tensors.find(tensor_key_col) != tensors.end();
@@ -471,8 +471,8 @@ void ProxySvrImpl::RephrasePartitions(
     // update the time for the device
     device_time[min_device] = min_time;
     partition.dev_id = min_device;
-    device_tensors[min_device].insert(tensor_key_row);
-    device_tensors[min_device].insert(tensor_key_col);
+    device_tensors_[min_device].insert(tensor_key_row);
+    device_tensors_[min_device].insert(tensor_key_col);
 
     if (!ctx_.enable_cli_cache) continue;
 

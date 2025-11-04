@@ -92,6 +92,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::atomic_int mm_count_{0};
   std::vector<torch::Tensor> outputs_;
   std::vector<std::atomic_ullong> rsp_cb_counts_;
+  std::vector<std::unordered_set<TensorKey>> device_tensors_;
 };
 
 typedef std::shared_ptr<ProxySvrImpl> ProxySvrImplPtr;
