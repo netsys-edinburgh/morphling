@@ -392,8 +392,9 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
   for (auto& partition : shared_partitions) {
     partition->oid = mm_count_;
     // Debug:
-    LOG_DEBUG << "[DispatchMatMulAsync] partition dev_id=" << partition->dev_id
-              << ", conn_map_.size()=" << conn_map_.size();
+    LOG_INFO << "[DispatchMatMulAsync] partition key=" << partition->GetPartitionKey()
+             << ", dev_id=" << partition->dev_id
+             << ", conn_map_.size()=" << conn_map_.size();
     if (conn_map_.empty()) {
       LOG_ERROR << "[DispatchMatMulAsync] conn_map_ is empty!";
       continue;
@@ -447,7 +448,17 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
 
 torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
   auto start = std::chrono::high_resolution_clock::now();
+  LOG_INFO << "[WaitMatMul] Starting wait for oid=" << oid 
+           << ", rsp_cb_counts_[oid]=" << rsp_cb_counts_[oid];
+  
+  int poll_count = 0;
   while (rsp_cb_counts_[oid] > 0) {
+    poll_count++;
+    if (poll_count % 50 == 0) {  // Log every 5 seconds (50 * 100ms)
+      LOG_WARN << "[WaitMatMul] Still waiting for oid=" << oid 
+               << ", rsp_cb_counts_[oid]=" << rsp_cb_counts_[oid]
+               << ", poll_count=" << poll_count * 100 << "ms";
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   auto end = std::chrono::high_resolution_clock::now();
@@ -455,11 +466,18 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
   auto wait_time =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start)
           .count();
-  LOG_DEBUG << "Waiting time: " << wait_time << "us for oid: " << oid
-            << ", shape: " << shape;
+  LOG_INFO << "[WaitMatMul] Completed for oid=" << oid 
+           << ", wait_time=" << wait_time << "us, shape=" << shape;
 
   mm_count_--;
   return outputs_[oid];
+}
+
+void ProxySvrImpl::IncRspCbCount(int oid, size_t count) {
+  int prev = rsp_cb_counts_[oid];
+  rsp_cb_counts_[oid] -= count;
+  LOG_DEBUG << "[IncRspCbCount] oid=" << oid << ", count=" << count 
+            << ", prev=" << prev << ", now=" << rsp_cb_counts_[oid];
 }
 
 void ProxySvrImpl::RephrasePartitions(
@@ -702,13 +720,33 @@ int64_t ProxySvrImpl::FindTargetDeviceForFailure(int64_t failed_device_id) {
 
 void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id,
                                       int64_t target_device_id) {
-  std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
-  auto it = partition_tracker_.find(failed_device_id);
-  if (it != partition_tracker_.end()) {
+  // First, collect OID information while holding the lock
+  std::unordered_map<int64_t, size_t> oid_count;
+  
+  {
+    std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
+    auto it = partition_tracker_.find(failed_device_id);
+    if (it == partition_tracker_.end()) {
+      LOG_WARN << "[HandleDeviceFailure] Device " << failed_device_id
+               << " not found in tracker";
+      return;
+    }
+
     auto& failed_partitions = it->second;
+    size_t num_failed_partitions = failed_partitions.size();
     LOG_INFO << "[HandleDeviceFailure] Device " << failed_device_id
-             << " failed with " << failed_partitions.size()
-             << " partitions. Redistributing to device " << target_device_id; 
+             << " failed with " << num_failed_partitions
+             << " partitions. Redistributing to device " << target_device_id;
+
+    // Track OIDs of failed partitions for response counter adjustment
+    for (const auto& part_info : failed_partitions) {
+      oid_count[part_info.oid]++;
+    }
+
+    LOG_INFO << "[HandleDeviceFailure] OID breakdown for failed partitions:";
+    for (const auto& [oid, count] : oid_count) {
+      LOG_INFO << "  - OID " << oid << ": " << count << " partitions";
+    }
 
     // Merge all partitions from failed device to target device
     auto& target_partitions = partition_tracker_[target_device_id];
@@ -716,20 +754,35 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id,
                              failed_partitions.begin(),
                              failed_partitions.end());
 
-    LOG_INFO << "[HandleDeviceFailure] Redistributed " << failed_partitions.size()
+    LOG_INFO << "[HandleDeviceFailure] Redistributed " << num_failed_partitions
              << " partitions. Target device now has "
              << target_partitions.size() << " total partitions";
 
     // Remove failed device from tracker
-    // Note: When responses arrive with dev_id=failed_device_id, 
-    // RemovePartitionFromTracker will search all devices if the device isn't found
     partition_tracker_.erase(it);
     LOG_INFO << "[HandleDeviceFailure] Device " << failed_device_id
              << " removed from tracker";
-  } else {
-    LOG_WARN << "[HandleDeviceFailure] Device " << failed_device_id
-             << " not found in tracker";
   }
+
+  // CRITICAL FIX: Decrement response counters for partitions from failed device
+  // These partitions were in-flight when the device failed, so they will never
+  // produce responses. We must decrement their response counters to prevent
+  // WaitMatMul from hanging forever waiting for responses that will never arrive.
+  // 
+  // The previously redistributed metadata to the target device will help if
+  // we later decide to actually resend these partitions. But for now, we must
+  // accept that these in-flight partitions are lost and decrement the counter.
+  
+  for (const auto& [oid, count] : oid_count) {
+    LOG_INFO << "[HandleDeviceFailure] Decrementing response counter for OID " << oid
+             << " by " << count << " (in-flight partitions lost)";
+    for (size_t i = 0; i < count; ++i) {
+      IncRspCbCount(oid, 1);  // Decrement the counter
+    }
+  }
+  
+  LOG_INFO << "[HandleDeviceFailure] Completed failure handling for device "
+           << failed_device_id;
 }
 
 /*********************************ProxySvr***************************************/

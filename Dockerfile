@@ -60,6 +60,7 @@ RUN apt-get install -y \
     librabbitmq-dev \
     libmosquitto-dev \
     libhiredis-dev \
+    dsniff \
     # 清理缓存
     && rm -rf /var/lib/apt/lists/*
 
