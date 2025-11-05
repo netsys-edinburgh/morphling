@@ -82,7 +82,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   torch::Tensor WaitMatMul(int oid);
   torch::Tensor& GetOutputMatrix(int oid) { return outputs_[oid]; }
 
-  void IncRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] -= count; }
+  void IncRspCbCount(int oid, size_t count);
   void DecRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] += count; }
   
   size_t GetConnectionCount() const { return conn_map_.size(); }
