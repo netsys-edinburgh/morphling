@@ -182,6 +182,8 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
       bind(&ProxySvrImpl::ConnectionSuccessCb, shared_from_this(), _1));
   listener_->SetMessageReadCb(
       bind(&ProxySvrImpl::RequestCb, shared_from_this(), _1));
+  listener_->SetConnectionClosedCb(
+      bind(&ProxySvrImpl::ConnectionClosedCb, shared_from_this(), _1));
   listener_->SetMessageWriteCb([](const ConnectionUeventPtr& conn) {});
   listener_->SetThreadNum(ctx_.thread);
   listener_->StartPrimaryLoop();
