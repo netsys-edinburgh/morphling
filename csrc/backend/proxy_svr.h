@@ -113,6 +113,8 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::shared_ptr<uevent::ListenerUevent> listener_;
 
   std::unordered_map<std::string, uevent::ConnectionUeventPtr> conn_map_;
+  // Maps connection address to assigned device_id
+  std::unordered_map<std::string, int64_t> conn_addr_to_device_id_;
 
   std::atomic_int mm_count_{0};
   std::vector<torch::Tensor> outputs_;
