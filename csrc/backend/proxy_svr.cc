@@ -216,10 +216,15 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
   handle->ConnectionSuccessCb(conn);
 
-  conn_map_[conn->GetPeerAddress().ToString()] = conn;
+  std::string conn_addr = conn->GetPeerAddress().ToString();
+  conn_map_[conn_addr] = conn;
+
+  // Assign device ID based on connection order
+  int64_t device_id = conn_map_.size() - 1;
+  conn_addr_to_device_id_[conn_addr] = device_id;
 
   LOG_INFO << "[ConnectionSuccessCb] New connection added. Total connections: "
-           << conn_map_.size();
+           << conn_map_.size() << ", assigned device_id=" << device_id;
   LOG_INFO << "[ConnectionSuccessCb] Connection map contents:";
   for (const auto& conn_pair : conn_map_) {
     LOG_INFO << "  - " << conn_pair.first << " -> "
@@ -236,11 +241,12 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 
   // Find device ID by connection address
   std::string conn_addr = conn->GetPeerAddress().ToString();
-  int device_id = -1;
-  for (auto it = conn_map_.begin(); it != conn_map_.end(); ++it) {
-    if (it->first == conn_addr) {
-      device_id = std::distance(conn_map_.begin(), it);
-      break;
+  int64_t device_id = -1;
+  
+  {
+    auto addr_it = conn_addr_to_device_id_.find(conn_addr);
+    if (addr_it != conn_addr_to_device_id_.end()) {
+      device_id = addr_it->second;
     }
   }
 
@@ -262,8 +268,9 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
     }
   }
 
-  // Step 2: Remove connection from map
+  // Step 2: Remove connection from map and device_id mapping
   conn_map_.erase(conn_addr);
+  conn_addr_to_device_id_.erase(conn_addr);
 
   LOG_INFO << "[ConnectionClosedCb] Connection removed. Remaining connections: "
            << conn_map_.size();
@@ -576,9 +583,11 @@ void ProxySvrImpl::AddPartitionToTracker(int64_t device_id,
 void ProxySvrImpl::RemovePartitionFromTracker(int64_t device_id,
                                              const std::string& partition_key) {
   std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
+  
+  // First, try to find and remove from the specified device
   auto it = partition_tracker_.find(device_id);
   if (it != partition_tracker_.end()) {
-     auto& partitions = it->second;
+    auto& partitions = it->second;
     auto part_it = std::find_if(partitions.begin(), partitions.end(),
                                 [&partition_key](const PartitionInfo& p) {
                                   return p.key == partition_key;
@@ -593,14 +602,42 @@ void ProxySvrImpl::RemovePartitionFromTracker(int64_t device_id,
         LOG_INFO << "[RemovePartitionFromTracker] Device " << device_id
                  << " removed from tracker (no more partitions)";
       }
-    } else {
-      LOG_WARN << "[RemovePartitionFromTracker] Partition " << partition_key
-               << " not found on device " << device_id;
+      return;  // Found and removed successfully
     }
-  } else {
-    LOG_WARN << "[RemovePartitionFromTracker] Device " << device_id
-             << " not found in tracker";
+    // Partition not found on specified device - fall through to search all devices
+    LOG_DEBUG << "[RemovePartitionFromTracker] Partition " << partition_key
+              << " not found on specified device " << device_id
+              << " (may have been redistributed)";
   }
+  
+  // If not found on specified device, search all devices
+  // This handles the case where partitions were redistributed due to device failure
+  for (auto& [search_device_id, partitions] : partition_tracker_) {
+    auto part_it = std::find_if(partitions.begin(), partitions.end(),
+                                [&partition_key](const PartitionInfo& p) {
+                                  return p.key == partition_key;
+                                });
+    if (part_it != partitions.end()) {
+      LOG_WARN << "[RemovePartitionFromTracker] Partition " << partition_key
+               << " was redistributed from device " << device_id
+               << " to device " << search_device_id;
+      partitions.erase(part_it);
+      LOG_DEBUG << "[RemovePartitionFromTracker] Removed redistributed partition "
+                << partition_key << " from device " << search_device_id;
+      // If device has no more partitions, remove the device entry
+      if (partitions.empty()) {
+        partition_tracker_.erase(search_device_id);
+        LOG_INFO << "[RemovePartitionFromTracker] Device " << search_device_id
+                 << " removed from tracker (no more partitions)";
+      }
+      return;  // Found and removed successfully
+    }
+  }
+  
+  // Partition not found anywhere - log warning
+  LOG_WARN << "[RemovePartitionFromTracker] Partition " << partition_key
+           << " not found on device " << device_id
+           << " or any other device in tracker (may have already been removed)";
 }
 
 int64_t ProxySvrImpl::FindTargetDeviceForFailure(int64_t failed_device_id) {
@@ -619,30 +656,36 @@ int64_t ProxySvrImpl::FindTargetDeviceForFailure(int64_t failed_device_id) {
   {
     std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
     
-    // Iterate through all connected devices
-    for (auto it = conn_map_.begin(); it != conn_map_.end(); ++it) {
-      int64_t device_idx = std::distance(conn_map_.begin(), it);
-      
-      // Skip the failed device itself
-      if (device_idx == failed_device_id) {
-        LOG_DEBUG << "[FindTargetDeviceForFailure] Skipping failed device " << device_idx;
-        continue;
+    // Get all connected device IDs that are NOT the failed device
+    std::set<int64_t> connected_device_ids;
+    for (const auto& addr_pair : conn_addr_to_device_id_) {
+      int64_t dev_id = addr_pair.second;
+      if (dev_id != failed_device_id) {
+        connected_device_ids.insert(dev_id);
+        LOG_DEBUG << "[FindTargetDeviceForFailure] Connected device: " << dev_id;
       }
-      
-      // Count partitions on this device
+    }
+
+    if (connected_device_ids.empty()) {
+      LOG_ERROR << "[FindTargetDeviceForFailure] No available devices besides failed device!";
+      return -1;
+    }
+
+    // Find device with minimum partitions from among connected devices
+    for (int64_t device_id : connected_device_ids) {
       size_t partition_count = 0;
-      auto tracker_it = partition_tracker_.find(device_idx);
+      auto tracker_it = partition_tracker_.find(device_id);
       if (tracker_it != partition_tracker_.end()) {
         partition_count = tracker_it->second.size();
       }
       
-      LOG_DEBUG << "[FindTargetDeviceForFailure] Device " << device_idx 
+      LOG_DEBUG << "[FindTargetDeviceForFailure] Device " << device_id 
                 << " has " << partition_count << " partitions";
       
       // Select device with minimum partitions
       if (partition_count < min_partitions) {
         min_partitions = partition_count;
-        best_device = device_idx;
+        best_device = device_id;
       }
     }
   }
@@ -668,7 +711,6 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id,
              << " partitions. Redistributing to device " << target_device_id; 
 
     // Merge all partitions from failed device to target device
-    // Use insert(end(), ...) to append all partitions from failed device to target device
     auto& target_partitions = partition_tracker_[target_device_id];
     target_partitions.insert(target_partitions.end(), 
                              failed_partitions.begin(),
@@ -679,6 +721,8 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id,
              << target_partitions.size() << " total partitions";
 
     // Remove failed device from tracker
+    // Note: When responses arrive with dev_id=failed_device_id, 
+    // RemovePartitionFromTracker will search all devices if the device isn't found
     partition_tracker_.erase(it);
     LOG_INFO << "[HandleDeviceFailure] Device " << failed_device_id
              << " removed from tracker";
