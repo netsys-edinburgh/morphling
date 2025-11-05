@@ -93,6 +93,10 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   void HandleDeviceFailure(int64_t failed_device_id, int64_t target_device_id);
   const PartitionTrackerWithOid& GetPartitionTracker() const { return partition_tracker_; }
 
+  // Helper function to find a suitable target device for partition redistribution
+  // Returns device_id of the target device, or -1 if no suitable device found
+  int64_t FindTargetDeviceForFailure(int64_t failed_device_id);
+
  private:
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
   void ConnectionClosedCb(const uevent::ConnectionUeventPtr& conn);
