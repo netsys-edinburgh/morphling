@@ -242,6 +242,25 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
     }
   }
 
+  LOG_INFO << "[ConnectionClosedCb] Device " << device_id << " (addr: " 
+           << conn_addr << ") disconnected";
+
+  // Step 1: Check if failed device has pending partitions
+  bool has_pending_partitions = false;
+  size_t pending_count = 0;
+  {
+    std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
+    auto it = partition_tracker_.find(device_id);
+    if (it != partition_tracker_.end() && !it->second.empty()) {
+      has_pending_partitions = true;
+      pending_count = it->second.size();
+      LOG_WARN << "[ConnectionClosedCb] Device " << device_id 
+               << " failed with " << pending_count 
+               << " pending partitions";
+    }
+  }
+
+  // Step 2: Remove connection from map
   conn_map_.erase(conn_addr);
 
   LOG_INFO << "[ConnectionClosedCb] Connection removed. Remaining connections: "
@@ -250,6 +269,29 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   for (const auto& conn_pair : conn_map_) {
     LOG_INFO << "  - " << conn_pair.first << " -> "
              << (conn_pair.second ? "valid" : "null");
+  }
+
+  // Step 3: Handle partition redistribution if needed
+  if (has_pending_partitions && conn_map_.size() > 0) {
+    LOG_INFO << "[ConnectionClosedCb] Starting partition redistribution for failed device " 
+             << device_id;
+    
+    // Find the best target device
+    int64_t target_device = FindTargetDeviceForFailure(device_id);
+    
+    if (target_device != -1) {
+      LOG_INFO << "[ConnectionClosedCb] Redistributing " << pending_count 
+               << " partitions from device " << device_id 
+               << " to device " << target_device;
+      HandleDeviceFailure(device_id, target_device);
+      LOG_INFO << "[ConnectionClosedCb] Partition redistribution completed";
+    } else {
+      LOG_ERROR << "[ConnectionClosedCb] Failed to find target device for redistribution";
+    }
+  } else if (has_pending_partitions && conn_map_.empty()) {
+    LOG_ERROR << "[ConnectionClosedCb] Device " << device_id 
+              << " failed with " << pending_count 
+              << " pending partitions but no other devices available!";
   }
 }
 
@@ -559,6 +601,60 @@ void ProxySvrImpl::RemovePartitionFromTracker(int64_t device_id,
   }
 }
 
+int64_t ProxySvrImpl::FindTargetDeviceForFailure(int64_t failed_device_id) {
+  // Strategy: Find a device with the least number of pending partitions
+  // This helps distribute the load evenly
+  
+  if (conn_map_.empty()) {
+    LOG_ERROR << "[FindTargetDeviceForFailure] No available devices! "
+              << "Cannot redistribute partitions from device " << failed_device_id;
+    return -1;
+  }
+
+  int64_t best_device = -1;
+  size_t min_partitions = std::numeric_limits<size_t>::max();
+
+  {
+    std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
+    
+    // Iterate through all connected devices
+    for (auto it = conn_map_.begin(); it != conn_map_.end(); ++it) {
+      int64_t device_idx = std::distance(conn_map_.begin(), it);
+      
+      // Skip the failed device itself
+      if (device_idx == failed_device_id) {
+        LOG_DEBUG << "[FindTargetDeviceForFailure] Skipping failed device " << device_idx;
+        continue;
+      }
+      
+      // Count partitions on this device
+      size_t partition_count = 0;
+      auto tracker_it = partition_tracker_.find(device_idx);
+      if (tracker_it != partition_tracker_.end()) {
+        partition_count = tracker_it->second.size();
+      }
+      
+      LOG_DEBUG << "[FindTargetDeviceForFailure] Device " << device_idx 
+                << " has " << partition_count << " partitions";
+      
+      // Select device with minimum partitions
+      if (partition_count < min_partitions) {
+        min_partitions = partition_count;
+        best_device = device_idx;
+      }
+    }
+  }
+
+  if (best_device == -1) {
+    LOG_ERROR << "[FindTargetDeviceForFailure] Failed to find target device for failure";
+    return -1;
+  }
+
+  LOG_INFO << "[FindTargetDeviceForFailure] Selected device " << best_device 
+           << " as target (has " << min_partitions << " partitions)";
+  return best_device;
+}
+
 void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id,
                                       int64_t target_device_id) {
   std::lock_guard<std::mutex> lock(partition_tracker_mutex_);
@@ -569,10 +665,11 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id,
              << " failed with " << failed_partitions.size()
              << " partitions. Redistributing to device " << target_device_id; 
 
-    // Merge all partitions from failed device to target device (set union)
-    // unordered_set::insert with iterators is efficient and automatically handles duplicates
+    // Merge all partitions from failed device to target device
+    // Use insert(end(), ...) to append all partitions from failed device to target device
     auto& target_partitions = partition_tracker_[target_device_id];
-    target_partitions.insert(failed_partitions.begin(),
+    target_partitions.insert(target_partitions.end(), 
+                             failed_partitions.begin(),
                              failed_partitions.end());
 
     LOG_INFO << "[HandleDeviceFailure] Redistributed " << failed_partitions.size()
