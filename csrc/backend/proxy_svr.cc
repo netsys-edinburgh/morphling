@@ -163,7 +163,7 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 /********************************ProxySvrImpl****************************************/
 
 ProxySvrImpl::ProxySvrImpl(ProxyEnvCfg& ctx)
-    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(5) {}
+    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(5), next_device_id_(0) {}
 
 void ProxySvrImpl::Initialize(UeventLoop* loop) {
   LOG_INFO << "[ProxySvrImpl::Initialize] Starting server initialization";
@@ -217,14 +217,30 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   handle->ConnectionSuccessCb(conn);
 
   std::string conn_addr = conn->GetPeerAddress().ToString();
+  
+  // Check if this is a reconnection from an existing device
+  auto it = conn_addr_to_device_id_.find(conn_addr);
+  int64_t device_id;
+  
+  if (it != conn_addr_to_device_id_.end()) {
+    // Reconnection: reuse the same device_id
+    device_id = it->second;
+    LOG_INFO << "[ConnectionSuccessCb] Reconnection from " << conn_addr 
+             << ", reusing device_id=" << device_id;
+  } else {
+    // New connection: assign a new persistent device_id
+    device_id = next_device_id_;
+    next_device_id_++;
+    conn_addr_to_device_id_[conn_addr] = device_id;
+    LOG_INFO << "[ConnectionSuccessCb] New connection from " << conn_addr 
+             << ", assigned device_id=" << device_id;
+  }
+  
   conn_map_[conn_addr] = conn;
 
-  // Assign device ID based on connection order
-  int64_t device_id = conn_map_.size() - 1;
-  conn_addr_to_device_id_[conn_addr] = device_id;
-
-  LOG_INFO << "[ConnectionSuccessCb] New connection added. Total connections: "
-           << conn_map_.size() << ", assigned device_id=" << device_id;
+  LOG_INFO << "[ConnectionSuccessCb] Device " << device_id 
+           << " now connected. Total active connections: "
+           << conn_map_.size();
   LOG_INFO << "[ConnectionSuccessCb] Connection map contents:";
   for (const auto& conn_pair : conn_map_) {
     LOG_INFO << "  - " << conn_pair.first << " -> "
@@ -399,29 +415,30 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
       LOG_ERROR << "[DispatchMatMulAsync] conn_map_ is empty!";
       continue;
     }
-    if (partition->dev_id < 0 ||
-        static_cast<size_t>(partition->dev_id) >= conn_map_.size()) {
-      LOG_ERROR << "[DispatchMatMulAsync] partition->dev_id "
-                << partition->dev_id
-                << " out of range! conn_map_.size()=" << conn_map_.size();
-      continue;
+
+    // Find connection by device_id through the mapping
+    uevent::ConnectionUeventPtr target_conn = nullptr;
+    for (const auto& addr_pair : conn_addr_to_device_id_) {
+      if (addr_pair.second == partition->dev_id) {
+        // Found the device_id, now get the connection
+        auto conn_it = conn_map_.find(addr_pair.first);
+        if (conn_it != conn_map_.end()) {
+          target_conn = conn_it->second;
+          break;
+        }
+      }
     }
 
-    LOG_DEBUG << "[DispatchMatMulAsync] Looking for connection at index "
-              << partition->dev_id;
-
-    auto it = conn_map_.begin();
-    std::advance(it, partition->dev_id);
-    if (it == conn_map_.end() || !it->second) {
-      LOG_ERROR << "[DispatchMatMulAsync] Invalid connection for dev_id "
+    if (!target_conn) {
+      LOG_ERROR << "[DispatchMatMulAsync] No connection found for dev_id "
                 << partition->dev_id;
       continue;
     }
 
     LOG_DEBUG << "[DispatchMatMulAsync] Found connection for dev_id "
-              << partition->dev_id << ": " << it->first;
+              << partition->dev_id;
 
-    auto* loop = it->second->GetLoop();
+    auto* loop = target_conn->GetLoop();
     if (!loop) {
       LOG_ERROR << "[DispatchMatMulAsync] loop is nullptr for dev_id "
                 << partition->dev_id;
@@ -436,7 +453,7 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
     LOG_DEBUG << "[DispatchMatMulAsync] SendInLoop for dev_id="
               << partition->dev_id;
     loop->RunInLoop(
-        bind(&ProxySvrHandle::SendInLoop, handle, it->second, partition));
+        bind(&ProxySvrHandle::SendInLoop, handle, target_conn, partition));
   }
   auto end = std::chrono::high_resolution_clock::now();
   LOG_INFO << "Publish time: "
@@ -483,10 +500,15 @@ void ProxySvrImpl::IncRspCbCount(int oid, size_t count) {
 void ProxySvrImpl::RephrasePartitions(
     std::vector<MatrixPartition>& partitions,
     const std::unordered_set<int64_t>& excluded_devices) {
-  // Use actual number of connected devices instead of configured num_device
-  int actual_num_devices = static_cast<int>(conn_map_.size());
+  // Build a set of currently connected device IDs
+  std::unordered_set<int64_t> connected_device_ids;
+  for (const auto& addr_pair : conn_addr_to_device_id_) {
+    connected_device_ids.insert(addr_pair.second);
+  }
+
+  int actual_num_devices = static_cast<int>(connected_device_ids.size());
   LOG_INFO << "[RephrasePartitions] Starting with " << partitions.size()
-           << " partitions, configured num_device=" << ctx_.num_device
+           << " partitions, next_device_id_=" << next_device_id_
            << ", actual connected devices=" << actual_num_devices
            << ", excluded_devices=" << excluded_devices.size();
 
@@ -495,11 +517,19 @@ void ProxySvrImpl::RephrasePartitions(
     return;
   }
 
+  // Map from absolute device_id to relative position for load balancing
+  std::vector<int64_t> device_ids(connected_device_ids.begin(), 
+                                   connected_device_ids.end());
+  std::sort(device_ids.begin(), device_ids.end());
+
   std::vector<float> device_time(actual_num_devices, 0);
   device_tensors_.assign(actual_num_devices, std::unordered_set<TensorKey>());
 
   LOG_INFO << "[RephrasePartitions] Initialized device_time vector with size "
-           << device_time.size();
+           << device_time.size() << ", connected devices: ";
+  for (size_t i = 0; i < device_ids.size(); ++i) {
+    LOG_INFO << "  [" << i << "] -> device_id=" << device_ids[i];
+  }
 
   // greedy algorithm to select the minimal time
   for (size_t part_idx = 0; part_idx < partitions.size(); ++part_idx) {
@@ -508,7 +538,8 @@ void ProxySvrImpl::RephrasePartitions(
               << partitions.size();
 
     float min_time = std::numeric_limits<float>::max();
-    int min_device = 0;
+    int min_device_idx = 0;
+    int64_t min_device_id = -1;
     auto version = partition.version;
     auto tensor_key_row = partition.GetRowKey();
     auto tensor_key_col = partition.GetColKey();
@@ -519,9 +550,11 @@ void ProxySvrImpl::RephrasePartitions(
              << " - checking " << actual_num_devices << " devices";
 
     for (int i = 0; i < actual_num_devices; i++) {
+      int64_t device_id = device_ids[i];
+      
       // Skip excluded devices (used for retry scenarios)
-      if (excluded_devices.find(i) != excluded_devices.end()) {
-        LOG_DEBUG << "[RephrasePartitions] Skipping excluded device " << i;
+      if (excluded_devices.find(device_id) != excluded_devices.end()) {
+        LOG_DEBUG << "[RephrasePartitions] Skipping excluded device " << device_id;
         continue;
       }
 
@@ -543,38 +576,35 @@ void ProxySvrImpl::RephrasePartitions(
       float flops = (float)2.0 * num_rows * num_cols * partition.h_dim / TB;
 
       float time = std::max(std::max(ul_time, dl_time), flops) + device_time[i];
-      // ul_time + dl_time + flops + device_time[i];
       if (time < min_time) {
         min_time = time;
-        min_device = i;
+        min_device_idx = i;
+        min_device_id = device_id;
         min_r_cached = r_cached;
         min_c_cached = c_cached;
-        // fprintf(stderr, "Device: %d, UL time: %f, DL time: %f, FLOPS: %f,
-        // Time: %f\n", i, ul_time, dl_time, flops, time);
       }
     }
 
     LOG_INFO << "[RephrasePartitions] Partition " << part_idx
-             << " assigned to device " << min_device << " with time "
-             << min_time;
+             << " assigned to device_id " << min_device_id 
+             << " (index=" << min_device_idx << ") with time " << min_time;
 
-    if (min_time == std::numeric_limits<float>::max()) {
+    if (min_device_id == -1 || min_time == std::numeric_limits<float>::max()) {
       LOG_ERROR << "[RephrasePartitions] Failed to find available device for partition "
                 << part_idx << ". excluded_devices.size()=" << excluded_devices.size()
                 << ", actual_num_devices=" << actual_num_devices;
-      // This should not happen if there are available devices
       assert(false && "No available device found for partition");
       continue;
     }
 
     // update the time for the device
-    device_time[min_device] = min_time;
-    partition.dev_id = min_device;
-    device_tensors_[min_device].insert(tensor_key_row);
-    device_tensors_[min_device].insert(tensor_key_col);
+    device_time[min_device_idx] = min_time;
+    partition.dev_id = min_device_id;  // Use actual device_id, not index
+    device_tensors_[min_device_idx].insert(tensor_key_row);
+    device_tensors_[min_device_idx].insert(tensor_key_col);
 
     // Add partition to tracker (dict: device_id -> [(partition_key, oid), ...])
-    AddPartitionToTracker(min_device, partition.GetPartitionKey(), mm_count_);
+    AddPartitionToTracker(min_device_id, partition.GetPartitionKey(), mm_count_);
 
     if (!ctx_.enable_cli_cache) continue;
 
