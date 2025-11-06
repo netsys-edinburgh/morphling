@@ -45,6 +45,17 @@ struct PartitionInfo {
 
 typedef std::unordered_map<int64_t, std::vector<PartitionInfo>> PartitionTrackerWithOid;
 
+// In-flight partition structure - stores complete partition data for recovery
+// When a device fails, we need to resend its in-flight partitions to a target device
+struct InFlightPartition {
+  MatrixPartitionPtr partition;    // The partition object with data
+  int64_t original_device_id;      // Which device it was originally sent to
+  std::string partition_key;       // Key for tracking
+  int64_t oid;                     // Operation ID
+};
+
+typedef std::unordered_map<std::string, InFlightPartition> InFlightPartitionMap;
+
 class ProxySvrHandle : public uevent::LoopHandle {
  public:
   ProxySvrHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop);
@@ -71,6 +82,11 @@ class ProxySvrHandle : public uevent::LoopHandle {
   uevent::UeventLoop* loop_;
   std::unordered_map<std::string, uint32_t> conn_inflight_;
   std::deque<std::function<void()>> task_queue_;
+  
+  // Handshake tracking: maps connection address to handshake state
+  // true = handshake complete, false = waiting for device_id
+  std::unordered_map<std::string, bool> conn_handshake_complete_;
+  std::mutex handshake_mutex_;
 };
 
 class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
@@ -97,6 +113,9 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   // Returns device_id of the target device, or -1 if no suitable device found
   int64_t FindTargetDeviceForFailure(int64_t failed_device_id);
 
+  // Register device_id for a connection (called during handshake)
+  void RegisterDeviceId(const std::string& conn_addr, int64_t device_id);
+
  private:
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
   void ConnectionClosedCb(const uevent::ConnectionUeventPtr& conn);
@@ -115,6 +134,9 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::unordered_map<std::string, uevent::ConnectionUeventPtr> conn_map_;
   // Maps connection address to assigned device_id
   std::unordered_map<std::string, int64_t> conn_addr_to_device_id_;
+  // Monotonically increasing device ID counter for stable, persistent device IDs
+  // Each new device connection gets a unique ID that never changes
+  int64_t next_device_id_{0};
 
   std::atomic_int mm_count_{0};
   std::vector<torch::Tensor> outputs_;
@@ -126,6 +148,12 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   // This allows us to unblock WaitMatMul when a device fails
   PartitionTrackerWithOid partition_tracker_;
   std::mutex partition_tracker_mutex_;  // Protects partition_tracker_
+
+  // In-flight partitions: partition_key -> complete partition data
+  // When a device fails, we need the complete partition data to resend to target device
+  // This map stores: partition_key -> {partition object, tensor blocks, device_id, oid}
+  InFlightPartitionMap inflight_partitions_;
+  std::mutex inflight_partitions_mutex_;  // Protects inflight_partitions_
 };
 
 typedef std::shared_ptr<ProxySvrImpl> ProxySvrImplPtr;
@@ -172,3 +200,4 @@ class ProxySvr {
   ProxyEnvCfg context_;
   std::shared_ptr<uevent::UeventLoopThread> loop_thread_;
 };
+
