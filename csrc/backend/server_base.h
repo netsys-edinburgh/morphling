@@ -125,6 +125,15 @@ struct MatrixPartition {
 
 typedef std::shared_ptr<MatrixPartition> MatrixPartitionPtr;
 
+struct DevicePerf {
+  int64_t dev_id;
+
+  // Protobuf serialization/deserialization
+  std::tuple<void*, size_t> SerializeToProto() const;
+  void DeserializeFromProto(const void* data, size_t size);
+};
+typedef std::shared_ptr<DevicePerf> DevicePerfPtr;
+
 // enum TimerType { kTimerGet, kTimerPut };
 
 // struct Timer {

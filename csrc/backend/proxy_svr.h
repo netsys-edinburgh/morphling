@@ -51,8 +51,22 @@ class ProxySvrHandle : public uevent::LoopHandle {
   void SendInLoop(const uevent::ConnectionUeventPtr& conn,
                   const MatrixPartitionPtr partition);
 
+  // send perf request to device
+  void SendPerfInLoop(const uevent::ConnectionUeventPtr& conn,
+                      const DevicePerfPtr perf);
+
  private:
+  // change to parse struct
   void HandleMatMul(const void* payload, size_t size);
+  void HandleDevicePerf(const void* payload, size_t size);
+
+  // proto parse from array directly, find message type + deserialize = call
+  // different HandleXXX
+  void DispatchProto(const void* payload, size_t size);
+
+  // called on connection success + enable performance = send perf request to
+  // device
+  void RequestDevicePerf(const uevent::ConnectionUeventPtr& conn);
 
  private:
   ProxyEnvCfg& ctx_;
@@ -72,7 +86,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
 
   void IncRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] -= count; }
   void DecRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] += count; }
-  
+
   size_t GetConnectionCount() const { return conn_map_.size(); }
 
  private:
