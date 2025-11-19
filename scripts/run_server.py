@@ -36,17 +36,13 @@ def parse_args():
                         help="Block size used by some backends")
     parser.add_argument("--no-model", dest="load_model", action="store_false",
                         help="Do not load the model; only start backend")
-    parser.add_argument("--min_devices", type=int, default=1,
-                        help="Minimum number of devices to connect before starting (default: 1, supports dynamic growth)")
     parser.add_argument("--no-wait", dest="no_wait", action="store_true",
                         help="Start immediately without waiting for any devices")
-    parser.add_argument("--test-matmul", dest="test_matmul", action="store_true",
-                        help="Run a test matrix multiplication after devices connect")
     parser.add_argument("--enable-cache", dest="enable_cache", action="store_true",
                         help="Enable client-side caching (for proxy backend)")
     parser.add_argument("--enable-hooks", dest="enable_hooks", action="store_true",
                         help="Enable hooks for distributed computation (apply_hooks)")
-    parser.set_defaults(load_model=True, test_matmul=False, enable_cache=False, enable_hooks=False, no_wait=False)
+    parser.set_defaults(load_model=True, enable_cache=False, enable_hooks=False, no_wait=False)
     return parser.parse_args()
 
 
@@ -132,43 +128,6 @@ def wait_for_devices(backend, min_devices: int, timeout: int = 120, no_wait: boo
     return final_count
 
 
-def test_matrix_multiplication(backend):
-    """Run a simple matrix multiplication test"""
-    try:
-        import torch
-        print("\n=== Running Matrix Multiplication Test ===")
-
-        # Create test matrices
-        mat_a = torch.randn(512, 512)
-        mat_b = torch.randn(512, 512)
-
-        print(f"Test matrices: A={mat_a.shape}, B={mat_b.shape}")
-        print("Dispatching matrix multiplication to connected devices...")
-
-        # Dispatch the computation
-        if hasattr(backend, "dispatch_matmul_async"):
-            oid = backend.dispatch_matmul_async(mat_a, mat_b)
-            print(f"Task dispatched with oid={oid}")
-
-            print("Waiting for results...")
-            result = backend.wait_matmul(oid)
-
-            # Verify result
-            expected = torch.matmul(mat_a, mat_b)
-            if torch.allclose(result, expected, rtol=1e-3, atol=1e-3):
-                print("✓ Matrix multiplication test PASSED!")
-            else:
-                print("✗ Matrix multiplication test FAILED!")
-                print(f"Max difference: {torch.max(torch.abs(result - expected))}")
-        else:
-            print("Backend does not support matrix multiplication dispatch")
-
-    except Exception as e:
-        print(f"Error during matrix multiplication test: {e}")
-        import traceback
-        traceback.print_exc()
-
-
 def main():
     args = parse_args()
     print(f"Starting server-only with backend={args.backend}, load_model={args.load_model}")
@@ -192,18 +151,16 @@ def main():
     morphling.hooks.autograd._backend = backend
 
     # Wait for minimum devices to connect
-    # With dynamic device support, we can start with just 1 device
-    # and new devices will be included automatically in subsequent inferences
-    connected = wait_for_devices(backend, args.min_devices, no_wait=args.no_wait)
+    min_devices = 1
+    connected = wait_for_devices(backend, min_devices, no_wait=args.no_wait)
 
-    if connected < args.min_devices and not args.no_wait:
-        print(f"Warning: Only {connected} device(s) connected, but {args.min_devices} required.")
+    if connected < min_devices and not args.no_wait:
+        print(f"Warning: Only {connected} device(s) connected, but {min_devices} required.")
         print("Continuing anyway (new devices can join dynamically)...")
     elif connected == 0 and not args.no_wait:
         print("⚠ No devices connected, but starting in dynamic mode")
         print("Inference will proceed when devices connect")
 
-    # 自动推理任务分发（无需 --test-matmul）
     if connected > 0 and model is not None and tokenizer is not None:
         print("\n=== Running Text Generation Inference ===")
         # Print current device status
@@ -252,10 +209,6 @@ def main():
         
         if hasattr(outputs, "logits"):
             print("logits shape:", outputs.logits.shape)
-            print(f"Logits min: {outputs.logits.min():.6f}, max: {outputs.logits.max():.6f}, mean: {outputs.logits.mean():.6f}")
-            # Print top-5 predictions for first token
-            top5_vals, top5_indices = torch.topk(outputs.logits[0, 0, :], 5)
-            print(f"Top-5 tokens for first position: {top5_indices.tolist()} with logits {top5_vals.tolist()}")
             
             # Save logits to pt file
             os.makedirs("logits_comparison", exist_ok=True)
