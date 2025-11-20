@@ -61,6 +61,13 @@ def main():
     )
 
     parser.add_argument(
+        "--proxy_host",
+        type=str,
+        default="",
+        help="The host and port of the proxy server (e.g., 155.98.37.203:39000), overrides config file",
+    )
+
+    parser.add_argument(
         "--backend",
         type=str,
         default="rabbitmq",
@@ -158,6 +165,17 @@ def main():
             time.sleep(1)
 
     elif args.backend == "proxy":
+        # Set environment variables to override config file if proxy_host is provided
+        if args.proxy_host:
+            try:
+                host, port = args.proxy_host.split(":")
+                os.environ["MORPHLING_PROXY_HOST"] = host
+                os.environ["MORPHLING_PROXY_PORT"] = port
+                print(f"Using proxy server: {host}:{port}", flush=True)
+            except ValueError:
+                print(f"Error: Invalid proxy_host format '{args.proxy_host}'. Expected format: host:port", flush=True)
+                return
+
         worker = AutoWorker.from_name(args.backend)
         worker.initialize(args.cfg)
         worker.start()

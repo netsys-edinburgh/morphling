@@ -7,6 +7,8 @@ import time
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser
+from dataclasses import dataclass, field
+from typing import Optional
 
 import morphling
 
@@ -28,8 +30,29 @@ torch.autograd.set_detect_anomaly(True)
 # signal.signal(signal.SIGINT, signal_handler)
 
 if __name__ == "__main__":
+    # Detect enable-hooks flag before using HfArgumentParser because some
+    # versions of HfArgumentParser can raise if unknown args remain.
+    import sys
+
+    _enable_hooks_flag_names = ("--enable-hooks", "--enable_hooks", "--hooks")
+    local_enable_hooks = False
+    # Build argv without our local flags so HfArgumentParser won't complain
+    orig_argv = sys.argv
+    filtered_argv = [orig_argv[0]]
+    for a in orig_argv[1:]:
+        if a in _enable_hooks_flag_names:
+            local_enable_hooks = True
+        else:
+            filtered_argv.append(a)
+
+    # Temporarily replace sys.argv for HfArgumentParser
+    sys.argv = filtered_argv
+
     parser = HfArgumentParser((DeviceConfigArguments, ModelConfigArguments))
     device_args, model_args = parser.parse_args_into_dataclasses()
+
+    # Restore original argv
+    sys.argv = orig_argv
     print(device_args, model_args, flush=True)
 
     os.environ["NUM_DEVICES"] = str(device_args.num_devices)
@@ -165,6 +188,8 @@ if __name__ == "__main__":
             str(device_args.ul_lat[i]),
             str(device_args.dl_lat[i]),
             model_args.backend,
+            model_args.redis_host,  # Pass redis_host as the 9th parameter
+            getattr(model_args, 'proxy_host', ''),  # Pass proxy_host as the 10th parameter (optional)
         ]
         # print("Running device", command)
         os.system(" ".join(command))
@@ -233,7 +258,11 @@ if __name__ == "__main__":
     # ref_attentions = ref_outputs.attentions
     # # ref_outputs = [out.cpu() for out in ref_outputs if isinstance(out, torch.Tensor)]
 
-    apply_hooks("linear")
+    if local_enable_hooks:
+        print("✓ Distributed computation mode: apply_hooks('linear') ENABLED")
+        apply_hooks("linear")
+    else:
+        print("✗ Local computation mode: apply_hooks('linear') DISABLED")
 
     model = model.to("cpu")
     inputs = inputs.to("cpu")
@@ -250,6 +279,13 @@ if __name__ == "__main__":
     out_hidden_states = outputs.hidden_states
     out_attentions = outputs.attentions
     print("out_logits", out_logits)
+    
+    # Save logits to pt file
+    os.makedirs("logits_comparison", exist_ok=True)
+    suffix = "with_hooks" if local_enable_hooks else "without_hooks"
+    logits_path = os.path.join("logits_comparison", f"logits_{suffix}.pt")
+    torch.save(out_logits.cpu().detach(), logits_path)
+    print(f"✓ Saved logits to {logits_path}")
 
     labels = inputs["input_ids"]
     loss = torch.nn.functional.cross_entropy(
