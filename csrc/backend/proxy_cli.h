@@ -44,9 +44,16 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
   void ConnectionClosedCb(const uevent::ConnectionUeventPtr& conn);
   void RequestCb(const uevent::ConnectionUeventPtr& conn);
 
-  MatrixPartition DecodeRequest(const void* payload, size_t size);
+  void DecodeAndDispatch(const uevent::ConnectionUeventPtr& conn,
+                         const void* payload, size_t size);
+
+  // Message handlers following MessageHandler interface
+  MessageHandlerSignature HandleRegisterRequest;
+  MessageHandlerSignature HandleMatMulRequest;
+
   void HandleMatMul(const uevent::ConnectionUeventPtr& conn,
                     MatrixPartition& partition);
+  void SendRegisterResponse(const uevent::ConnectionUeventPtr& conn);
 
   void SendPbRequest(const std::string& topic, const std::string& payload);
   void ReceivePbRequest(const std::string& topic,

@@ -14,7 +14,8 @@ enum MessageType {
     COMPUTE_GEMM_DATA = 103;
 
     // ----- DeviceRegister ----------------------------------------------------------------------------
-    DEVICE_REGISTER = 104;
+    DEVICE_REGISTER_REQUEST = 105;
+    DEVICE_PROFILE_DATA = 106;
 
     ENDING_ID = 200;
 };
@@ -27,10 +28,15 @@ extend morphling.Body {
     optional ComputeGemmData compute_gemm_data = 103;
 
     // ----- DeviceRegister ----------------------------------------------------------------------------
-    optional DeviceRegisterRequest register_device = 104;
+    optional DeviceRegisterRequest device_resgister_request = 105;
+    optional DeviceProfileData device_profile_data = 106;
 };
 
 message DeviceRegisterRequest {
+    // Empty request from server to client asking for registration
+}
+
+message DeviceProfileData {
     required uint64 uuid = 1;
     required uint64 flops = 2;
     required uint64 memory = 3;
@@ -38,7 +44,6 @@ message DeviceRegisterRequest {
     required uint64 dl_bw = 5;
     required uint64 ul_lat = 6;
     required uint64 dl_lat = 7;
-    required uint64 backend = 8;
 }
 
 message ComputeGemmData {

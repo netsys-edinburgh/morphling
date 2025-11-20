@@ -2,11 +2,24 @@
 
 #include <torch/torch.h>
 
+#include <functional>
 #include <future>
 
 #include "common/types_and_defs.h"
 #include "global_api.pb.h"
 #include "morphling.pb.h"
+
+// Forward declarations
+namespace uevent {
+class ConnectionUevent;
+typedef std::shared_ptr<ConnectionUevent> ConnectionUeventPtr;
+}  // namespace uevent
+
+// Common message handler signature
+// All message handlers follow this signature: (connection, payload, size)
+using MessageHandlerSignature = void(const uevent::ConnectionUeventPtr&,
+                                     const void*, size_t);
+using MessageHandler = std::function<MessageHandlerSignature>;
 
 template <typename T>
 std::vector<std::vector<T>> CartesianProduct(const std::vector<T>& list) {
@@ -77,7 +90,107 @@ struct hash<TensorKey> {
 };
 }  // namespace std
 
-struct MatrixPartition {
+// ============================================================================
+// Generic Serialization Framework
+// ============================================================================
+
+// Forward declarations
+class SerializationBuffer;
+
+enum class SerializationFormat {
+  BINARY,   // Plain binary format (deprecated, use for legacy support)
+  PROTOBUF  // Protobuf-based format (recommended)
+};
+
+// Base interface for serializable messages
+class ISerializable {
+ public:
+  virtual ~ISerializable() = default;
+
+  // Serialize to binary format
+  virtual std::tuple<void*, size_t> Serialize(
+      SerializationFormat format = SerializationFormat::PROTOBUF) const = 0;
+
+  // Deserialize from binary format
+  virtual void Deserialize(
+      const void* data, size_t size,
+      SerializationFormat format = SerializationFormat::PROTOBUF) = 0;
+
+  // Get the message type
+  virtual int32_t GetMessageType() const = 0;
+};
+
+// Buffer handler for reading/writing binary data
+class SerializationBuffer {
+ public:
+  SerializationBuffer();
+  explicit SerializationBuffer(const void* data, size_t size,
+                               bool take_ownership = false);
+  ~SerializationBuffer();
+
+  // Allocate new buffer
+  void Allocate(size_t size);
+
+  // Write methods
+  void WriteUInt32(uint32_t value, bool network_order = false);
+  void WriteUInt64(uint64_t value);
+  void WriteInt64(int64_t value);
+  void WriteBytes(const void* data, size_t size);
+
+  // Read methods
+  uint32_t ReadUInt32(bool network_order = false);
+  uint64_t ReadUInt64();
+  int64_t ReadInt64();
+  void ReadBytes(void* dest, size_t size);
+  const void* GetCurrentPtr() const;
+
+  // Position management
+  void SeekTo(size_t offset);
+  size_t GetOffset() const { return offset_; }
+  void* GetBuffer() const { return buffer_; }
+  size_t GetSize() const { return size_; }
+
+  // Validation
+  bool CanRead(size_t bytes) const;
+  void ValidateSize(size_t min_size) const;
+
+ private:
+  uint8_t* buffer_;
+  size_t size_;
+  size_t offset_;
+  bool owns_buffer_;
+};
+
+// Generic message wrapper for protobuf serialization
+template <typename ProtoExtension>
+class MessageSerializer {
+ public:
+  // Serialize a protobuf message with tensor data
+  static std::tuple<void*, size_t> SerializeWithTensors(
+      int32_t message_type, const ProtoExtension& proto_msg,
+      const std::vector<std::tuple<void*, size_t>>& tensors);
+
+  // Deserialize a protobuf message with tensor data
+  static std::tuple<ProtoExtension,
+                    std::vector<std::tuple<const void*, size_t>>>
+  DeserializeWithTensors(const void* data, size_t size,
+                         int32_t expected_message_type);
+
+ private:
+  // Create UMessage header
+  static void CreateMessageHeader(morphling::UMessage& umsg,
+                                  int32_t message_type);
+
+  // Validate and extract message
+  static const ProtoExtension& ExtractMessage(const morphling::UMessage& umsg,
+                                              int32_t expected_type);
+};
+
+// ============================================================================
+// Message Structs
+// ============================================================================
+
+struct MatrixPartition : public ISerializable {
   uint64_t version;
   int64_t row;
   int64_t col;
@@ -91,13 +204,15 @@ struct MatrixPartition {
                              // row block, second mat is col block
   void* ptr_ = nullptr;      // pointer to the data
   size_t size_ = 0;          // size of the data
-  std::tuple<void*, size_t> Serialize() const;
-  void Deserialize(const void* data, size_t size);
 
-  // Protobuf serialization/deserialization
-  std::tuple<void*, size_t> SerializeToProto() const;
-  void DeserializeFromProto(const void* data, size_t size);
+  // ISerializable interface
+  std::tuple<void*, size_t> Serialize(
+      SerializationFormat format = SerializationFormat::PROTOBUF) const;
+  void Deserialize(const void* data, size_t size,
+                   SerializationFormat format = SerializationFormat::PROTOBUF);
+  int32_t GetMessageType() const override;
 
+  // Public helper methods
   TensorKey GetRowKey() const {
     return std::make_tuple(version, pivot, row, true);
   }
@@ -121,17 +236,73 @@ struct MatrixPartition {
   }
 
   std::string DebugString() const;
+
+ private:
+  // Format-specific implementations
+  std::tuple<void*, size_t> SerializeBinary() const;
+  void DeserializeBinary(const void* data, size_t size);
+  std::tuple<void*, size_t> SerializeProto() const;
+  void DeserializeProto(const void* data, size_t size);
+
+  // Helper methods for metadata
+  void WriteMetadataToBuffer(SerializationBuffer& buffer) const;
+  void ReadMetadataFromBuffer(SerializationBuffer& buffer);
+  void ReadMatricesData(SerializationBuffer& buffer, size_t end_offset);
 };
 
 typedef std::shared_ptr<MatrixPartition> MatrixPartitionPtr;
 
-struct DevicePerf {
-  int64_t dev_id;
+// Device registration request (server -> client)
 
-  // Protobuf serialization/deserialization
-  std::tuple<void*, size_t> SerializeToProto() const;
-  void DeserializeFromProto(const void* data, size_t size);
+// Device registration request (server -> client)
+struct DeviceRegisterRequest : public ISerializable {
+  // Empty request
+
+  // ISerializable interface
+  std::tuple<void*, size_t> Serialize(
+      SerializationFormat format =
+          SerializationFormat::PROTOBUF) const override;
+  void Deserialize(
+      const void* data, size_t size,
+      SerializationFormat format = SerializationFormat::PROTOBUF) override;
+  int32_t GetMessageType() const override;
+
+ private:
+  std::tuple<void*, size_t> SerializeProto() const;
+  void DeserializeProto(const void* data, size_t size);
 };
+typedef std::shared_ptr<DeviceRegisterRequest> DeviceRegisterRequestPtr;
+
+// Device profile data (client -> server)
+// Contains device performance characteristics and capabilities
+struct DeviceProfileData : public ISerializable {
+  uint64_t uuid;
+  uint64_t flops;
+  uint64_t memory;
+  uint64_t ul_bw;   // upload bandwidth
+  uint64_t dl_bw;   // download bandwidth
+  uint64_t ul_lat;  // upload latency
+  uint64_t dl_lat;  // download latency
+
+  // ISerializable interface
+  std::tuple<void*, size_t> Serialize(
+      SerializationFormat format =
+          SerializationFormat::PROTOBUF) const override;
+  void Deserialize(
+      const void* data, size_t size,
+      SerializationFormat format = SerializationFormat::PROTOBUF) override;
+  int32_t GetMessageType() const override;
+
+ private:
+  std::tuple<void*, size_t> SerializeProto() const;
+  void DeserializeProto(const void* data, size_t size);
+};
+typedef std::shared_ptr<DeviceProfileData> DeviceProfileDataPtr;
+
+// Legacy aliases for backward compatibility
+typedef DeviceProfileData DeviceRegisterResponse;
+typedef std::shared_ptr<DeviceRegisterResponse> DeviceRegisterResponsePtr;
+typedef DeviceProfileData DevicePerf;
 typedef std::shared_ptr<DevicePerf> DevicePerfPtr;
 
 // enum TimerType { kTimerGet, kTimerPut };

@@ -7,6 +7,7 @@
 #include "common/stats.h"
 #include "network/eventloop_libevent.h"
 #include "network/listener_libevent.h"
+#include "proto_base.h"
 #include "utils/logging.h"
 
 using namespace std;
@@ -34,6 +35,25 @@ void ProxySvrHandle::ThreadInit(uevent::UeventLoop* loop) {
 void ProxySvrHandle::RequestWriteCb(const uevent::ConnectionUeventPtr& conn) {
   size_t readable = conn->ReadableLength();
   LOG_DEBUG << "RequestWriteCb readable: " << readable;
+}
+
+void ProxySvrHandle::SendRegisterRequest(const ConnectionUeventPtr& conn) {
+  LOG_INFO << "Sending registration request to "
+           << conn->GetPeerAddress().ToString();
+
+  DeviceRegisterRequest request;
+  auto [data, size] = request.Serialize(SerializationFormat::PROTOBUF);
+
+  // Send the serialized request
+  int ret = conn->SendData(data, size);
+  if (ret < 0) {
+    LOG_ERROR << "Failed to send registration request";
+    conn->ForceClose();
+    return;
+  }
+
+  LOG_DEBUG << "Registration request sent, size=" << size;
+  free(data);
 }
 
 void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
@@ -70,22 +90,79 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
       return;
     }
 
-    HandleMatMul(raw_data, datasize);
-    conn_inflight_[conn->GetPeerAddress().ToString()] -= 1;
-
-    if (!task_queue_.empty()) {
-      auto task = task_queue_.front();
-      task_queue_.pop_front();
-      task();
-    }
+    // Decode and dispatch message
+    DecodeAndDispatch(conn, raw_data, datasize);
   }
 }
 
-void ProxySvrHandle::HandleMatMul(const void* payload, size_t size) {
+void ProxySvrHandle::DecodeAndDispatch(const ConnectionUeventPtr& conn,
+                                       const void* payload, size_t size) {
+  // Step 1: Decode proto message header to get message type
+  int32_t message_type = GetMessageType(payload, size);
+
+  if (message_type < 0) {
+    LOG_ERROR << "Failed to decode message type";
+    return;
+  }
+
+  // Step 2: Dispatch to appropriate handler based on message type
+  string client_addr = conn->GetPeerAddress().ToString();
+
+  switch (message_type) {
+    case morphling::global_api::DEVICE_PROFILE_DATA:
+      HandleRegisterResponse(conn, payload, size);
+      break;
+
+    case morphling::global_api::COMPUTE_GEMM_DATA:
+      // Check if client is registered
+      if (!conn_registered_[client_addr]) {
+        LOG_ERROR << "Client " << client_addr
+                  << " not registered, disconnecting";
+        conn->ForceClose();
+        return;
+      }
+      HandleMatMul(conn, payload, size);
+      conn_inflight_[client_addr] -= 1;
+
+      if (!task_queue_.empty()) {
+        auto task = task_queue_.front();
+        task_queue_.pop_front();
+        task();
+      }
+      break;
+
+    default:
+      LOG_ERROR << "Unknown message type: " << message_type;
+      break;
+  }
+}
+
+void ProxySvrHandle::HandleRegisterResponse(const ConnectionUeventPtr& conn,
+                                            const void* payload, size_t size) {
+  string client_addr = conn->GetPeerAddress().ToString();
+  LOG_INFO << "Received device profile data from " << client_addr;
+
+  // Use standard Deserialize interface
+  DeviceProfileData profile;
+  profile.Deserialize(payload, size, SerializationFormat::PROTOBUF);
+
+  // Store device info and mark as registered
+  device_info_[client_addr] = profile;
+  conn_registered_[client_addr] = true;
+
+  LOG_INFO << "Client " << client_addr << " registered successfully: "
+           << "uuid=" << profile.uuid << ", flops=" << profile.flops
+           << ", memory=" << profile.memory;
+}
+
+void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
+                                  const void* payload, size_t size) {
   auto start = std::chrono::high_resolution_clock::now();
+
+  // Use standard Deserialize interface
   MatrixPartition partition;
-  // Use protobuf deserialization instead of binary
-  partition.DeserializeFromProto(payload, size);
+  partition.Deserialize(payload, size, SerializationFormat::PROTOBUF);
+
   auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
   LOG_DEBUG << part_key << " RSP Deserialization time: "
@@ -129,7 +206,7 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
   string client_addr = conn->GetPeerAddress().ToString();
   task_queue_.push_back([this, conn, partition, client_addr]() {
     // Use protobuf serialization instead of binary
-    auto [data, size] = partition->SerializeToProto();
+    auto [data, size] = partition->Serialize(SerializationFormat::PROTOBUF);
     conn->SendData(data, size);
     free(data);
     conn_inflight_[client_addr] += 1;
@@ -148,12 +225,20 @@ void ProxySvrHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   string client_addr = conn->GetPeerAddress().ToString();
   LOG_INFO << "connected from " << client_addr;
   conn_inflight_[client_addr] = 0;
+
+  // Mark as not registered initially
+  conn_registered_[client_addr] = false;
+
+  // Send registration request to client
+  SendRegisterRequest(conn);
 }
 
 void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   string client_addr = conn->GetPeerAddress().ToString();
   LOG_INFO << "disconnected from " << client_addr;
   conn_inflight_.erase(client_addr);
+  conn_registered_.erase(client_addr);
+  device_info_.erase(client_addr);
 }
 
 /********************************ProxySvrImpl****************************************/
