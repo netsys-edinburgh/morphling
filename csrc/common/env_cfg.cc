@@ -43,6 +43,20 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
   PARSE_INT_ENVCFG(parser, "network", "listen_port", true, 0, listen_port);
   PARSE_STR_ENVCFG(parser, "network", "listen_ip", true, "", listen_ip);
 
+  // Allow environment variables to override config file settings
+  const char* env_listen_ip = std::getenv("MORPHLING_PROXY_HOST");
+  const char* env_listen_port = std::getenv("MORPHLING_PROXY_PORT");
+
+  if (env_listen_ip != nullptr && strlen(env_listen_ip) > 0) {
+    listen_ip = std::string(env_listen_ip);
+    LOG_INFO << "Overriding listen_ip from environment: " << listen_ip;
+  }
+
+  if (env_listen_port != nullptr && strlen(env_listen_port) > 0) {
+    listen_port = std::atoi(env_listen_port);
+    LOG_INFO << "Overriding listen_port from environment: " << listen_port;
+  }
+
   PARSE_INT_ENVCFG(parser, "worker", "thread", false, 2, thread);
   PARSE_INT_ENVCFG(parser, "worker", "max_inflight", false, 5, max_inflight);
   PARSE_INT_ENVCFG(parser, "worker", "block_size", false, 32, block_size);
@@ -50,6 +64,7 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
 
   PARSE_INT_ENVCFG(parser, "internal", "cleanup_wait", false, 60, cleanup_wait);
   PARSE_INT_ENVCFG(parser, "internal", "tcp_timeout", false, 5, tcp_timeout);
+  PARSE_INT_ENVCFG(parser, "internal", "enable_cli_cache", false, 0, enable_cli_cache);
 
   base::Logger::setLogLevel(log_level);
 

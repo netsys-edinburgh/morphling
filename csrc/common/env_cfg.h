@@ -20,6 +20,7 @@ struct ProxyEnvCfg {
   // internal
   int cleanup_wait;
   int64_t tcp_timeout;
+  int enable_cli_cache;
 
   void* instance;
 
