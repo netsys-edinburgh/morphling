@@ -8,6 +8,7 @@
 #include "common/stats.h"
 #include "network/eventloop_libevent.h"
 #include "network/ueventloop_thread_pool.h"
+#include "proto_base.h"
 #include "utils/logging.h"
 
 using namespace std;
@@ -48,7 +49,7 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
     return;
   }
 
-  auto [data, size] = partition.SerializeToProto();
+  auto [data, size] = partition.Serialize(SerializationFormat::PROTOBUF);
   conn->SendData(data, size);
 
   // LOG_DEBUG << "Response sent to " << client_addr;
@@ -188,10 +189,93 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
       return;
     }
 
-    auto partition = DecodeRequest(raw_data, datasize);
-    HandleMatMul(conn, partition);
-    LOG_DEBUG << "Processed partition: " << partition.DebugString();
+    // Decode and dispatch message
+    DecodeAndDispatch(conn, raw_data, datasize);
   }
+}
+
+void ProxyCliImpl::DecodeAndDispatch(const ConnectionUeventPtr& conn,
+                                     const void* payload, size_t size) {
+  // Step 1: Decode proto message header to get message type
+  int32_t message_type = GetMessageType(payload, size);
+
+  if (message_type < 0) {
+    LOG_ERROR << "Failed to decode message type";
+    return;
+  }
+
+  // Step 2: Dispatch to appropriate handler based on message type
+  switch (message_type) {
+    case morphling::global_api::DEVICE_REGISTER_REQUEST:
+      HandleRegisterRequest(conn, payload, size);
+      break;
+
+    case morphling::global_api::COMPUTE_GEMM_DATA:
+      HandleMatMulRequest(conn, payload, size);
+      break;
+
+    default:
+      LOG_ERROR << "Unknown message type: " << message_type;
+      break;
+  }
+}
+
+void ProxyCliImpl::HandleRegisterRequest(const ConnectionUeventPtr& conn,
+                                         const void* payload, size_t size) {
+  LOG_INFO << "Received registration request from server";
+
+  // Use standard Deserialize interface
+  DeviceRegisterRequest request;
+  request.Deserialize(payload, size, SerializationFormat::PROTOBUF);
+
+  // Request is empty, just send response with device profile
+  SendRegisterResponse(conn);
+}
+
+void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
+  LOG_INFO << "Sending device profile data to server";
+
+  DeviceProfileData profile;
+  profile.uuid = GenUUID64();
+  profile.flops = 100000000000ull;              // 100 GFLOPS - placeholder
+  profile.memory = 16ull * 1024 * 1024 * 1024;  // 16GB - placeholder
+  profile.ul_bw = 10ull * 1024 * 1024 * 1024;   // 10 Gbps
+  profile.dl_bw = 10ull * 1024 * 1024 * 1024;   // 10 Gbps
+  profile.ul_lat = 1000;                        // 1ms
+  profile.dl_lat = 1000;                        // 1ms
+
+  auto [data, size] = profile.Serialize(SerializationFormat::PROTOBUF);
+
+  int ret = conn->SendData(data, size);
+  if (ret < 0) {
+    LOG_ERROR << "Failed to send device profile data";
+    free(data);
+    conn->ForceClose();
+    return;
+  }
+
+  LOG_INFO << "Device profile data sent";
+  free(data);
+}
+
+void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
+                                       const void* payload, size_t size) {
+  auto start = std::chrono::high_resolution_clock::now();
+
+  // Use standard Deserialize interface
+  MatrixPartition partition;
+  partition.Deserialize(payload, size, SerializationFormat::PROTOBUF);
+
+  auto part_key = partition.GetPartitionKey();
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+  LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
+            << "us";
+
+  // Process the partition
+  HandleMatMul(conn, partition);
+  LOG_DEBUG << "Processed partition: " << partition.DebugString();
 }
 
 void ProxyCliImpl::HandleMatMul(const ConnectionUeventPtr& conn,
@@ -289,18 +373,19 @@ void ProxyCliImpl::HandlePartition(const ConnectionUeventPtr& conn,
                        std::cref(partition)));
 }
 
-MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size) {
-  auto start = std::chrono::high_resolution_clock::now();
-  MatrixPartition partition;
-  partition.DeserializeFromProto(payload, size);
-  auto part_key = partition.GetPartitionKey();
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration =
-      std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
-            << "us";
-  return partition;
-}
+// MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size)
+// {
+//   auto start = std::chrono::high_resolution_clock::now();
+//   MatrixPartition partition;
+//   partition.Deserialize(payload, size, SerializationFormat::PROTOBUF);
+//   auto part_key = partition.GetPartitionKey();
+//   auto end = std::chrono::high_resolution_clock::now();
+//   auto duration =
+//       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+//   LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
+//             << "us";
+//   return partition;
+// }
 
 void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
                                int64_t h_dim) {

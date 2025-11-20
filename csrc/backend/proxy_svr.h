@@ -55,24 +55,29 @@ class ProxySvrHandle : public uevent::LoopHandle {
   void SendPerfInLoop(const uevent::ConnectionUeventPtr& conn,
                       const DevicePerfPtr perf);
 
+  // Device registration methods
+  void SendRegisterRequest(const uevent::ConnectionUeventPtr& conn);
+  MessageHandlerSignature HandleRegisterResponse;
+
  private:
-  // change to parse struct
-  void HandleMatMul(const void* payload, size_t size);
-  void HandleDevicePerf(const void* payload, size_t size);
+  // Message decoding and dispatching
+  void DecodeAndDispatch(const uevent::ConnectionUeventPtr& conn,
+                         const void* payload, size_t size);
 
-  // proto parse from array directly, find message type + deserialize = call
-  // different HandleXXX
-  void DispatchProto(const void* payload, size_t size);
-
-  // called on connection success + enable performance = send perf request to
-  // device
-  void RequestDevicePerf(const uevent::ConnectionUeventPtr& conn);
+  // Message handlers following MessageHandler interface
+  MessageHandlerSignature HandleMatMul;
+  MessageHandlerSignature HandleDevicePerf;
 
  private:
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
   std::unordered_map<std::string, uint32_t> conn_inflight_;
   std::deque<std::function<void()>> task_queue_;
+
+  // Device registration tracking
+  std::unordered_map<std::string, bool> conn_registered_;  // addr -> registered
+  std::unordered_map<std::string, DeviceProfileData>
+      device_info_;  // addr -> device info
 };
 
 class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
@@ -88,6 +93,16 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   void DecRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] += count; }
 
   size_t GetConnectionCount() const { return conn_map_.size(); }
+  size_t GetRegisteredDeviceCount() const { return registered_devices_.size(); }
+  bool IsDeviceRegistered(const std::string& addr) const {
+    return registered_devices_.find(addr) != registered_devices_.end();
+  }
+  void RegisterDevice(const std::string& addr, const DeviceProfileData& info) {
+    registered_devices_[addr] = info;
+  }
+  void UnregisterDevice(const std::string& addr) {
+    registered_devices_.erase(addr);
+  }
 
  private:
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
@@ -106,6 +121,9 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::atomic_int mm_count_{0};
   std::vector<torch::Tensor> outputs_;
   std::vector<std::atomic_ullong> rsp_cb_counts_;
+
+  // Device registration tracking
+  std::unordered_map<std::string, DeviceProfileData> registered_devices_;
 };
 
 typedef std::shared_ptr<ProxySvrImpl> ProxySvrImplPtr;

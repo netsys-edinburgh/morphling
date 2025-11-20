@@ -7,6 +7,207 @@
 #include "global_api.pb.h"
 #include "utils/logging.h"
 
+// ============================================================================
+// SerializationBuffer Implementation
+// ============================================================================
+
+SerializationBuffer::SerializationBuffer()
+    : buffer_(nullptr), size_(0), offset_(0), owns_buffer_(false) {}
+
+SerializationBuffer::SerializationBuffer(const void* data, size_t size,
+                                         bool take_ownership)
+    : buffer_(const_cast<uint8_t*>(static_cast<const uint8_t*>(data))),
+      size_(size),
+      offset_(0),
+      owns_buffer_(take_ownership) {}
+
+SerializationBuffer::~SerializationBuffer() {
+  if (owns_buffer_ && buffer_) {
+    free(buffer_);
+  }
+}
+
+void SerializationBuffer::Allocate(size_t size) {
+  if (owns_buffer_ && buffer_) {
+    free(buffer_);
+  }
+  buffer_ = (uint8_t*)malloc(size);
+  size_ = size;
+  offset_ = 0;
+  owns_buffer_ = true;
+}
+
+void SerializationBuffer::WriteUInt32(uint32_t value, bool network_order) {
+  if (network_order) {
+    value = htonl(value);
+  }
+  memcpy(buffer_ + offset_, &value, sizeof(uint32_t));
+  offset_ += sizeof(uint32_t);
+}
+
+void SerializationBuffer::WriteUInt64(uint64_t value) {
+  memcpy(buffer_ + offset_, &value, sizeof(uint64_t));
+  offset_ += sizeof(uint64_t);
+}
+
+void SerializationBuffer::WriteInt64(int64_t value) {
+  memcpy(buffer_ + offset_, &value, sizeof(int64_t));
+  offset_ += sizeof(int64_t);
+}
+
+void SerializationBuffer::WriteBytes(const void* data, size_t size) {
+  if (size > 0 && data != nullptr) {
+    memcpy(buffer_ + offset_, data, size);
+  }
+  offset_ += size;
+}
+
+uint32_t SerializationBuffer::ReadUInt32(bool network_order) {
+  uint32_t value;
+  memcpy(&value, buffer_ + offset_, sizeof(uint32_t));
+  offset_ += sizeof(uint32_t);
+  return network_order ? ntohl(value) : value;
+}
+
+uint64_t SerializationBuffer::ReadUInt64() {
+  uint64_t value;
+  memcpy(&value, buffer_ + offset_, sizeof(uint64_t));
+  offset_ += sizeof(uint64_t);
+  return value;
+}
+
+int64_t SerializationBuffer::ReadInt64() {
+  int64_t value;
+  memcpy(&value, buffer_ + offset_, sizeof(int64_t));
+  offset_ += sizeof(int64_t);
+  return value;
+}
+
+void SerializationBuffer::ReadBytes(void* dest, size_t size) {
+  memcpy(dest, buffer_ + offset_, size);
+  offset_ += size;
+}
+
+const void* SerializationBuffer::GetCurrentPtr() const {
+  return buffer_ + offset_;
+}
+
+void SerializationBuffer::SeekTo(size_t offset) { offset_ = offset; }
+
+bool SerializationBuffer::CanRead(size_t bytes) const {
+  return offset_ + bytes <= size_;
+}
+
+void SerializationBuffer::ValidateSize(size_t min_size) const {
+  if (size_ < min_size) {
+    throw std::runtime_error("Buffer size too small: " + std::to_string(size_) +
+                             " < " + std::to_string(min_size));
+  }
+}
+
+// ============================================================================
+// MessageSerializer Template Implementation
+// ============================================================================
+
+template <typename ProtoExtension>
+void MessageSerializer<ProtoExtension>::CreateMessageHeader(
+    morphling::UMessage& umsg, int32_t message_type) {
+  auto* head = umsg.mutable_head();
+  head->set_version(1);
+  head->set_magic_flag(0x12340987);
+  head->set_random_num(0);
+  head->set_flow_no(0);
+  head->set_session_no("");
+  head->set_message_type(message_type);
+}
+
+template <typename ProtoExtension>
+std::tuple<void*, size_t>
+MessageSerializer<ProtoExtension>::SerializeWithTensors(
+    int32_t message_type, const ProtoExtension& proto_msg,
+    const std::vector<std::tuple<void*, size_t>>& tensors) {
+  // Create UMessage
+  morphling::UMessage umsg;
+  CreateMessageHeader(umsg, message_type);
+
+  // Set body - this needs to be specialized per message type
+  // auto* body = umsg.mutable_body();
+  // body->SetExtension(..., proto_msg);
+
+  // Serialize proto
+  std::string proto_str = umsg.SerializeAsString();
+  uint32_t proto_size = proto_str.size();
+
+  // Calculate total tensor size
+  uint64_t tensor_size = 0;
+  for (const auto& t : tensors) {
+    tensor_size += std::get<1>(t);
+  }
+
+  // Layout: [4B: payload_size] [4B: proto_size] [8B: tensor_size] [proto...]
+  // [tensors...]
+  uint32_t payload_size =
+      sizeof(proto_size) + sizeof(tensor_size) + proto_size + tensor_size;
+  uint64_t total_size = sizeof(payload_size) + payload_size;
+
+  SerializationBuffer buffer;
+  buffer.Allocate(total_size);
+
+  // Write layout
+  buffer.WriteUInt32(payload_size, true);  // network byte order
+  buffer.WriteUInt32(proto_size, false);
+  buffer.WriteUInt64(tensor_size);
+  buffer.WriteBytes(proto_str.data(), proto_size);
+
+  // Write tensor data
+  for (const auto& t : tensors) {
+    buffer.WriteBytes(std::get<0>(t), std::get<1>(t));
+  }
+
+  return std::make_tuple(buffer.GetBuffer(), buffer.GetSize());
+}
+
+template <typename ProtoExtension>
+std::tuple<ProtoExtension, std::vector<std::tuple<const void*, size_t>>>
+MessageSerializer<ProtoExtension>::DeserializeWithTensors(
+    const void* data, size_t size, int32_t expected_message_type) {
+  SerializationBuffer buffer(data, size, false);
+  buffer.ValidateSize(16);
+
+  // Read layout
+  uint32_t payload_size = buffer.ReadUInt32(true);  // network byte order
+  uint32_t proto_size = buffer.ReadUInt32(false);
+  uint64_t tensor_size = buffer.ReadUInt64();
+
+  // Validate
+  if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {
+    throw std::runtime_error("Invalid proto_size: " +
+                             std::to_string(proto_size));
+  }
+
+  if (buffer.GetOffset() + proto_size + tensor_size > size) {
+    throw std::runtime_error("Total size exceeds buffer");
+  }
+
+  // Parse proto
+  morphling::UMessage umsg;
+  if (!umsg.ParseFromArray(buffer.GetCurrentPtr(), proto_size)) {
+    throw std::runtime_error("Failed to parse UMessage");
+  }
+  buffer.SeekTo(buffer.GetOffset() + proto_size);
+
+  // Verify message type
+  if (umsg.head().message_type() != expected_message_type) {
+    throw std::runtime_error("Message type mismatch");
+  }
+
+  // Extract message - needs specialization per type
+  ProtoExtension proto_msg;  // placeholder
+  std::vector<std::tuple<const void*, size_t>> tensors;
+
+  return std::make_tuple(proto_msg, tensors);
+}
+
 void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
                          int64_t c, int64_t pivot, int64_t block_size) {
   // implement torch::index_put_ using memory copy
@@ -227,133 +428,73 @@ std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
   return partitions;
 }
 
-std::tuple<void*, size_t> MatrixPartition::Serialize() const {
-  uint32_t size = sizeof(int64_t) * 6 + sizeof(uint64_t) * 2;
-  for (const auto& mat : mat) {
-    size += std::get<1>(mat) + sizeof(int64_t);
-  }
-  // fprintf(stderr, "Size: %ld\n", size);
+// ============================================================================
+// MatrixPartition Implementation
+// ============================================================================
 
-  uint8_t* ptr = (uint8_t*)malloc(size + sizeof(uint32_t));
-  // // pinning the pointer
-  // int ret = mlock(ptr, size);
-  // LOG_FATAL_IF(ret != 0, "Failed to pin memory in serialization, error code:
-  // {}, msg: {}", ret, strerror(errno));
-
-  // write payload size
-  size_t nl_size = htonl(size);
-  memcpy(ptr, &nl_size, sizeof(uint32_t));
-
-  int64_t offset = sizeof(uint32_t);
-  // fprintf(stderr, "Serializing partition: %ld, %ld, %ld\n", row, col, h_dim);
-  memcpy(ptr + offset, &version, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
-  memcpy(ptr + offset, &row, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  memcpy(ptr + offset, &col, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  memcpy(ptr + offset, &pivot, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  memcpy(ptr + offset, &h_dim, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  memcpy(ptr + offset, &dev_id, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  memcpy(ptr + offset, &oid, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  memcpy(ptr + offset, &timestamp, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
-
-  for (const auto& mat : mat) {
-    memcpy(ptr + offset, &std::get<1>(mat), sizeof(int64_t));
-    offset += sizeof(int64_t);
-    // fprintf(stderr, "ptr: %p, offset: %ld, size: %ld\n", ptr, offset,
-    // std::get<1>(mat));
-    if (std::get<1>(mat) == 0) {
-      continue;
-    }
-    memcpy(ptr + offset, std::get<0>(mat), std::get<1>(mat));
-    offset += std::get<1>(mat);
-    // fprintf(stderr, "Mat size: %ld\n", std::get<1>(mat));
-  }
-
-  return std::make_tuple(ptr, size + sizeof(uint32_t));
+int32_t MatrixPartition::GetMessageType() const {
+  return morphling::global_api::COMPUTE_GEMM_DATA;
 }
 
-void MatrixPartition::Deserialize(const void* data, size_t size) {
-  LOG_INFO << "Deserialize called: data=" << data << ", size=" << size;
-
-  if (data == nullptr) {
-    LOG_ERROR << "Deserialize: data pointer is nullptr!";
-    return;
+std::tuple<void*, size_t> MatrixPartition::Serialize(
+    SerializationFormat format) const {
+  switch (format) {
+    case SerializationFormat::BINARY:
+      return SerializeBinary();
+    case SerializationFormat::PROTOBUF:
+      return SerializeProto();
+    default:
+      throw std::runtime_error("Unknown serialization format");
   }
+}
 
-  if (size <= 0) {
-    LOG_ERROR << "Deserialize: invalid size=" << size;
-    return;
+void MatrixPartition::Deserialize(const void* data, size_t size,
+                                  SerializationFormat format) {
+  switch (format) {
+    case SerializationFormat::BINARY:
+      DeserializeBinary(data, size);
+      break;
+    case SerializationFormat::PROTOBUF:
+      DeserializeProto(data, size);
+      break;
+    default:
+      throw std::runtime_error("Unknown serialization format");
   }
+}
 
-  uint8_t* ptr = (uint8_t*)data;
-  int64_t offset = sizeof(uint32_t);
+void MatrixPartition::WriteMetadataToBuffer(SerializationBuffer& buffer) const {
+  buffer.WriteUInt64(version);
+  buffer.WriteInt64(row);
+  buffer.WriteInt64(col);
+  buffer.WriteInt64(pivot);
+  buffer.WriteInt64(h_dim);
+  buffer.WriteInt64(dev_id);
+  buffer.WriteInt64(oid);
+  buffer.WriteUInt64(timestamp);
+}
 
-  ptr_ = ptr;
-  size_ = size;
+void MatrixPartition::ReadMetadataFromBuffer(SerializationBuffer& buffer) {
+  version = buffer.ReadUInt64();
+  row = buffer.ReadInt64();
+  col = buffer.ReadInt64();
+  pivot = buffer.ReadInt64();
+  h_dim = buffer.ReadInt64();
+  dev_id = buffer.ReadInt64();
+  oid = buffer.ReadInt64();
+  timestamp = buffer.ReadUInt64();
+}
 
-  LOG_DEBUG << "Reading version at offset=" << offset;
-  memcpy(&version, ptr + offset, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
-  LOG_DEBUG << "version=" << version;
-
-  LOG_DEBUG << "Reading row at offset=" << offset;
-  memcpy(&row, ptr + offset, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  LOG_DEBUG << "row=" << row;
-
-  LOG_DEBUG << "Reading col at offset=" << offset;
-  memcpy(&col, ptr + offset, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  LOG_DEBUG << "col=" << col;
-
-  LOG_DEBUG << "Reading pivot at offset=" << offset;
-  memcpy(&pivot, ptr + offset, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  LOG_DEBUG << "pivot=" << pivot;
-
-  LOG_DEBUG << "Reading h_dim at offset=" << offset;
-  memcpy(&h_dim, ptr + offset, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  LOG_DEBUG << "h_dim=" << h_dim;
-
-  LOG_DEBUG << "Reading dev_id at offset=" << offset;
-  memcpy(&dev_id, ptr + offset, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  LOG_DEBUG << "dev_id=" << dev_id;
-
-  LOG_DEBUG << "Reading oid at offset=" << offset;
-  memcpy(&oid, ptr + offset, sizeof(int64_t));
-  offset += sizeof(int64_t);
-  LOG_DEBUG << "oid=" << oid;
-
-  LOG_DEBUG << "Reading timestamp at offset=" << offset;
-  memcpy(&timestamp, ptr + offset, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
-  LOG_DEBUG << "timestamp=" << timestamp;
-
-  LOG_DEBUG << "Starting matrix data loop, offset=" << offset
-            << ", size=" << size;
+void MatrixPartition::ReadMatricesData(SerializationBuffer& buffer,
+                                       size_t end_offset) {
   int mat_count = 0;
-  while (offset < size) {
-    LOG_DEBUG << "Reading mat_size at offset=" << offset
-              << ", remaining=" << (size - offset);
-
-    if (offset + sizeof(int64_t) > size) {
-      LOG_ERROR << "Not enough data for mat_size at offset=" << offset;
+  while (buffer.GetOffset() < end_offset) {
+    if (!buffer.CanRead(sizeof(int64_t))) {
+      LOG_ERROR << "Not enough data for mat_size at offset="
+                << buffer.GetOffset();
       break;
     }
 
-    int64_t mat_size;
-    memcpy(&mat_size, ptr + offset, sizeof(int64_t));
-    offset += sizeof(int64_t);
-    LOG_DEBUG << "mat[" << mat_count << "] size=" << mat_size;
+    int64_t mat_size = buffer.ReadInt64();
 
     if (mat_size == 0) {
       mat.push_back({nullptr, 0});
@@ -361,48 +502,72 @@ void MatrixPartition::Deserialize(const void* data, size_t size) {
       continue;
     }
 
-    if (mat_size < 0) {
-      LOG_ERROR << "Invalid mat_size=" << mat_size << " at mat[" << mat_count
-                << "]";
+    if (mat_size < 0 || !buffer.CanRead(mat_size)) {
+      LOG_ERROR << "Invalid mat_size=" << mat_size;
       break;
     }
 
-    if (offset + mat_size > size) {
-      LOG_ERROR << "Not enough data for matrix at offset=" << offset
-                << ", mat_size=" << mat_size
-                << ", remaining=" << (size - offset);
-      break;
-    }
-
-    LOG_DEBUG << "Adding matrix data: ptr=" << (void*)(ptr + offset)
-              << ", size=" << mat_size;
-    mat.push_back({ptr + offset, mat_size});
-    offset += mat_size;
+    mat.push_back({const_cast<void*>(buffer.GetCurrentPtr()),
+                   static_cast<size_t>(mat_size)});
+    buffer.SeekTo(buffer.GetOffset() + mat_size);
     mat_count++;
   }
-
-  LOG_INFO << "Deserialize completed: parsed " << mat_count
-           << " matrices, final offset=" << offset;
 }
 
-std::string MatrixPartition::DebugString() const {
-  std::ostringstream oss;
-  oss << "v: " << version << ", r: " << row << ", c: " << col
-      << ", p: " << pivot << ", h: " << h_dim << ", dev_id: " << dev_id
-      << ", oid: " << oid;
-
-  // add mat data
-  for (const auto& mat_data : mat) {
-    oss << ", m_size: " << std::get<1>(mat_data);
+std::tuple<void*, size_t> MatrixPartition::SerializeBinary() const {
+  uint32_t payload_size = sizeof(int64_t) * 6 + sizeof(uint64_t) * 2;
+  for (const auto& m : mat) {
+    payload_size += std::get<1>(m) + sizeof(int64_t);
   }
-  return oss.str();
+
+  SerializationBuffer buffer;
+  buffer.Allocate(payload_size + sizeof(uint32_t));
+
+  buffer.WriteUInt32(payload_size, true);  // network byte order
+  WriteMetadataToBuffer(buffer);
+
+  for (const auto& m : mat) {
+    buffer.WriteInt64(std::get<1>(m));
+    if (std::get<1>(m) > 0) {
+      buffer.WriteBytes(std::get<0>(m), std::get<1>(m));
+    }
+  }
+
+  return std::make_tuple(buffer.GetBuffer(), buffer.GetSize());
 }
 
-std::tuple<void*, size_t> MatrixPartition::SerializeToProto() const {
-  // Create UMessage with ComputeGemmRequest
+void MatrixPartition::DeserializeBinary(const void* data, size_t size) {
+  LOG_INFO << "DeserializeBinary called: data=" << data << ", size=" << size;
+
+  if (data == nullptr) {
+    LOG_ERROR << "DeserializeBinary: data pointer is nullptr!";
+    return;
+  }
+
+  if (size <= sizeof(uint32_t)) {
+    LOG_ERROR << "DeserializeBinary: invalid size=" << size;
+    return;
+  }
+
+  SerializationBuffer buffer(data, size, false);
+  ptr_ = buffer.GetBuffer();
+  size_ = size;
+
+  buffer.SeekTo(sizeof(uint32_t));  // Skip payload size
+  ReadMetadataFromBuffer(buffer);
+
+  LOG_DEBUG << "Metadata: version=" << version << ", row=" << row
+            << ", col=" << col << ", pivot=" << pivot;
+
+  ReadMatricesData(buffer, size);
+  LOG_INFO << "DeserializeBinary completed: parsed " << mat.size()
+           << " matrices";
+}
+
+std::tuple<void*, size_t> MatrixPartition::SerializeProto() const {
+  // Create UMessage with ComputeGemmData
   morphling::UMessage umsg;
 
-  // Set header fields
   auto* head = umsg.mutable_head();
   head->set_version(1);
   head->set_magic_flag(0x12340987);
@@ -411,7 +576,6 @@ std::tuple<void*, size_t> MatrixPartition::SerializeToProto() const {
   head->set_session_no("");
   head->set_message_type(morphling::global_api::COMPUTE_GEMM_DATA);
 
-  // Set body with ComputeGemmRequest extension
   auto* body = umsg.mutable_body();
   auto* gemm_data =
       body->MutableExtension(morphling::global_api::compute_gemm_data);
@@ -426,125 +590,100 @@ std::tuple<void*, size_t> MatrixPartition::SerializeToProto() const {
   gemm_data->set_timestamp(timestamp);
 
   for (const auto& m : mat) {
-    auto* mat_payload = gemm_data->add_matrices();  // use matrix_a for all mats
-    mat_payload->set_offset(0);  // actual offset handled in payload
+    auto* mat_payload = gemm_data->add_matrices();
+    mat_payload->set_offset(0);
     mat_payload->set_size(std::get<1>(m));
   }
 
-  // Serialize proto
+  // Serialize using common layout
   std::string proto_str = umsg.SerializeAsString();
   uint32_t proto_size = proto_str.size();
 
-  // Calculate total tensor size (sum of all matrix data)
   uint64_t tensor_size = 0;
   for (const auto& m : mat) {
     tensor_size += std::get<1>(m);
   }
 
-  // Layout: [4B: payload_size] [4B: proto_size] [8B: tensor_size] [proto...]
-  // [tensors...] payload_size does NOT include the 4-byte size field itself
-  // (compatible with network protocol)
-  uint32_t payload_size = sizeof(proto_size) + sizeof(tensor_size) +
-                          proto_size +
-                          tensor_size;  // proto_size + tensor_size + header
-  uint64_t total_size =
-      sizeof(payload_size) + payload_size;  // 8 + payload_size
-  uint8_t* ptr = (uint8_t*)malloc(total_size);
+  uint32_t payload_size =
+      sizeof(proto_size) + sizeof(tensor_size) + proto_size + tensor_size;
+  uint64_t total_size = sizeof(payload_size) + payload_size;
 
-  // Write payload size in network byte order (compatible with receiver's
-  // protocol) [0-3]: payload_size (4 bytes, network byte order)
-  uint32_t payload_size_be = htonl(payload_size);
-  memcpy(ptr, &payload_size_be, sizeof(payload_size_be));
-  uint32_t offset = sizeof(payload_size_be);
+  SerializationBuffer buffer;
+  buffer.Allocate(total_size);
 
-  // Write header in big-endian format
-  // [4-7]: proto_size (4 bytes, big-endian)
-  // [8-15]: tensor_size (8 bytes, big-endian)
-  memcpy(ptr + offset, &proto_size, sizeof(uint32_t));
-  offset += sizeof(proto_size);
-  memcpy(ptr + offset, &tensor_size, sizeof(uint64_t));
-  offset += sizeof(tensor_size);
+  buffer.WriteUInt32(payload_size, true);  // network byte order
+  buffer.WriteUInt32(proto_size, false);
+  buffer.WriteUInt64(tensor_size);
+  buffer.WriteBytes(proto_str.data(), proto_size);
 
-  // Write proto data at offset 16
-  // [16-...]: serialized protobuf message
-  memcpy(ptr + offset, proto_str.data(), proto_size);
-  offset += proto_size;
-
-  // Write tensor data starting at offset 16 + proto_size
-  // [16+proto_size-...]: matrix data (A, then B, etc.)
+  // Write tensor data
   for (const auto& m : mat) {
     if (std::get<1>(m) > 0 && std::get<0>(m) != nullptr) {
-      memcpy(ptr + offset, std::get<0>(m), std::get<1>(m));
-      offset += std::get<1>(m);
+      buffer.WriteBytes(std::get<0>(m), std::get<1>(m));
     }
   }
 
-  LOG_DEBUG << "SerializeToProto completed: total_size=" << total_size
+  LOG_DEBUG << "SerializeProto completed: total_size=" << total_size
             << ", payload_size=" << payload_size
             << ", proto_size=" << proto_size << ", tensor_size=" << tensor_size;
-  return std::make_tuple(ptr, total_size);
+
+  return std::make_tuple(buffer.GetBuffer(), buffer.GetSize());
 }
 
-void MatrixPartition::DeserializeFromProto(const void* data, size_t size) {
-  LOG_INFO << "DeserializeFromProto called: data=" << data << ", size=" << size;
+void MatrixPartition::DeserializeProto(const void* data, size_t size) {
+  LOG_INFO << "DeserializeProto called: data=" << data << ", size=" << size;
 
   if (data == nullptr) {
-    LOG_ERROR << "DeserializeFromProto: data pointer is nullptr!";
-    throw std::runtime_error("DeserializeFromProto: data pointer is nullptr");
+    LOG_ERROR << "DeserializeProto: data pointer is nullptr!";
+    throw std::runtime_error("DeserializeProto: data pointer is nullptr");
   }
 
   if (size < 16) {
-    LOG_ERROR << "DeserializeFromProto: size too small, size=" << size;
-    throw std::runtime_error("DeserializeFromProto: size too small");
+    LOG_ERROR << "DeserializeProto: size too small, size=" << size;
+    throw std::runtime_error("DeserializeProto: size too small");
   }
 
-  uint8_t* ptr = (uint8_t*)data;
-  uint32_t offset = sizeof(uint32_t);
+  SerializationBuffer buffer(data, size, false);
 
-  // Read header: proto_size (4 bytes) + tensor_size (8 bytes)
-  // [4-7]: proto_size in big-endian (skip first 4 bytes which is payload_size)
-  // [8-15]: tensor_size in big-endian
-  uint32_t proto_size;
-  size_t tensor_size;
-
-  memcpy(&proto_size, ptr + offset, sizeof(proto_size));
-  offset += sizeof(proto_size);
-  memcpy(&tensor_size, ptr + offset, sizeof(tensor_size));
-  offset += sizeof(tensor_size);
+  // Read header
+  uint32_t payload_size = buffer.ReadUInt32(true);  // network byte order
+  uint32_t proto_size = buffer.ReadUInt32(false);
+  uint64_t tensor_size = buffer.ReadUInt64();
 
   LOG_DEBUG << "Read header: proto_size=" << proto_size
             << ", tensor_size=" << tensor_size;
 
   // Validate sizes
-  if (proto_size == 0 ||
-      proto_size > 100 * 1024 * 1024) {  // 100MB sanity check
+  if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {
     LOG_ERROR << "Invalid proto_size=" << proto_size;
-    throw std::runtime_error("Invalid proto_size");
+    throw std::runtime_error("Invalid proto_size=" +
+                             std::to_string(proto_size));
   }
 
-  if (tensor_size > 1ull * 1024 * 1024 * 1024) {  // 1GB sanity check
+  if (tensor_size > 1ull * 1024 * 1024 * 1024) {
     LOG_ERROR << "Invalid tensor_size=" << tensor_size;
-    throw std::runtime_error("Invalid tensor_size");
+    throw std::runtime_error("Invalid tensor_size=" +
+                             std::to_string(tensor_size));
   }
 
-  // Validate: payload_size + proto + tensors should fit in buffer
-  if (offset + proto_size + tensor_size > size) {
-    LOG_ERROR << "Total size mismatch: " << (offset + proto_size + tensor_size)
-              << " > " << size;
+  if (buffer.GetOffset() + proto_size + tensor_size > size) {
+    LOG_ERROR << "Total size mismatch: "
+              << (buffer.GetOffset() + proto_size + tensor_size) << " > "
+              << size;
     throw std::runtime_error("Total size exceeds provided buffer");
   }
 
   // Parse proto
-  LOG_DEBUG << "Parsing protobuf at offset 16, proto_size=" << proto_size;
+  LOG_DEBUG << "Parsing protobuf, proto_size=" << proto_size;
   morphling::UMessage umsg;
-  if (!umsg.ParseFromArray(ptr + offset, proto_size)) {
+  if (!umsg.ParseFromArray(buffer.GetCurrentPtr(), proto_size)) {
     LOG_ERROR << "Failed to parse UMessage from proto";
     throw std::runtime_error("Failed to parse UMessage from proto");
   }
-  offset += proto_size;
+  buffer.SeekTo(buffer.GetOffset() + proto_size);
   LOG_DEBUG << "Protobuf parsed successfully";
 
-  // Extract ComputeGemmRequest
+  // Extract message
   const auto& body = umsg.body();
   if (!body.HasExtension(morphling::global_api::compute_gemm_data)) {
     LOG_ERROR << "UMessage does not contain compute_gemm_data";
@@ -553,9 +692,9 @@ void MatrixPartition::DeserializeFromProto(const void* data, size_t size) {
 
   const auto& gemm_data =
       body.GetExtension(morphling::global_api::compute_gemm_data);
-  LOG_DEBUG << "ComputeGemmRequest extracted";
+  LOG_DEBUG << "ComputeGemmData extracted";
 
-  // Fill MatrixPartition fields
+  // Fill fields
   version = gemm_data.version();
   row = gemm_data.row();
   col = gemm_data.col();
@@ -566,24 +705,239 @@ void MatrixPartition::DeserializeFromProto(const void* data, size_t size) {
   timestamp = gemm_data.timestamp();
 
   LOG_INFO << "Partition fields: version=" << version << ", row=" << row
-           << ", col=" << col << ", pivot=" << pivot << ", h_dim=" << h_dim
-           << ", dev_id=" << dev_id << ", oid=" << oid
-           << ", timestamp=" << timestamp;
+           << ", col=" << col << ", pivot=" << pivot << ", h_dim=" << h_dim;
 
-  // // Extract tensor data pointers
-  // uint64_t tensor_offset = offset + proto_size;
-  // LOG_DEBUG << "Tensor data starts at offset=" << tensor_offset;
-
+  // Extract tensor data pointers
   mat.clear();
   for (const auto& payload : gemm_data.matrices()) {
     LOG_DEBUG << "Matrix payload: size=" << payload.size();
-    mat.push_back({ptr + offset, payload.size()});
-    offset += payload.size();
+    mat.push_back({const_cast<void*>(buffer.GetCurrentPtr()),
+                   static_cast<size_t>(payload.size())});
+    buffer.SeekTo(buffer.GetOffset() + payload.size());
   }
 
-  ptr_ = ptr;
+  ptr_ = buffer.GetBuffer();
   size_ = size;
 
-  LOG_INFO << "DeserializeFromProto completed: parsed " << mat.size()
+  LOG_INFO << "DeserializeProto completed: parsed " << mat.size()
            << " matrices";
+}
+
+// ============================================================================
+// DeviceRegisterRequest Implementation
+// ============================================================================
+
+int32_t DeviceRegisterRequest::GetMessageType() const {
+  return morphling::global_api::DEVICE_REGISTER_REQUEST;
+}
+
+std::tuple<void*, size_t> DeviceRegisterRequest::Serialize(
+    SerializationFormat format) const {
+  if (format == SerializationFormat::PROTOBUF) {
+    return SerializeProto();
+  }
+  throw std::runtime_error(
+      "DeviceRegisterRequest only supports PROTOBUF format");
+}
+
+void DeviceRegisterRequest::Deserialize(const void* data, size_t size,
+                                        SerializationFormat format) {
+  if (format == SerializationFormat::PROTOBUF) {
+    DeserializeProto(data, size);
+    return;
+  }
+  throw std::runtime_error(
+      "DeviceRegisterRequest only supports PROTOBUF format");
+}
+
+std::tuple<void*, size_t> DeviceRegisterRequest::SerializeProto() const {
+  // Create UMessage
+  morphling::UMessage umsg;
+
+  auto* head = umsg.mutable_head();
+  head->set_version(1);
+  head->set_magic_flag(0x12340987);
+  head->set_random_num(0);
+  head->set_flow_no(0);
+  head->set_session_no("");
+  head->set_message_type(morphling::global_api::DEVICE_REGISTER_REQUEST);
+
+  auto* body = umsg.mutable_body();
+  auto* request_msg =
+      body->MutableExtension(morphling::global_api::device_resgister_request);
+  // Request is empty
+
+  // Serialize (no tensor data for DeviceRegisterRequest)
+  std::string proto_str = umsg.SerializeAsString();
+  uint32_t proto_size = proto_str.size();
+  uint64_t tensor_size = 0;
+
+  uint32_t payload_size = sizeof(proto_size) + sizeof(tensor_size) + proto_size;
+  uint64_t total_size = sizeof(payload_size) + payload_size;
+
+  SerializationBuffer buffer;
+  buffer.Allocate(total_size);
+
+  buffer.WriteUInt32(payload_size, true);
+  buffer.WriteUInt32(proto_size, false);
+  buffer.WriteUInt64(tensor_size);
+  buffer.WriteBytes(proto_str.data(), proto_size);
+
+  return std::make_tuple(buffer.GetBuffer(), buffer.GetSize());
+}
+
+void DeviceRegisterRequest::DeserializeProto(const void* data, size_t size) {
+  if (data == nullptr || size < 16) {
+    throw std::runtime_error(
+        "DeviceRegisterRequest::DeserializeProto: invalid input");
+  }
+
+  SerializationBuffer buffer(data, size, false);
+
+  uint32_t payload_size = buffer.ReadUInt32(true);
+  uint32_t proto_size = buffer.ReadUInt32(false);
+  uint64_t tensor_size = buffer.ReadUInt64();
+
+  if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {
+    throw std::runtime_error("Invalid proto_size");
+  }
+
+  morphling::UMessage umsg;
+  if (!umsg.ParseFromArray(buffer.GetCurrentPtr(), proto_size)) {
+    throw std::runtime_error("Failed to parse UMessage");
+  }
+
+  const auto& body = umsg.body();
+  if (!body.HasExtension(morphling::global_api::device_resgister_request)) {
+    throw std::runtime_error(
+        "UMessage does not contain device_resgister_request");
+  }
+
+  // Request is empty, nothing to extract
+}
+
+// ============================================================================
+// DeviceProfileData Implementation
+// ============================================================================
+
+int32_t DeviceProfileData::GetMessageType() const {
+  return morphling::global_api::DEVICE_PROFILE_DATA;
+}
+
+std::tuple<void*, size_t> DeviceProfileData::Serialize(
+    SerializationFormat format) const {
+  if (format == SerializationFormat::PROTOBUF) {
+    return SerializeProto();
+  }
+  throw std::runtime_error("DeviceProfileData only supports PROTOBUF format");
+}
+
+void DeviceProfileData::Deserialize(const void* data, size_t size,
+                                    SerializationFormat format) {
+  if (format == SerializationFormat::PROTOBUF) {
+    DeserializeProto(data, size);
+    return;
+  }
+  throw std::runtime_error("DeviceProfileData only supports PROTOBUF format");
+}
+
+std::tuple<void*, size_t> DeviceProfileData::SerializeProto() const {
+  // Create UMessage
+  morphling::UMessage umsg;
+
+  auto* head = umsg.mutable_head();
+  head->set_version(1);
+  head->set_magic_flag(0x12340987);
+  head->set_random_num(0);
+  head->set_flow_no(0);
+  head->set_session_no("");
+  head->set_message_type(morphling::global_api::DEVICE_PROFILE_DATA);
+
+  auto* body = umsg.mutable_body();
+  auto* profile_msg =
+      body->MutableExtension(morphling::global_api::device_profile_data);
+
+  profile_msg->set_uuid(uuid);
+  profile_msg->set_flops(flops);
+  profile_msg->set_memory(memory);
+  profile_msg->set_ul_bw(ul_bw);
+  profile_msg->set_dl_bw(dl_bw);
+  profile_msg->set_ul_lat(ul_lat);
+  profile_msg->set_dl_lat(dl_lat);
+
+  // Serialize (no tensor data for DeviceProfileData)
+  std::string proto_str = umsg.SerializeAsString();
+  uint32_t proto_size = proto_str.size();
+  uint64_t tensor_size = 0;
+
+  uint32_t payload_size = sizeof(proto_size) + sizeof(tensor_size) + proto_size;
+  uint64_t total_size = sizeof(payload_size) + payload_size;
+
+  SerializationBuffer buffer;
+  buffer.Allocate(total_size);
+
+  buffer.WriteUInt32(payload_size, true);
+  buffer.WriteUInt32(proto_size, false);
+  buffer.WriteUInt64(tensor_size);
+  buffer.WriteBytes(proto_str.data(), proto_size);
+
+  return std::make_tuple(buffer.GetBuffer(), buffer.GetSize());
+}
+
+void DeviceProfileData::DeserializeProto(const void* data, size_t size) {
+  if (data == nullptr || size < 16) {
+    throw std::runtime_error(
+        "DeviceProfileData::DeserializeProto: invalid input");
+  }
+
+  SerializationBuffer buffer(data, size, false);
+
+  uint32_t payload_size = buffer.ReadUInt32(true);
+  uint32_t proto_size = buffer.ReadUInt32(false);
+  uint64_t tensor_size = buffer.ReadUInt64();
+
+  if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {
+    throw std::runtime_error("Invalid proto_size");
+  }
+
+  morphling::UMessage umsg;
+  if (!umsg.ParseFromArray(buffer.GetCurrentPtr(), proto_size)) {
+    throw std::runtime_error("Failed to parse UMessage");
+  }
+
+  const auto& body = umsg.body();
+  if (!body.HasExtension(morphling::global_api::device_profile_data)) {
+    throw std::runtime_error("UMessage does not contain device_profile_data");
+  }
+
+  const auto& profile_msg =
+      body.GetExtension(morphling::global_api::device_profile_data);
+
+  uuid = profile_msg.uuid();
+  flops = profile_msg.flops();
+  memory = profile_msg.memory();
+  ul_bw = profile_msg.ul_bw();
+  dl_bw = profile_msg.dl_bw();
+  ul_lat = profile_msg.ul_lat();
+  dl_lat = profile_msg.dl_lat();
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+// ============================================================================
+// Other MatrixPartition methods
+// ============================================================================
+
+std::string MatrixPartition::DebugString() const {
+  std::ostringstream oss;
+  oss << "v: " << version << ", r: " << row << ", c: " << col
+      << ", p: " << pivot << ", h: " << h_dim << ", dev_id: " << dev_id
+      << ", oid: " << oid;
+
+  for (const auto& mat_data : mat) {
+    oss << ", m_size: " << std::get<1>(mat_data);
+  }
+  return oss.str();
 }
