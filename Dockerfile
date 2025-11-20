@@ -16,6 +16,7 @@ ENV MORPHLING_PYTHON_EXECUTABLE=/usr/bin/python3.10
 
 RUN apt-get update && apt-get upgrade -y
 
+
 # 安装系统依赖（使用 Python 3.10）
 RUN apt-get install -y \
     # 基础工具
@@ -62,6 +63,12 @@ RUN apt-get install -y \
     libhiredis-dev \
     # 清理缓存
     && rm -rf /var/lib/apt/lists/*
+
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends --fix-missing -o Acquire::Retries=3 dsniff \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
 
 # 编译安装 redis-plus-plus
 RUN git clone --depth=1 https://github.com/sewenew/redis-plus-plus.git /tmp/redis-plus-plus && \
