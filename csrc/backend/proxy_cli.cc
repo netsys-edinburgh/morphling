@@ -49,17 +49,16 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
     return;
   }
 
-  auto [data, size] = partition.Serialize(SerializationFormat::PROTOBUF);
-  conn->SendData(data, size);
+  auto buffer = partition.Serialize();
+  conn->SendData(buffer.GetBuffer(), buffer.GetSize());
 
   // LOG_DEBUG << "Response sent to " << client_addr;
-  free(data);
-  // LOG_DEBUG << "Free data";
 
   RECORD_SRV_COUNT(SRV_TOTAL_QUERY, 1);
-  RECORD_SRV_COUNT(SRV_TOTAL_TRAFFIC, size);
+  RECORD_SRV_COUNT(SRV_TOTAL_TRAFFIC, buffer.GetSize());
 
-  LOG_DEBUG << "Response sent to " << client_addr << ", size: " << size;
+  LOG_DEBUG << "Response sent to " << client_addr
+            << ", size: " << buffer.GetSize();
 }
 
 void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
@@ -168,7 +167,7 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
     size_t readable = conn->ReadableLength();
 
     int ret = 0;
-    uint32_t packsize;
+    uint32_t packsize = 0;
     ret = conn->ReceiveData(&packsize, sizeof(uint32_t));
     if (ret < 0) {
       LOG_ERROR << "ReceiveData packsize err";
@@ -180,6 +179,14 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
     LOG_DEBUG << "packsize: " << packsize << ", datasize: " << datasize
               << ", readable: " << readable;
     if (readable < datasize) {
+      // std::unique_ptr<unsigned char[]> data(new unsigned char[readable]);
+      // unsigned char* raw_data = data.get();
+      // ret = conn->ReceiveData(raw_data, readable);
+
+      // print raw_data in hex
+      // LOG_DEBUG << "Partial data received (hex): " <<
+      // BinaryToHex(static_cast<const unsigned char*>(raw_data), readable);
+
       return;
     }
 
@@ -208,7 +215,7 @@ void ProxyCliImpl::DecodeAndDispatch(const ConnectionUeventPtr& conn,
   int32_t message_type = GetMessageType(payload, size);
 
   if (message_type < 0) {
-    LOG_ERROR << "Failed to decode message type";
+    LOG_FATAL << "Failed to decode message type";
     return;
   }
 
@@ -223,25 +230,25 @@ void ProxyCliImpl::DecodeAndDispatch(const ConnectionUeventPtr& conn,
       break;
 
     default:
-      LOG_ERROR << "Unknown message type: " << message_type;
+      LOG_FATAL << "Unknown message type: " << message_type;
       break;
   }
 }
 
 void ProxyCliImpl::HandleRegisterRequest(const ConnectionUeventPtr& conn,
                                          const void* payload, size_t size) {
-  LOG_INFO << "Received registration request from server";
+  LOG_DEBUG << "Received registration request from server, size=" << size;
 
   // Use standard Deserialize interface
   DeviceRegisterRequest request;
-  request.Deserialize(payload, size, SerializationFormat::PROTOBUF);
+  request.Deserialize(payload, size);
 
   // Request is empty, just send response with device profile
   SendRegisterResponse(conn);
 }
 
 void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
-  LOG_INFO << "Sending device profile data to server";
+  LOG_DEBUG << "Sending device profile data to server";
 
   DeviceProfileData profile;
   profile.uuid = GenUUID64();
@@ -252,18 +259,20 @@ void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
   profile.ul_lat = 1000;                        // 1ms
   profile.dl_lat = 1000;                        // 1ms
 
-  auto [data, size] = profile.Serialize(SerializationFormat::PROTOBUF);
-
-  int ret = conn->SendData(data, size);
+  auto buffer = profile.Serialize();
+  int ret = conn->SendData(buffer.GetBuffer(), buffer.GetSize());
   if (ret < 0) {
     LOG_ERROR << "Failed to send device profile data";
-    free(data);
     conn->ForceClose();
     return;
   }
 
-  LOG_INFO << "Device profile data sent";
-  free(data);
+  LOG_DEBUG << "Device profile data sent, size=" << buffer.GetSize()
+            << ", profile: " << profile.DebugString() << ", hex: "
+            << BinaryToHex(
+                   static_cast<const unsigned char*>(buffer.GetBuffer()),
+                   buffer.GetSize())
+            << "";
 }
 
 void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
@@ -272,7 +281,7 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
 
   // Use standard Deserialize interface
   MatrixPartition partition;
-  partition.Deserialize(payload, size, SerializationFormat::PROTOBUF);
+  partition.Deserialize(payload, size);
 
   auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();

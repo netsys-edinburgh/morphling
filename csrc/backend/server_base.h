@@ -2,6 +2,7 @@
 
 #include <torch/torch.h>
 
+#include <charconv>
 #include <functional>
 #include <future>
 
@@ -20,6 +21,17 @@ typedef std::shared_ptr<ConnectionUevent> ConnectionUeventPtr;
 using MessageHandlerSignature = void(const uevent::ConnectionUeventPtr&,
                                      const void*, size_t);
 using MessageHandler = std::function<MessageHandlerSignature>;
+
+inline std::string BinaryToHex(const unsigned char* data, size_t length) {
+  std::string result(length * 2, '0');
+
+  for (size_t i = 0; i < length; ++i) {
+    std::to_chars(result.data() + i * 2, result.data() + i * 2 + 2, data[i],
+                  16);
+  }
+
+  return result;
+}
 
 template <typename T>
 std::vector<std::vector<T>> CartesianProduct(const std::vector<T>& list) {
@@ -98,8 +110,7 @@ struct hash<TensorKey> {
 class SerializationBuffer;
 
 enum class SerializationFormat {
-  BINARY,   // Plain binary format (deprecated, use for legacy support)
-  PROTOBUF  // Protobuf-based format (recommended)
+  PROTOBUF  // Protobuf-based format (default)
 };
 
 // Base interface for serializable messages
@@ -108,7 +119,7 @@ class ISerializable {
   virtual ~ISerializable() = default;
 
   // Serialize to binary format
-  virtual std::tuple<void*, size_t> Serialize(
+  virtual SerializationBuffer Serialize(
       SerializationFormat format = SerializationFormat::PROTOBUF) const = 0;
 
   // Deserialize from binary format
@@ -154,36 +165,13 @@ class SerializationBuffer {
   bool CanRead(size_t bytes) const;
   void ValidateSize(size_t min_size) const;
 
+  std::string HexString(size_t length) const;
+
  private:
   uint8_t* buffer_;
   size_t size_;
   size_t offset_;
   bool owns_buffer_;
-};
-
-// Generic message wrapper for protobuf serialization
-template <typename ProtoExtension>
-class MessageSerializer {
- public:
-  // Serialize a protobuf message with tensor data
-  static std::tuple<void*, size_t> SerializeWithTensors(
-      int32_t message_type, const ProtoExtension& proto_msg,
-      const std::vector<std::tuple<void*, size_t>>& tensors);
-
-  // Deserialize a protobuf message with tensor data
-  static std::tuple<ProtoExtension,
-                    std::vector<std::tuple<const void*, size_t>>>
-  DeserializeWithTensors(const void* data, size_t size,
-                         int32_t expected_message_type);
-
- private:
-  // Create UMessage header
-  static void CreateMessageHeader(morphling::UMessage& umsg,
-                                  int32_t message_type);
-
-  // Validate and extract message
-  static const ProtoExtension& ExtractMessage(const morphling::UMessage& umsg,
-                                              int32_t expected_type);
 };
 
 // ============================================================================
@@ -206,10 +194,12 @@ struct MatrixPartition : public ISerializable {
   size_t size_ = 0;          // size of the data
 
   // ISerializable interface
-  std::tuple<void*, size_t> Serialize(
-      SerializationFormat format = SerializationFormat::PROTOBUF) const;
-  void Deserialize(const void* data, size_t size,
-                   SerializationFormat format = SerializationFormat::PROTOBUF);
+  SerializationBuffer Serialize(
+      SerializationFormat format =
+          SerializationFormat::PROTOBUF) const override;
+  void Deserialize(
+      const void* data, size_t size,
+      SerializationFormat format = SerializationFormat::PROTOBUF) override;
   int32_t GetMessageType() const override;
 
   // Public helper methods
@@ -239,9 +229,7 @@ struct MatrixPartition : public ISerializable {
 
  private:
   // Format-specific implementations
-  std::tuple<void*, size_t> SerializeBinary() const;
-  void DeserializeBinary(const void* data, size_t size);
-  std::tuple<void*, size_t> SerializeProto() const;
+  SerializationBuffer SerializeProto() const;
   void DeserializeProto(const void* data, size_t size);
 
   // Helper methods for metadata
@@ -259,7 +247,7 @@ struct DeviceRegisterRequest : public ISerializable {
   // Empty request
 
   // ISerializable interface
-  std::tuple<void*, size_t> Serialize(
+  SerializationBuffer Serialize(
       SerializationFormat format =
           SerializationFormat::PROTOBUF) const override;
   void Deserialize(
@@ -268,7 +256,7 @@ struct DeviceRegisterRequest : public ISerializable {
   int32_t GetMessageType() const override;
 
  private:
-  std::tuple<void*, size_t> SerializeProto() const;
+  SerializationBuffer SerializeProto() const;
   void DeserializeProto(const void* data, size_t size);
 };
 typedef std::shared_ptr<DeviceRegisterRequest> DeviceRegisterRequestPtr;
@@ -285,16 +273,17 @@ struct DeviceProfileData : public ISerializable {
   uint64_t dl_lat;  // download latency
 
   // ISerializable interface
-  std::tuple<void*, size_t> Serialize(
+  SerializationBuffer Serialize(
       SerializationFormat format =
           SerializationFormat::PROTOBUF) const override;
   void Deserialize(
       const void* data, size_t size,
       SerializationFormat format = SerializationFormat::PROTOBUF) override;
   int32_t GetMessageType() const override;
+  std::string DebugString() const;
 
  private:
-  std::tuple<void*, size_t> SerializeProto() const;
+  SerializationBuffer SerializeProto() const;
   void DeserializeProto(const void* data, size_t size);
 };
 typedef std::shared_ptr<DeviceProfileData> DeviceProfileDataPtr;
@@ -322,9 +311,3 @@ MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
 std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
                                                const torch::Tensor& mat_b,
                                                int64_t block_size);
-
-class DataCodec {
- public:
-  static std::tuple<void*, int64_t> Encode(const MatrixPartition& partition);
-  static MatrixPartition Decode(const void* data, int64_t size);
-};

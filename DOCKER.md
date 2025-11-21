@@ -28,7 +28,7 @@ chmod +x quick-start.sh
 
 #### 构建镜像
 ```bash
-docker build -t device-emulator:latest .
+DOCKER_BUILDKIT=1 docker build -t device-emulator:latest .
 ```
 
 #### 启动服务（GPU模式）

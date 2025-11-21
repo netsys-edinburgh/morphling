@@ -234,6 +234,9 @@ class ProxySvr {
   }
   torch::Tensor WaitMatMul(int oid) { return svr_->WaitMatMul(oid); }
   size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }
+  size_t GetRegisteredDeviceCount() const {
+    return svr_->GetRegisteredDeviceCount();
+  }
 
  private:
   ProxySvrImplPtr svr_;

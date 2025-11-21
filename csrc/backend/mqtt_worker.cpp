@@ -183,10 +183,10 @@ void MQTTWorker::HandlePartition(const MatrixPartition& partition) {
   response.mat.clear();
   response.mat.push_back({result.data_ptr(), result.numel() * sizeof(float)});
 
-  auto [data, size] = response.Serialize();
+  auto buffer = response.Serialize();
 
   pub_cb_count_++;
-  pub_buffer_.push_back(data);
+  pub_buffer_.push_back(buffer.GetBuffer());
 
   // replace req with rsp
   std::string topic = MQTT_COMPUTE_TOPIC_RSP + uuid_;
@@ -195,8 +195,9 @@ void MQTTWorker::HandlePartition(const MatrixPartition& partition) {
   LOG_DEBUG << part_key << " RSP Serialization time: " << duration.count()
             << "us";
 
-  Publish(partition.dev_id, topic, data, size);
-  uint64_t ul_time = size / device_info_["ul_bw"] * 1e6;  // in microseconds
+  Publish(partition.dev_id, topic, buffer.GetBuffer(), buffer.GetSize());
+  uint64_t ul_time =
+      buffer.GetSize() / device_info_["ul_bw"] * 1e6;  // in microseconds
 
   // std::vector<OptionalString> vals;
   // auto overhead = redis.hget(uuid_, "r_dl_overhead");

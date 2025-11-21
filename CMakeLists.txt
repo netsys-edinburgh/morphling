@@ -62,11 +62,11 @@ include_directories($ENV{HOME})
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
 
-FetchContent_Declare(
-  gflags
-  GIT_REPOSITORY https://github.com/gflags/gflags.git
-  GIT_TAG v2.2.2
-)
+# FetchContent_Declare(
+#   gflags
+#   GIT_REPOSITORY https://github.com/gflags/gflags.git
+#   GIT_TAG v2.2.2
+# )
 
 # FetchContent_Declare(
 # glog
@@ -74,11 +74,11 @@ FetchContent_Declare(
 # GIT_TAG v0.6.0
 # )
 
-FetchContent_Declare(
-  rapidjson
-  GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
-  GIT_TAG v1.1.0
-)
+# FetchContent_Declare(
+#   rapidjson
+#   GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
+#   GIT_TAG v1.1.0
+# )
 
 
 FetchContent_Declare(
@@ -91,21 +91,22 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/eclipse-mosquitto/mosquitto.git
   GIT_TAG v2.0.20
 )
-FetchContent_Declare(
-  tcmalloc
-  GIT_REPOSITORY https://github.com/google/tcmalloc.git
-)
+# FetchContent_Declare(
+#   tcmalloc
+#   GIT_REPOSITORY https://github.com/google/tcmalloc.git
+# )
 # FetchContent_Declare(
 #   hiredis
 #   GIT_REPOSITORY https://github.com/redis/hiredis.git
 #   GIT_TAG v1.1.0
 # )
-FetchContent_Declare(
-  redis
-  GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
-  GIT_TAG 1.3.13
-)
-FetchContent_MakeAvailable(rapidjson gflags rabbitmq mosquitto redis tcmalloc)
+# Use system-installed redis-plus-plus instead of fetching
+# FetchContent_Declare(
+#   redis
+#   GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
+#   GIT_TAG 1.3.13
+# )
+FetchContent_MakeAvailable(rabbitmq mosquitto)
 
 # if(NOT rabbitmq_POPULATED)
 #     FetchContent_Populate(rabbitmq)

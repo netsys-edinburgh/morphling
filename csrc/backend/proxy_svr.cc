@@ -42,18 +42,19 @@ void ProxySvrHandle::SendRegisterRequest(const ConnectionUeventPtr& conn) {
            << conn->GetPeerAddress().ToString();
 
   DeviceRegisterRequest request;
-  auto [data, size] = request.Serialize(SerializationFormat::PROTOBUF);
+  auto buffer = request.Serialize();
+
+  LOG_DEBUG << "Raw registration request data (hex): "
+            << BinaryToHex(static_cast<const uint8_t*>(buffer.GetBuffer()),
+                           buffer.GetSize());
 
   // Send the serialized request
-  int ret = conn->SendData(data, size);
+  int ret = conn->SendData(buffer.GetBuffer(), buffer.GetSize());
   if (ret < 0) {
     LOG_ERROR << "Failed to send registration request";
     conn->ForceClose();
     return;
   }
-
-  LOG_DEBUG << "Registration request sent, size=" << size;
-  free(data);
 }
 
 void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
@@ -61,7 +62,7 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
     size_t readable = conn->ReadableLength();
 
     int ret = 0;
-    uint32_t packsize;
+    uint32_t packsize = 0;
     ret = conn->ReceiveData(&packsize, sizeof(uint32_t));
     if (ret < 0) {
       LOG_ERROR << "ReceiveData packsize err";
@@ -72,6 +73,7 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
 
     LOG_TRACE << "packsize: " << packsize << ", datasize: " << datasize
               << ", readable: " << readable;
+
     if (readable < datasize) {
       return;
     }
@@ -140,19 +142,20 @@ void ProxySvrHandle::DecodeAndDispatch(const ConnectionUeventPtr& conn,
 void ProxySvrHandle::HandleRegisterResponse(const ConnectionUeventPtr& conn,
                                             const void* payload, size_t size) {
   string client_addr = conn->GetPeerAddress().ToString();
-  LOG_INFO << "Received device profile data from " << client_addr;
+  LOG_DEBUG << "Received device profile data from " << client_addr
+            << ", size=" << size << ", hex: "
+            << BinaryToHex(static_cast<const uint8_t*>(payload), size) << "";
 
   // Use standard Deserialize interface
   DeviceProfileData profile;
-  profile.Deserialize(payload, size, SerializationFormat::PROTOBUF);
+  profile.Deserialize(payload, size);
 
   // Store device info and mark as registered
   device_info_[client_addr] = profile;
   conn_registered_[client_addr] = true;
 
-  LOG_INFO << "Client " << client_addr << " registered successfully: "
-           << "uuid=" << profile.uuid << ", flops=" << profile.flops
-           << ", memory=" << profile.memory;
+  LOG_DEBUG << "Client " << client_addr
+            << " registered successfully: " << profile.DebugString();
 }
 
 void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
@@ -161,7 +164,7 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
 
   // Use standard Deserialize interface
   MatrixPartition partition;
-  partition.Deserialize(payload, size, SerializationFormat::PROTOBUF);
+  partition.Deserialize(payload, size);
 
   auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
@@ -210,9 +213,8 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
   string client_addr = conn->GetPeerAddress().ToString();
   task_queue_.push_back([this, conn, partition, client_addr]() {
     // Use protobuf serialization instead of binary
-    auto [data, size] = partition->Serialize(SerializationFormat::PROTOBUF);
-    conn->SendData(data, size);
-    free(data);
+    auto buffer = partition->Serialize();
+    conn->SendData(buffer.GetBuffer(), buffer.GetSize());
     conn_inflight_[client_addr] += 1;
   });
 
