@@ -492,7 +492,7 @@ SerializationBuffer MatrixPartition::SerializeProto() const {
             << ", payload_size=" << payload_size
             << ", proto_size=" << proto_size << ", tensor_size=" << tensor_size;
 
-  return buffer;
+  return std::move(buffer);
 }
 
 void MatrixPartition::DeserializeProto(const void* data, size_t size) {
@@ -645,7 +645,7 @@ SerializationBuffer DeviceRegisterRequest::SerializeProto() const {
             << BinaryToHex(static_cast<const uint8_t*>(buffer.GetBuffer()),
                            buffer.GetSize());
 
-  return buffer;
+  return std::move(buffer);
 }
 
 void DeviceRegisterRequest::DeserializeProto(const void* data, size_t size) {
@@ -743,7 +743,7 @@ SerializationBuffer DeviceProfileData::SerializeProto() const {
   buffer.WriteUInt64(tensor_size);
   buffer.WriteBytes(proto_str.data(), proto_size);
 
-  return buffer;
+  return std::move(buffer);
 }
 
 void DeviceProfileData::DeserializeProto(const void* data, size_t size) {
