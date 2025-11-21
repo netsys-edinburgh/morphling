@@ -105,13 +105,23 @@ void SerializationBuffer::ValidateSize(size_t min_size) const {
   }
 }
 
+std::string SerializationBuffer::HexString(size_t length) const {
+  size_t read_length = std::min(length, size_);
+  return BinaryToHex(buffer_, read_length);
+  // std::stringstream ss;
+  // for (size_t i = 0; i < read_length; ++i) {
+  //   ss << std::hex << std::setw(2) << std::setfill('0')
+  //      << static_cast<int>(buffer_[i]);
+  // }
+  // return ss.str();
+}
+
 // ============================================================================
-// MessageSerializer Template Implementation
+// Helper Functions
 // ============================================================================
 
-template <typename ProtoExtension>
-void MessageSerializer<ProtoExtension>::CreateMessageHeader(
-    morphling::UMessage& umsg, int32_t message_type) {
+static void CreateMessageHeader(morphling::UMessage& umsg,
+                                int32_t message_type) {
   auto* head = umsg.mutable_head();
   head->set_version(1);
   head->set_magic_flag(0x12340987);
@@ -121,92 +131,9 @@ void MessageSerializer<ProtoExtension>::CreateMessageHeader(
   head->set_message_type(message_type);
 }
 
-template <typename ProtoExtension>
-std::tuple<void*, size_t>
-MessageSerializer<ProtoExtension>::SerializeWithTensors(
-    int32_t message_type, const ProtoExtension& proto_msg,
-    const std::vector<std::tuple<void*, size_t>>& tensors) {
-  // Create UMessage
-  morphling::UMessage umsg;
-  CreateMessageHeader(umsg, message_type);
-
-  // Set body - this needs to be specialized per message type
-  // auto* body = umsg.mutable_body();
-  // body->SetExtension(..., proto_msg);
-
-  // Serialize proto
-  std::string proto_str = umsg.SerializeAsString();
-  uint32_t proto_size = proto_str.size();
-
-  // Calculate total tensor size
-  uint64_t tensor_size = 0;
-  for (const auto& t : tensors) {
-    tensor_size += std::get<1>(t);
-  }
-
-  // Layout: [4B: payload_size] [4B: proto_size] [8B: tensor_size] [proto...]
-  // [tensors...]
-  uint32_t payload_size =
-      sizeof(proto_size) + sizeof(tensor_size) + proto_size + tensor_size;
-  uint64_t total_size = sizeof(payload_size) + payload_size;
-
-  SerializationBuffer buffer;
-  buffer.Allocate(total_size);
-
-  // Write layout
-  buffer.WriteUInt32(payload_size, true);  // network byte order
-  buffer.WriteUInt32(proto_size, false);
-  buffer.WriteUInt64(tensor_size);
-  buffer.WriteBytes(proto_str.data(), proto_size);
-
-  // Write tensor data
-  for (const auto& t : tensors) {
-    buffer.WriteBytes(std::get<0>(t), std::get<1>(t));
-  }
-
-  return std::make_tuple(buffer.GetBuffer(), buffer.GetSize());
-}
-
-template <typename ProtoExtension>
-std::tuple<ProtoExtension, std::vector<std::tuple<const void*, size_t>>>
-MessageSerializer<ProtoExtension>::DeserializeWithTensors(
-    const void* data, size_t size, int32_t expected_message_type) {
-  SerializationBuffer buffer(data, size, false);
-  buffer.ValidateSize(16);
-
-  // Read layout
-  uint32_t payload_size = buffer.ReadUInt32(true);  // network byte order
-  uint32_t proto_size = buffer.ReadUInt32(false);
-  uint64_t tensor_size = buffer.ReadUInt64();
-
-  // Validate
-  if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {
-    throw std::runtime_error("Invalid proto_size: " +
-                             std::to_string(proto_size));
-  }
-
-  if (buffer.GetOffset() + proto_size + tensor_size > size) {
-    throw std::runtime_error("Total size exceeds buffer");
-  }
-
-  // Parse proto
-  morphling::UMessage umsg;
-  if (!umsg.ParseFromArray(buffer.GetCurrentPtr(), proto_size)) {
-    throw std::runtime_error("Failed to parse UMessage");
-  }
-  buffer.SeekTo(buffer.GetOffset() + proto_size);
-
-  // Verify message type
-  if (umsg.head().message_type() != expected_message_type) {
-    throw std::runtime_error("Message type mismatch");
-  }
-
-  // Extract message - needs specialization per type
-  ProtoExtension proto_msg;  // placeholder
-  std::vector<std::tuple<const void*, size_t>> tensors;
-
-  return std::make_tuple(proto_msg, tensors);
-}
+// ============================================================================
+// Matrix Operations
+// ============================================================================
 
 void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
                          int64_t c, int64_t pivot, int64_t block_size) {
@@ -436,29 +363,24 @@ int32_t MatrixPartition::GetMessageType() const {
   return morphling::global_api::COMPUTE_GEMM_DATA;
 }
 
-std::tuple<void*, size_t> MatrixPartition::Serialize(
+SerializationBuffer MatrixPartition::Serialize(
     SerializationFormat format) const {
   switch (format) {
-    case SerializationFormat::BINARY:
-      return SerializeBinary();
     case SerializationFormat::PROTOBUF:
       return SerializeProto();
     default:
-      throw std::runtime_error("Unknown serialization format");
+      throw std::runtime_error("Unsupported serialization format");
   }
 }
 
 void MatrixPartition::Deserialize(const void* data, size_t size,
                                   SerializationFormat format) {
   switch (format) {
-    case SerializationFormat::BINARY:
-      DeserializeBinary(data, size);
-      break;
     case SerializationFormat::PROTOBUF:
       DeserializeProto(data, size);
       break;
     default:
-      throw std::runtime_error("Unknown serialization format");
+      throw std::runtime_error("Unsupported serialization format");
   }
 }
 
@@ -514,67 +436,10 @@ void MatrixPartition::ReadMatricesData(SerializationBuffer& buffer,
   }
 }
 
-std::tuple<void*, size_t> MatrixPartition::SerializeBinary() const {
-  uint32_t payload_size = sizeof(int64_t) * 6 + sizeof(uint64_t) * 2;
-  for (const auto& m : mat) {
-    payload_size += std::get<1>(m) + sizeof(int64_t);
-  }
-
-  SerializationBuffer buffer;
-  buffer.Allocate(payload_size + sizeof(uint32_t));
-
-  buffer.WriteUInt32(payload_size, true);  // network byte order
-  WriteMetadataToBuffer(buffer);
-
-  for (const auto& m : mat) {
-    buffer.WriteInt64(std::get<1>(m));
-    if (std::get<1>(m) > 0) {
-      buffer.WriteBytes(std::get<0>(m), std::get<1>(m));
-    }
-  }
-
-  return std::make_tuple(buffer.GetBuffer(), buffer.GetSize());
-}
-
-void MatrixPartition::DeserializeBinary(const void* data, size_t size) {
-  LOG_INFO << "DeserializeBinary called: data=" << data << ", size=" << size;
-
-  if (data == nullptr) {
-    LOG_ERROR << "DeserializeBinary: data pointer is nullptr!";
-    return;
-  }
-
-  if (size <= sizeof(uint32_t)) {
-    LOG_ERROR << "DeserializeBinary: invalid size=" << size;
-    return;
-  }
-
-  SerializationBuffer buffer(data, size, false);
-  ptr_ = buffer.GetBuffer();
-  size_ = size;
-
-  buffer.SeekTo(sizeof(uint32_t));  // Skip payload size
-  ReadMetadataFromBuffer(buffer);
-
-  LOG_DEBUG << "Metadata: version=" << version << ", row=" << row
-            << ", col=" << col << ", pivot=" << pivot;
-
-  ReadMatricesData(buffer, size);
-  LOG_INFO << "DeserializeBinary completed: parsed " << mat.size()
-           << " matrices";
-}
-
-std::tuple<void*, size_t> MatrixPartition::SerializeProto() const {
+SerializationBuffer MatrixPartition::SerializeProto() const {
   // Create UMessage with ComputeGemmData
   morphling::UMessage umsg;
-
-  auto* head = umsg.mutable_head();
-  head->set_version(1);
-  head->set_magic_flag(0x12340987);
-  head->set_random_num(0);
-  head->set_flow_no(0);
-  head->set_session_no("");
-  head->set_message_type(morphling::global_api::COMPUTE_GEMM_DATA);
+  CreateMessageHeader(umsg, morphling::global_api::COMPUTE_GEMM_DATA);
 
   auto* body = umsg.mutable_body();
   auto* gemm_data =
@@ -627,7 +492,7 @@ std::tuple<void*, size_t> MatrixPartition::SerializeProto() const {
             << ", payload_size=" << payload_size
             << ", proto_size=" << proto_size << ", tensor_size=" << tensor_size;
 
-  return std::make_tuple(buffer.GetBuffer(), buffer.GetSize());
+  return buffer;
 }
 
 void MatrixPartition::DeserializeProto(const void* data, size_t size) {
@@ -655,15 +520,11 @@ void MatrixPartition::DeserializeProto(const void* data, size_t size) {
 
   // Validate sizes
   if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {
-    LOG_ERROR << "Invalid proto_size=" << proto_size;
-    throw std::runtime_error("Invalid proto_size=" +
-                             std::to_string(proto_size));
+    LOG_FATAL << "Invalid proto_size=" << proto_size;
   }
 
   if (tensor_size > 1ull * 1024 * 1024 * 1024) {
-    LOG_ERROR << "Invalid tensor_size=" << tensor_size;
-    throw std::runtime_error("Invalid tensor_size=" +
-                             std::to_string(tensor_size));
+    LOG_FATAL << "Invalid tensor_size=" << tensor_size;
   }
 
   if (buffer.GetOffset() + proto_size + tensor_size > size) {
@@ -731,36 +592,28 @@ int32_t DeviceRegisterRequest::GetMessageType() const {
   return morphling::global_api::DEVICE_REGISTER_REQUEST;
 }
 
-std::tuple<void*, size_t> DeviceRegisterRequest::Serialize(
+SerializationBuffer DeviceRegisterRequest::Serialize(
     SerializationFormat format) const {
-  if (format == SerializationFormat::PROTOBUF) {
-    return SerializeProto();
+  if (format != SerializationFormat::PROTOBUF) {
+    throw std::runtime_error(
+        "DeviceRegisterRequest only supports PROTOBUF format");
   }
-  throw std::runtime_error(
-      "DeviceRegisterRequest only supports PROTOBUF format");
+  return SerializeProto();
 }
 
 void DeviceRegisterRequest::Deserialize(const void* data, size_t size,
                                         SerializationFormat format) {
-  if (format == SerializationFormat::PROTOBUF) {
-    DeserializeProto(data, size);
-    return;
+  if (format != SerializationFormat::PROTOBUF) {
+    throw std::runtime_error(
+        "DeviceRegisterRequest only supports PROTOBUF format");
   }
-  throw std::runtime_error(
-      "DeviceRegisterRequest only supports PROTOBUF format");
+  DeserializeProto(data, size);
 }
 
-std::tuple<void*, size_t> DeviceRegisterRequest::SerializeProto() const {
+SerializationBuffer DeviceRegisterRequest::SerializeProto() const {
   // Create UMessage
   morphling::UMessage umsg;
-
-  auto* head = umsg.mutable_head();
-  head->set_version(1);
-  head->set_magic_flag(0x12340987);
-  head->set_random_num(0);
-  head->set_flow_no(0);
-  head->set_session_no("");
-  head->set_message_type(morphling::global_api::DEVICE_REGISTER_REQUEST);
+  CreateMessageHeader(umsg, morphling::global_api::DEVICE_REGISTER_REQUEST);
 
   auto* body = umsg.mutable_body();
   auto* request_msg =
@@ -783,7 +636,16 @@ std::tuple<void*, size_t> DeviceRegisterRequest::SerializeProto() const {
   buffer.WriteUInt64(tensor_size);
   buffer.WriteBytes(proto_str.data(), proto_size);
 
-  return std::make_tuple(buffer.GetBuffer(), buffer.GetSize());
+  LOG_DEBUG << "DeviceRegisterRequest SerializeProto completed: total_size="
+            << total_size << ", payload_size=" << payload_size
+            << ", proto_size=" << proto_size << ", tensor_size=" << tensor_size;
+
+  LOG_DEBUG << "Serialized DeviceRegisterRequest: " << buffer.HexString(64);
+  LOG_DEBUG << "Serialized DeviceRegisterRequest (full): "
+            << BinaryToHex(static_cast<const uint8_t*>(buffer.GetBuffer()),
+                           buffer.GetSize());
+
+  return buffer;
 }
 
 void DeviceRegisterRequest::DeserializeProto(const void* data, size_t size) {
@@ -799,7 +661,7 @@ void DeviceRegisterRequest::DeserializeProto(const void* data, size_t size) {
   uint64_t tensor_size = buffer.ReadUInt64();
 
   if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {
-    throw std::runtime_error("Invalid proto_size");
+    LOG_FATAL << "Invalid proto_size=" << proto_size;
   }
 
   morphling::UMessage umsg;
@@ -824,34 +686,34 @@ int32_t DeviceProfileData::GetMessageType() const {
   return morphling::global_api::DEVICE_PROFILE_DATA;
 }
 
-std::tuple<void*, size_t> DeviceProfileData::Serialize(
+std::string DeviceProfileData::DebugString() const {
+  std::ostringstream oss;
+  oss << "uuid: " << uuid << ", flops: " << flops << ", memory: " << memory
+      << ", ul_bw: " << ul_bw << ", dl_bw: " << dl_bw << ", ul_lat: " << ul_lat
+      << ", dl_lat: " << dl_lat;
+  return oss.str();
+}
+
+SerializationBuffer DeviceProfileData::Serialize(
     SerializationFormat format) const {
-  if (format == SerializationFormat::PROTOBUF) {
-    return SerializeProto();
+  if (format != SerializationFormat::PROTOBUF) {
+    throw std::runtime_error("DeviceProfileData only supports PROTOBUF format");
   }
-  throw std::runtime_error("DeviceProfileData only supports PROTOBUF format");
+  return SerializeProto();
 }
 
 void DeviceProfileData::Deserialize(const void* data, size_t size,
                                     SerializationFormat format) {
-  if (format == SerializationFormat::PROTOBUF) {
-    DeserializeProto(data, size);
-    return;
+  if (format != SerializationFormat::PROTOBUF) {
+    throw std::runtime_error("DeviceProfileData only supports PROTOBUF format");
   }
-  throw std::runtime_error("DeviceProfileData only supports PROTOBUF format");
+  DeserializeProto(data, size);
 }
 
-std::tuple<void*, size_t> DeviceProfileData::SerializeProto() const {
+SerializationBuffer DeviceProfileData::SerializeProto() const {
   // Create UMessage
   morphling::UMessage umsg;
-
-  auto* head = umsg.mutable_head();
-  head->set_version(1);
-  head->set_magic_flag(0x12340987);
-  head->set_random_num(0);
-  head->set_flow_no(0);
-  head->set_session_no("");
-  head->set_message_type(morphling::global_api::DEVICE_PROFILE_DATA);
+  CreateMessageHeader(umsg, morphling::global_api::DEVICE_PROFILE_DATA);
 
   auto* body = umsg.mutable_body();
   auto* profile_msg =
@@ -881,7 +743,7 @@ std::tuple<void*, size_t> DeviceProfileData::SerializeProto() const {
   buffer.WriteUInt64(tensor_size);
   buffer.WriteBytes(proto_str.data(), proto_size);
 
-  return std::make_tuple(buffer.GetBuffer(), buffer.GetSize());
+  return buffer;
 }
 
 void DeviceProfileData::DeserializeProto(const void* data, size_t size) {
@@ -897,7 +759,7 @@ void DeviceProfileData::DeserializeProto(const void* data, size_t size) {
   uint64_t tensor_size = buffer.ReadUInt64();
 
   if (proto_size == 0 || proto_size > 100 * 1024 * 1024) {
-    throw std::runtime_error("Invalid proto_size");
+    LOG_FATAL << "Invalid proto_size=" << proto_size;
   }
 
   morphling::UMessage umsg;

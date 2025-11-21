@@ -6,20 +6,14 @@
 #include "server_base.h"
 #include "utils/logging.h"
 
-void* MessageFormat::ReconstructWireFormat(const void* proto_data,
-                                           size_t proto_size,
-                                           const void* tensor_data,
-                                           size_t tensor_size,
-                                           size_t* out_total_size) {
+SerializationBuffer MessageFormat::ReconstructWireFormat(
+    const void* proto_data, size_t proto_size, const void* tensor_data,
+    size_t tensor_size) {
   size_t total_size = HEADER_SIZE + proto_size + tensor_size;
-  void* buffer = malloc(total_size);
 
-  if (!buffer) {
-    LOG_ERROR << "Failed to allocate buffer for wire format reconstruction";
-    return nullptr;
-  }
+  SerializationBuffer ser_buffer;
+  ser_buffer.Allocate(total_size);
 
-  SerializationBuffer ser_buffer(buffer, total_size, false);
   uint32_t payload_size = proto_size + tensor_size;
   ser_buffer.WriteUInt32(payload_size, true);  // network byte order
   ser_buffer.WriteUInt32(proto_size, false);
@@ -29,11 +23,7 @@ void* MessageFormat::ReconstructWireFormat(const void* proto_data,
     ser_buffer.WriteBytes(tensor_data, tensor_size);
   }
 
-  if (out_total_size) {
-    *out_total_size = total_size;
-  }
-
-  return buffer;
+  return ser_buffer;
 }
 
 int32_t GetMessageType(const void* payload, size_t size) {

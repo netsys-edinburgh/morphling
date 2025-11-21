@@ -98,12 +98,12 @@ torch::Tensor MQTTServer::DispatchMatMul(torch::Tensor& mat_a,
   auto start = std::chrono::high_resolution_clock::now();
   for (auto& partition : partitions) {
     // auto future = std::async(std::launch::async, [this, &partition, count] {
-    auto [data, size] = partition.Serialize();
+    auto buffer = partition.Serialize();
     auto topic =
         std::string("/morphling/req/") + std::to_string(count % num_devices_);
-    Publish(topic, data, size);
+    Publish(topic, buffer.GetBuffer(), buffer.GetSize());
     // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-    pub_buffer_[count] = data;
+    pub_buffer_[count] = buffer.GetBuffer();
     // });
     // pub_count_ = (pub_count_++) % num_devices_;
     count++;
@@ -187,12 +187,12 @@ torch::Tensor MQTTServer::WaitMatMul(int oid) {
 void MQTTServer::PublishPartition(MatrixPartition& partition, int64_t oid,
                                   int count) {
   partition.oid = oid;
-  auto [data, size] = partition.Serialize();
+  auto buffer = partition.Serialize();
   auto topic =
       std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
-  Publish(partition.dev_id, topic, data, size);
+  Publish(partition.dev_id, topic, buffer.GetBuffer(), buffer.GetSize());
   // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-  pub_buffer_[count] = data;
+  pub_buffer_[count] = buffer.GetBuffer();
 }
 
 void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
@@ -230,12 +230,12 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
     // futures.push_back(std::async(std::launch::async, publish_func));
     // count++;
     partition.oid = mm_count_;
-    auto [data, size] = partition.Serialize();
+    auto buffer = partition.Serialize();
     auto topic =
         std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
-    Publish(partition.dev_id, topic, data, size);
+    Publish(partition.dev_id, topic, buffer.GetBuffer(), buffer.GetSize());
     // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-    pub_buffer_[count] = data;
+    pub_buffer_[count] = buffer.GetBuffer();
     // });
     // pub_count_ = (pub_count_++) % num_devices_;
     count++;

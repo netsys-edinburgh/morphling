@@ -8,6 +8,8 @@ namespace morphling {
 class UMessage;
 }
 
+class SerializationBuffer;
+
 // Message format constants and utilities
 struct MessageFormat {
   static constexpr size_t PAYLOAD_SIZE_OFFSET = 0;
@@ -19,12 +21,11 @@ struct MessageFormat {
   static constexpr size_t HEADER_SIZE = 16;  // 4 + 4 + 8
 
   // Helper to reconstruct full wire format from separated proto and tensor data
-  // Returns pointer to allocated buffer and total size
-  // Caller is responsible for freeing the returned pointer
-  static void* ReconstructWireFormat(const void* proto_data, size_t proto_size,
-                                     const void* tensor_data,
-                                     size_t tensor_size,
-                                     size_t* out_total_size);
+  // Returns SerializationBuffer containing the reconstructed wire format
+  static SerializationBuffer ReconstructWireFormat(const void* proto_data,
+                                                   size_t proto_size,
+                                                   const void* tensor_data,
+                                                   size_t tensor_size);
 };
 
 // Get the message type from a serialized UMessage payload

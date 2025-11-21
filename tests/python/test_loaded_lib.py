@@ -5,7 +5,6 @@ import sys
 
 import torch
 
-import morphling._C
 from morphling.runtime import InitEmptyModel
 
 # from morphling.common import EmulatorConfig

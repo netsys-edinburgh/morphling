@@ -4,5 +4,4 @@
 python3 scripts/run_server.py \
   --backend proxy \
   --model_name facebook/opt-125m \
-  --min_devices 1 \
   --enable-hooks
