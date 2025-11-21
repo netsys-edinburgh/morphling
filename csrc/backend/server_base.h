@@ -129,6 +129,9 @@ class ISerializable {
 
   // Get the message type
   virtual int32_t GetMessageType() const = 0;
+
+  // Get debug string representation
+  virtual std::string DebugString() const = 0;
 };
 
 // Buffer handler for reading/writing binary data
@@ -254,6 +257,7 @@ struct DeviceRegisterRequest : public ISerializable {
       const void* data, size_t size,
       SerializationFormat format = SerializationFormat::PROTOBUF) override;
   int32_t GetMessageType() const override;
+  std::string DebugString() const override { return "DeviceRegisterRequest"; }
 
  private:
   SerializationBuffer SerializeProto() const;
