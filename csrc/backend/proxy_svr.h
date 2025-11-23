@@ -10,10 +10,14 @@
 
 #include "common/env_cfg.h"
 #include "common/pytorch_defs.h"
+#include "device_tracker.h"
 #include "morphling.pb.h"
 #include "network/uevent.h"
 #include "network/ueventloop_thread.h"
 #include "server_base.h"
+
+namespace morphling {
+namespace backend {
 
 struct BatchSendRecv {
   size_t sent;
@@ -35,28 +39,6 @@ struct BatchSendRecv {
   bool Complete() { return sent == recv; }
   bool HasIgnore() { return ignore; }
 };
-
-// Partition tracking structure with OID (Operation ID) tracking
-// device_id -> {partition_key, oid}
-struct PartitionInfo {
-  std::string key;
-  int64_t oid;  // Operation ID to track which MatMul this partition belongs to
-};
-
-typedef std::unordered_map<int64_t, std::vector<PartitionInfo>>
-    PartitionTrackerWithOid;
-
-// In-flight partition structure - stores complete partition data for recovery
-// When a device fails, we need to resend its in-flight partitions to a target
-// device
-struct InFlightPartition {
-  MatrixPartitionPtr partition;  // The partition object with data
-  int64_t original_device_id;    // Which device it was originally sent to
-  std::string partition_key;     // Key for tracking
-  int64_t oid;                   // Operation ID
-};
-
-typedef std::unordered_map<std::string, InFlightPartition> InFlightPartitionMap;
 
 class ProxySvrHandle : public uevent::LoopHandle {
  public:
@@ -120,8 +102,11 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   void IncRspCbCount(int oid, size_t count);
   void DecRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] += count; }
 
+  // Connection and device queries - delegates to DevicePartitionTracker
   size_t GetConnectionCount() const { return conn_map_.size(); }
-  size_t GetRegisteredDeviceCount() const { return registered_devices_.size(); }
+  size_t GetRegisteredDeviceCount() const {
+    return DEVICE_TRACKER.GetConnectedDeviceCount();
+  }
   bool IsDeviceRegistered(const std::string& addr) const {
     return registered_devices_.find(addr) != registered_devices_.end();
   }
@@ -132,24 +117,8 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
     registered_devices_.erase(addr);
   }
 
-  // Partition tracking methods - now with OID tracking for device failure
-  // handling
-  void AddPartitionToTracker(int64_t device_id,
-                             const std::string& partition_key, int64_t oid);
-  void RemovePartitionFromTracker(int64_t device_id,
-                                  const std::string& partition_key);
-  void HandleDeviceFailure(int64_t failed_device_id, int64_t target_device_id);
-  const PartitionTrackerWithOid& GetPartitionTracker() const {
-    return partition_tracker_;
-  }
-
-  // Helper function to find a suitable target device for partition
-  // redistribution Returns device_id of the target device, or -1 if no suitable
-  // device found
-  int64_t FindTargetDeviceForFailure(int64_t failed_device_id);
-
-  // Register device_id for a connection (called during handshake)
-  void RegisterDeviceId(const std::string& conn_addr, int64_t device_id);
+  // Device failure handling
+  void HandleDeviceFailure(int64_t failed_device_id);
 
  private:
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
@@ -167,29 +136,16 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::shared_ptr<uevent::ListenerUevent> listener_;
 
   std::unordered_map<std::string, uevent::ConnectionUeventPtr> conn_map_;
-  // Maps connection address to assigned device_id
-  std::unordered_map<std::string, int64_t> conn_addr_to_device_id_;
-  // Monotonically increasing device ID counter for stable, persistent device
-  // IDs Each new device connection gets a unique ID that never changes
-  int64_t next_device_id_{0};
+  // Note: Device ID management is now handled by DevicePartitionTracker
+  // singleton
 
   std::atomic_int mm_count_{0};
   std::vector<torch::Tensor> outputs_;
   std::vector<std::atomic_ullong> rsp_cb_counts_;
   std::vector<std::unordered_set<TensorKey>> device_tensors_;
 
-  // Partition tracking: device_id -> [(partition_key, oid), ...]
-  // Maps each device to the list of partitions assigned to it, with operation
-  // IDs This allows us to unblock WaitMatMul when a device fails
-  PartitionTrackerWithOid partition_tracker_;
-  std::mutex partition_tracker_mutex_;  // Protects partition_tracker_
-
-  // In-flight partitions: partition_key -> complete partition data
-  // When a device fails, we need the complete partition data to resend to
-  // target device This map stores: partition_key -> {partition object, tensor
-  // blocks, device_id, oid}
-  InFlightPartitionMap inflight_partitions_;
-  std::mutex inflight_partitions_mutex_;  // Protects inflight_partitions_
+  // Note: Partition tracking is now handled by DevicePartitionTracker singleton
+  // Access via DEVICE_TRACKER macro
 
   std::unordered_map<std::string, DeviceProfileData> registered_devices_;
 };
@@ -243,3 +199,6 @@ class ProxySvr {
   ProxyEnvCfg context_;
   std::shared_ptr<uevent::UeventLoopThread> loop_thread_;
 };
+
+}  // namespace backend
+}  // namespace morphling
