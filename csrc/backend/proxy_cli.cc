@@ -20,6 +20,9 @@ using namespace uevent;
 
 #include "base/logging.h"
 
+namespace morphling {
+namespace backend {
+
 /*********************************ProxyCliHandle************************************/
 
 ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
@@ -516,3 +519,6 @@ void ProxyCli::AsyncSend(const torch::Tensor& tensor,
                          std::optional<int64_t> rank) {}
 void ProxyCli::AsyncReceive(torch::Tensor& tensor,
                             std::optional<int64_t> rank) {}
+
+}  // namespace backend
+}  // namespace morphling

@@ -9,6 +9,9 @@
 #include "network/ueventloop_thread.h"
 #include "server_base.h"
 
+namespace morphling {
+namespace backend {
+
 class ProxyCliHandle : public uevent::LoopHandle {
  public:
   ProxyCliHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop);
@@ -127,3 +130,6 @@ class ProxyCli {
   ProxyEnvCfg context_;
   std::shared_ptr<uevent::UeventLoopThread> loop_thread_;
 };
+
+}  // namespace backend
+}  // namespace morphling

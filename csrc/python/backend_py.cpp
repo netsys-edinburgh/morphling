@@ -8,6 +8,9 @@
 
 namespace py = pybind11;
 
+using morphling::backend::ProxyCli;
+using morphling::backend::ProxySvr;
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<ProxySvr>(m, "ProxySvr")
       .def(py::init<>())
