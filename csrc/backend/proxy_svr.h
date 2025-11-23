@@ -93,6 +93,7 @@ class ProxySvrHandle : public uevent::LoopHandle {
 class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
  public:
   ProxySvrImpl(ProxyEnvCfg& context);
+  ~ProxySvrImpl();
   void Initialize(uevent::UeventLoop* loop);
 
   void DispatchMatMulAsync(torch::Tensor& mat_a, torch::Tensor& mat_b);
@@ -119,6 +120,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
 
   // Device failure handling
   void HandleDeviceFailure(int64_t failed_device_id);
+  void CheckFailedPartitions();  // Periodic check for failed partitions
 
  private:
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
@@ -133,6 +135,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
 
  private:
   ProxyEnvCfg& ctx_;
+  uevent::UeventLoop* loop_;
   std::shared_ptr<uevent::ListenerUevent> listener_;
 
   std::unordered_map<std::string, uevent::ConnectionUeventPtr> conn_map_;
@@ -148,6 +151,8 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   // Access via DEVICE_TRACKER macro
 
   std::unordered_map<std::string, DeviceProfileData> registered_devices_;
+  uevent::TimerId failed_partition_check_timer_;  // Timer for periodic
+                                                  // partition health checks
 };
 
 typedef std::shared_ptr<ProxySvrImpl> ProxySvrImplPtr;

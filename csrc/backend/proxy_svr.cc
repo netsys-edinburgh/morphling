@@ -261,12 +261,19 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 ProxySvrImpl::ProxySvrImpl(ProxyEnvCfg& ctx)
     : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(5) {}
 
+ProxySvrImpl::~ProxySvrImpl() {
+  LOG_INFO << "[ProxySvrImpl::~ProxySvrImpl] Shutting down ProxySvrImpl";
+  loop_->CancelTimer(failed_partition_check_timer_);
+}
+
 void ProxySvrImpl::Initialize(UeventLoop* loop) {
   LOG_INFO << "[ProxySvrImpl::Initialize] Starting server initialization";
   LOG_INFO << "[ProxySvrImpl::Initialize] Config - listen_ip=" << ctx_.listen_ip
            << ", listen_port=" << ctx_.listen_port;
   LOG_INFO << "[ProxySvrImpl::Initialize] Config - num_device="
            << ctx_.num_device << ", thread=" << ctx_.thread;
+
+  loop_ = loop;
 
   auto create_handle_cb = bind(ProxySvrHandle::CreateMyself, ref(ctx_), _1);
   UsockAddress addr(ctx_.listen_ip, ctx_.listen_port);
@@ -303,6 +310,12 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
 
   LOG_INFO << "[ProxySvrImpl::Initialize] Server initialization completed. "
               "Waiting for connections...";
+
+  // Start periodic partition health check (every 5 seconds)
+  failed_partition_check_timer_ = loop->RunEvery(
+      0.1, std::bind(&ProxySvrImpl::CheckFailedPartitions, this));
+  LOG_INFO << "[ProxySvrImpl::Initialize] Started periodic partition health "
+              "check (interval=5s)";
 }
 
 void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -367,6 +380,7 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 
   // Step 2: Mark device as disconnected
   tracker.MarkDeviceDisconnected(device_id);
+  tracker.MarkPartitionsAsFailed(device_id);
 
   // Step 3: Remove connection from map
   conn_map_.erase(conn_addr);
@@ -379,18 +393,19 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
              << (conn_pair.second ? "valid" : "null");
   }
 
-  // Step 4: Handle partition redistribution if needed
-  if (has_pending_partitions && conn_map_.size() > 0) {
-    LOG_INFO << "[ConnectionClosedCb] Starting partition redistribution for "
-                "failed device "
-             << device_id;
-    HandleDeviceFailure(device_id);
-    LOG_INFO << "[ConnectionClosedCb] Partition redistribution completed";
-  } else if (has_pending_partitions && conn_map_.empty()) {
-    LOG_ERROR << "[ConnectionClosedCb] Device " << device_id << " failed with "
-              << pending_count
-              << " pending partitions but no other devices available!";
-  }
+  // // Step 4: Handle partition redistribution if needed
+  // if (has_pending_partitions && conn_map_.size() > 0) {
+  //   LOG_INFO << "[ConnectionClosedCb] Starting partition redistribution for "
+  //               "failed device "
+  //            << device_id;
+  //   HandleDeviceFailure(device_id);
+  //   LOG_INFO << "[ConnectionClosedCb] Partition redistribution completed";
+  // } else if (has_pending_partitions && conn_map_.empty()) {
+  //   LOG_ERROR << "[ConnectionClosedCb] Device " << device_id << " failed with
+  //   "
+  //             << pending_count
+  //             << " pending partitions but no other devices available!";
+  // }
 }
 
 void ProxySvrImpl::RequestWriteCb(const uevent::ConnectionUeventPtr& conn) {
@@ -752,6 +767,33 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
 
   LOG_INFO << "[HandleDeviceFailure] Completed failure handling for device "
            << failed_device_id;
+}
+
+void ProxySvrImpl::CheckFailedPartitions() {
+  auto& tracker = DEVICE_TRACKER;
+
+  // Get all devices
+  std::vector<int64_t> all_devices = tracker.GetAllDevices();
+
+  LOG_DEBUG << "[CheckFailedPartitions] Checking " << all_devices.size()
+            << " devices for failed partitions";
+
+  for (int64_t device_id : all_devices) {
+    // Skip connected devices
+    if (tracker.IsDeviceConnected(device_id)) {
+      continue;
+    }
+
+    // Check if disconnected device has pending partitions
+    if (tracker.HasPendingPartitions(device_id)) {
+      size_t pending_count = tracker.GetDevicePartitionCount(device_id);
+      LOG_WARN << "[CheckFailedPartitions] Detected disconnected device "
+               << device_id << " with " << pending_count
+               << " pending partitions. Initiating failure handling.";
+
+      HandleDeviceFailure(device_id);
+    }
+  }
 }
 
 /*********************************ProxySvr***************************************/
