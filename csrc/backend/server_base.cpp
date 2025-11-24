@@ -640,10 +640,9 @@ SerializationBufferPtr DeviceRegisterRequest::SerializeProto() const {
             << total_size << ", payload_size=" << payload_size
             << ", proto_size=" << proto_size << ", tensor_size=" << tensor_size;
 
-  LOG_DEBUG << "Serialized DeviceRegisterRequest: " << buffer.HexString(64);
   LOG_DEBUG << "Serialized DeviceRegisterRequest (full): "
-            << BinaryToHex(static_cast<const uint8_t*>(buffer.GetBuffer()),
-                           buffer.GetSize());
+            << BinaryToHex(static_cast<const uint8_t*>(buffer->GetBuffer()),
+                           buffer->GetSize());
 
   return buffer;
 }
@@ -735,15 +734,15 @@ SerializationBufferPtr DeviceProfileData::SerializeProto() const {
   uint32_t payload_size = sizeof(proto_size) + sizeof(tensor_size) + proto_size;
   uint64_t total_size = sizeof(payload_size) + payload_size;
 
-  SerializationBuffer buffer;
-  buffer.Allocate(total_size);
+  SerializationBufferPtr buffer;
+  buffer->Allocate(total_size);
 
-  buffer.WriteUInt32(payload_size, true);
-  buffer.WriteUInt32(proto_size, false);
-  buffer.WriteUInt64(tensor_size);
-  buffer.WriteBytes(proto_str.data(), proto_size);
+  buffer->WriteUInt32(payload_size, true);
+  buffer->WriteUInt32(proto_size, false);
+  buffer->WriteUInt64(tensor_size);
+  buffer->WriteBytes(proto_str.data(), proto_size);
 
-  return std::make_shared<SerializationBuffer>(std::move(buffer));
+  return buffer;
 }
 
 void DeviceProfileData::DeserializeProto(const void* data, size_t size) {
