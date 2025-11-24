@@ -3,28 +3,27 @@
 #include <cstring>
 
 #include "morphling.pb.h"
-#include "server_base.h"
 #include "utils/logging.h"
 
-SerializationBuffer MessageFormat::ReconstructWireFormat(
-    const void* proto_data, size_t proto_size, const void* tensor_data,
-    size_t tensor_size) {
-  size_t total_size = HEADER_SIZE + proto_size + tensor_size;
+// SerializationBufferPtr MessageFormat::ReconstructWireFormat(
+//     const void* proto_data, size_t proto_size, const void* tensor_data,
+//     size_t tensor_size) {
+//   size_t total_size = HEADER_SIZE + proto_size + tensor_size;
 
-  SerializationBuffer ser_buffer;
-  ser_buffer.Allocate(total_size);
+//   SerializationBuffer ser_buffer;
+//   ser_buffer.Allocate(total_size);
 
-  uint32_t payload_size = proto_size + tensor_size;
-  ser_buffer.WriteUInt32(payload_size, true);  // network byte order
-  ser_buffer.WriteUInt32(proto_size, false);
-  ser_buffer.WriteUInt64(tensor_size);
-  ser_buffer.WriteBytes(proto_data, proto_size);
-  if (tensor_size > 0 && tensor_data) {
-    ser_buffer.WriteBytes(tensor_data, tensor_size);
-  }
+//   uint32_t payload_size = proto_size + tensor_size;
+//   ser_buffer.WriteUInt32(payload_size, true);  // network byte order
+//   ser_buffer.WriteUInt32(proto_size, false);
+//   ser_buffer.WriteUInt64(tensor_size);
+//   ser_buffer.WriteBytes(proto_data, proto_size);
+//   if (tensor_size > 0 && tensor_data) {
+//     ser_buffer.WriteBytes(tensor_data, tensor_size);
+//   }
 
-  return ser_buffer;
-}
+//   return std::make_shared<SerializationBuffer>(std::move(ser_buffer));
+// }
 
 int32_t GetMessageType(const void* payload, size_t size) {
   if (payload == nullptr || size < 16) {

@@ -101,9 +101,9 @@ torch::Tensor MQTTServer::DispatchMatMul(torch::Tensor& mat_a,
     auto buffer = partition.Serialize();
     auto topic =
         std::string("/morphling/req/") + std::to_string(count % num_devices_);
-    Publish(topic, buffer.GetBuffer(), buffer.GetSize());
+    Publish(topic, buffer->GetBuffer(), buffer->GetSize());
     // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-    pub_buffer_[count] = buffer.GetBuffer();
+    pub_buffer_[count] = buffer->GetBuffer();
     // });
     // pub_count_ = (pub_count_++) % num_devices_;
     count++;
@@ -190,9 +190,9 @@ void MQTTServer::PublishPartition(MatrixPartition& partition, int64_t oid,
   auto buffer = partition.Serialize();
   auto topic =
       std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
-  Publish(partition.dev_id, topic, buffer.GetBuffer(), buffer.GetSize());
+  Publish(partition.dev_id, topic, buffer->GetBuffer(), buffer->GetSize());
   // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-  pub_buffer_[count] = buffer.GetBuffer();
+  pub_buffer_[count] = buffer->GetBuffer();
 }
 
 void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
@@ -233,9 +233,9 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
     auto buffer = partition.Serialize();
     auto topic =
         std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
-    Publish(partition.dev_id, topic, buffer.GetBuffer(), buffer.GetSize());
+    Publish(partition.dev_id, topic, buffer->GetBuffer(), buffer->GetSize());
     // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-    pub_buffer_[count] = buffer.GetBuffer();
+    pub_buffer_[count] = buffer->GetBuffer();
     // });
     // pub_count_ = (pub_count_++) % num_devices_;
     count++;

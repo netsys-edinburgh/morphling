@@ -363,7 +363,7 @@ int32_t MatrixPartition::GetMessageType() const {
   return morphling::global_api::COMPUTE_GEMM_DATA;
 }
 
-SerializationBuffer MatrixPartition::Serialize(
+SerializationBufferPtr MatrixPartition::Serialize(
     SerializationFormat format) const {
   switch (format) {
     case SerializationFormat::PROTOBUF:
@@ -436,7 +436,7 @@ void MatrixPartition::ReadMatricesData(SerializationBuffer& buffer,
   }
 }
 
-SerializationBuffer MatrixPartition::SerializeProto() const {
+SerializationBufferPtr MatrixPartition::SerializeProto() const {
   // Create UMessage with ComputeGemmData
   morphling::UMessage umsg;
   CreateMessageHeader(umsg, morphling::global_api::COMPUTE_GEMM_DATA);
@@ -492,7 +492,7 @@ SerializationBuffer MatrixPartition::SerializeProto() const {
             << ", payload_size=" << payload_size
             << ", proto_size=" << proto_size << ", tensor_size=" << tensor_size;
 
-  return std::move(buffer);
+  return std::make_shared<SerializationBuffer>(std::move(buffer));
 }
 
 void MatrixPartition::DeserializeProto(const void* data, size_t size) {
@@ -592,7 +592,7 @@ int32_t DeviceRegisterRequest::GetMessageType() const {
   return morphling::global_api::DEVICE_REGISTER_REQUEST;
 }
 
-SerializationBuffer DeviceRegisterRequest::Serialize(
+SerializationBufferPtr DeviceRegisterRequest::Serialize(
     SerializationFormat format) const {
   if (format != SerializationFormat::PROTOBUF) {
     throw std::runtime_error(
@@ -610,7 +610,7 @@ void DeviceRegisterRequest::Deserialize(const void* data, size_t size,
   DeserializeProto(data, size);
 }
 
-SerializationBuffer DeviceRegisterRequest::SerializeProto() const {
+SerializationBufferPtr DeviceRegisterRequest::SerializeProto() const {
   // Create UMessage
   morphling::UMessage umsg;
   CreateMessageHeader(umsg, morphling::global_api::DEVICE_REGISTER_REQUEST);
@@ -645,7 +645,7 @@ SerializationBuffer DeviceRegisterRequest::SerializeProto() const {
             << BinaryToHex(static_cast<const uint8_t*>(buffer.GetBuffer()),
                            buffer.GetSize());
 
-  return std::move(buffer);
+  return std::make_shared<SerializationBuffer>(std::move(buffer));
 }
 
 void DeviceRegisterRequest::DeserializeProto(const void* data, size_t size) {
@@ -694,7 +694,7 @@ std::string DeviceProfileData::DebugString() const {
   return oss.str();
 }
 
-SerializationBuffer DeviceProfileData::Serialize(
+SerializationBufferPtr DeviceProfileData::Serialize(
     SerializationFormat format) const {
   if (format != SerializationFormat::PROTOBUF) {
     throw std::runtime_error("DeviceProfileData only supports PROTOBUF format");
@@ -710,7 +710,7 @@ void DeviceProfileData::Deserialize(const void* data, size_t size,
   DeserializeProto(data, size);
 }
 
-SerializationBuffer DeviceProfileData::SerializeProto() const {
+SerializationBufferPtr DeviceProfileData::SerializeProto() const {
   // Create UMessage
   morphling::UMessage umsg;
   CreateMessageHeader(umsg, morphling::global_api::DEVICE_PROFILE_DATA);
@@ -743,7 +743,7 @@ SerializationBuffer DeviceProfileData::SerializeProto() const {
   buffer.WriteUInt64(tensor_size);
   buffer.WriteBytes(proto_str.data(), proto_size);
 
-  return std::move(buffer);
+  return std::make_shared<SerializationBuffer>(std::move(buffer));
 }
 
 void DeviceProfileData::DeserializeProto(const void* data, size_t size) {

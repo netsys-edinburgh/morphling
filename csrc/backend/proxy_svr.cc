@@ -49,11 +49,11 @@ void ProxySvrHandle::SendRegisterRequest(const ConnectionUeventPtr& conn) {
   auto buffer = request.Serialize();
 
   LOG_DEBUG << "Raw registration request data (hex): "
-            << BinaryToHex(static_cast<const uint8_t*>(buffer.GetBuffer()),
-                           buffer.GetSize());
+            << BinaryToHex(static_cast<const uint8_t*>(buffer->GetBuffer()),
+                           buffer->GetSize());
 
   // Send the serialized request
-  int ret = conn->SendData(buffer.GetBuffer(), buffer.GetSize());
+  int ret = conn->SendData(buffer->GetBuffer(), buffer->GetSize());
   if (ret < 0) {
     LOG_ERROR << "Failed to send registration request";
     conn->ForceClose();
@@ -223,7 +223,7 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
   task_queue_.push_back([this, conn, partition, client_addr]() {
     // Use protobuf serialization instead of binary
     auto buffer = partition->Serialize();
-    conn->SendData(buffer.GetBuffer(), buffer.GetSize());
+    conn->SendData(buffer->GetBuffer(), buffer->GetSize());
     conn_inflight_[client_addr] += 1;
   });
 
