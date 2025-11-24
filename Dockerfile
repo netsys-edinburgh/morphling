@@ -59,7 +59,6 @@ RUN apt-get install -y \
     iputils-ping \
     lsof \
     net-tools \
-    librabbitmq-dev \
     libmosquitto-dev \
     libhiredis-dev \
     # 清理缓存
@@ -70,6 +69,17 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends --fix-missing -o Acquire::Retries=3 dsniff \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
+
+# Compile and install rabbitmq-c from source (v0.14.0)
+RUN git clone --depth=1 -b v0.14.0 https://github.com/alanxz/rabbitmq-c.git /tmp/rabbitmq-c && \
+    cd /tmp/rabbitmq-c && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=OFF \
+          -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TOOLS=OFF \
+          -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" .. && \
+    make -j && make install && \
+    ldconfig && \
+    rm -rf /tmp/rabbitmq-c
 
 # 编译安装 redis-plus-plus with _GLIBCXX_USE_CXX11_ABI=0 for torch compatibility
 RUN git clone --depth=1 https://github.com/sewenew/redis-plus-plus.git /tmp/redis-plus-plus && \
