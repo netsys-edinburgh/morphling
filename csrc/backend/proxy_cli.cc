@@ -53,15 +53,15 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
   }
 
   auto buffer = partition.Serialize();
-  conn->SendData(buffer.GetBuffer(), buffer.GetSize());
+  conn->SendData(buffer->GetBuffer(), buffer->GetSize());
 
   // LOG_DEBUG << "Response sent to " << client_addr;
 
   RECORD_SRV_COUNT(SRV_TOTAL_QUERY, 1);
-  RECORD_SRV_COUNT(SRV_TOTAL_TRAFFIC, buffer.GetSize());
+  RECORD_SRV_COUNT(SRV_TOTAL_TRAFFIC, buffer->GetSize());
 
   LOG_DEBUG << "Response sent to " << client_addr
-            << ", size: " << buffer.GetSize();
+            << ", size: " << buffer->GetSize();
 }
 
 void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
@@ -263,18 +263,18 @@ void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
   profile.dl_lat = 1000;                        // 1ms
 
   auto buffer = profile.Serialize();
-  int ret = conn->SendData(buffer.GetBuffer(), buffer.GetSize());
+  int ret = conn->SendData(buffer->GetBuffer(), buffer->GetSize());
   if (ret < 0) {
     LOG_ERROR << "Failed to send device profile data";
     conn->ForceClose();
     return;
   }
 
-  LOG_DEBUG << "Device profile data sent, size=" << buffer.GetSize()
+  LOG_DEBUG << "Device profile data sent, size=" << buffer->GetSize()
             << ", profile: " << profile.DebugString() << ", hex: "
             << BinaryToHex(
-                   static_cast<const unsigned char*>(buffer.GetBuffer()),
-                   buffer.GetSize())
+                   static_cast<const unsigned char*>(buffer->GetBuffer()),
+                   buffer->GetSize())
             << "";
 }
 

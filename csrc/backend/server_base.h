@@ -108,6 +108,7 @@ struct hash<TensorKey> {
 
 // Forward declarations
 class SerializationBuffer;
+typedef std::shared_ptr<SerializationBuffer> SerializationBufferPtr;
 
 enum class SerializationFormat {
   PROTOBUF  // Protobuf-based format (default)
@@ -119,7 +120,7 @@ class ISerializable {
   virtual ~ISerializable() = default;
 
   // Serialize to binary format
-  virtual SerializationBuffer Serialize(
+  virtual SerializationBufferPtr Serialize(
       SerializationFormat format = SerializationFormat::PROTOBUF) const = 0;
 
   // Deserialize from binary format
@@ -197,7 +198,7 @@ struct MatrixPartition : public ISerializable {
   size_t size_ = 0;          // size of the data
 
   // ISerializable interface
-  SerializationBuffer Serialize(
+  SerializationBufferPtr Serialize(
       SerializationFormat format =
           SerializationFormat::PROTOBUF) const override;
   void Deserialize(
@@ -232,7 +233,7 @@ struct MatrixPartition : public ISerializable {
 
  private:
   // Format-specific implementations
-  SerializationBuffer SerializeProto() const;
+  SerializationBufferPtr SerializeProto() const;
   void DeserializeProto(const void* data, size_t size);
 
   // Helper methods for metadata
@@ -250,7 +251,7 @@ struct DeviceRegisterRequest : public ISerializable {
   // Empty request
 
   // ISerializable interface
-  SerializationBuffer Serialize(
+  SerializationBufferPtr Serialize(
       SerializationFormat format =
           SerializationFormat::PROTOBUF) const override;
   void Deserialize(
@@ -260,7 +261,7 @@ struct DeviceRegisterRequest : public ISerializable {
   std::string DebugString() const override { return "DeviceRegisterRequest"; }
 
  private:
-  SerializationBuffer SerializeProto() const;
+  SerializationBufferPtr SerializeProto() const;
   void DeserializeProto(const void* data, size_t size);
 };
 typedef std::shared_ptr<DeviceRegisterRequest> DeviceRegisterRequestPtr;
@@ -277,7 +278,7 @@ struct DeviceProfileData : public ISerializable {
   uint64_t dl_lat;  // download latency
 
   // ISerializable interface
-  SerializationBuffer Serialize(
+  SerializationBufferPtr Serialize(
       SerializationFormat format =
           SerializationFormat::PROTOBUF) const override;
   void Deserialize(
@@ -287,7 +288,7 @@ struct DeviceProfileData : public ISerializable {
   std::string DebugString() const;
 
  private:
-  SerializationBuffer SerializeProto() const;
+  SerializationBufferPtr SerializeProto() const;
   void DeserializeProto(const void* data, size_t size);
 };
 typedef std::shared_ptr<DeviceProfileData> DeviceProfileDataPtr;
