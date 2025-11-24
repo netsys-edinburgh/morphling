@@ -473,18 +473,18 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
       sizeof(proto_size) + sizeof(tensor_size) + proto_size + tensor_size;
   uint64_t total_size = sizeof(payload_size) + payload_size;
 
-  SerializationBuffer buffer;
-  buffer.Allocate(total_size);
+  SerializationBufferPtr buffer = std::make_shared<SerializationBuffer>();
+  buffer->Allocate(total_size);
 
-  buffer.WriteUInt32(payload_size, true);  // network byte order
-  buffer.WriteUInt32(proto_size, false);
-  buffer.WriteUInt64(tensor_size);
-  buffer.WriteBytes(proto_str.data(), proto_size);
+  buffer->WriteUInt32(payload_size, true);  // network byte order
+  buffer->WriteUInt32(proto_size, false);
+  buffer->WriteUInt64(tensor_size);
+  buffer->WriteBytes(proto_str.data(), proto_size);
 
   // Write tensor data
   for (const auto& m : mat) {
     if (std::get<1>(m) > 0 && std::get<0>(m) != nullptr) {
-      buffer.WriteBytes(std::get<0>(m), std::get<1>(m));
+      buffer->WriteBytes(std::get<0>(m), std::get<1>(m));
     }
   }
 
@@ -492,7 +492,7 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
             << ", payload_size=" << payload_size
             << ", proto_size=" << proto_size << ", tensor_size=" << tensor_size;
 
-  return std::make_shared<SerializationBuffer>(std::move(buffer));
+  return buffer;
 }
 
 void MatrixPartition::DeserializeProto(const void* data, size_t size) {
@@ -628,13 +628,13 @@ SerializationBufferPtr DeviceRegisterRequest::SerializeProto() const {
   uint32_t payload_size = sizeof(proto_size) + sizeof(tensor_size) + proto_size;
   uint64_t total_size = sizeof(payload_size) + payload_size;
 
-  SerializationBuffer buffer;
-  buffer.Allocate(total_size);
+  SerializationBufferPtr buffer = std::make_shared<SerializationBuffer>();
+  buffer->Allocate(total_size);
 
-  buffer.WriteUInt32(payload_size, true);
-  buffer.WriteUInt32(proto_size, false);
-  buffer.WriteUInt64(tensor_size);
-  buffer.WriteBytes(proto_str.data(), proto_size);
+  buffer->WriteUInt32(payload_size, true);
+  buffer->WriteUInt32(proto_size, false);
+  buffer->WriteUInt64(tensor_size);
+  buffer->WriteBytes(proto_str.data(), proto_size);
 
   LOG_DEBUG << "DeviceRegisterRequest SerializeProto completed: total_size="
             << total_size << ", payload_size=" << payload_size
@@ -645,7 +645,7 @@ SerializationBufferPtr DeviceRegisterRequest::SerializeProto() const {
             << BinaryToHex(static_cast<const uint8_t*>(buffer.GetBuffer()),
                            buffer.GetSize());
 
-  return std::make_shared<SerializationBuffer>(std::move(buffer));
+  return buffer;
 }
 
 void DeviceRegisterRequest::DeserializeProto(const void* data, size_t size) {
