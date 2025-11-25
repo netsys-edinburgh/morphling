@@ -14,6 +14,7 @@
 #include "morphling.pb.h"
 #include "network/uevent.h"
 #include "network/ueventloop_thread.h"
+#include "sched_policy.h"
 #include "server_base.h"
 
 namespace morphling {
@@ -86,7 +87,6 @@ class ProxySvrHandle : public uevent::LoopHandle {
   std::unordered_map<std::string, bool> conn_handshake_complete_;
   std::mutex handshake_mutex_;
 
-  std::unordered_map<std::string, bool> conn_registered_;  // addr -> registered
   std::unordered_map<std::string, DeviceProfileData> device_info_;
 };
 
@@ -122,6 +122,14 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   void HandleDeviceFailure(int64_t failed_device_id);
   void CheckFailedPartitions();  // Periodic check for failed partitions
 
+  // Send idle partitions to their corresponding owner devices
+  void SendIdlePartitions(int64_t device_id);
+
+  // Set scheduling policy (optional, defaults to greedy for RephrasePartitions)
+  void SetSchedulingPolicy(PartitionSchedulingPolicyPtr policy) {
+    scheduling_policy_ = policy;
+  }
+
  private:
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
   void ConnectionClosedCb(const uevent::ConnectionUeventPtr& conn);
@@ -130,7 +138,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
 
   // Rephrase partitions with optional excluded devices for retry scenarios
   void RephrasePartitions(
-      std::vector<MatrixPartition>& partitions,
+      std::vector<MatrixPartitionPtr>& partitions,
       const std::unordered_set<int64_t>& excluded_devices = {});
 
  private:
@@ -153,6 +161,9 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::unordered_map<std::string, DeviceProfileData> registered_devices_;
   uevent::TimerId failed_partition_check_timer_;  // Timer for periodic
                                                   // partition health checks
+
+  // Scheduling policy for partition assignment
+  PartitionSchedulingPolicyPtr scheduling_policy_;
 };
 
 typedef std::shared_ptr<ProxySvrImpl> ProxySvrImplPtr;
