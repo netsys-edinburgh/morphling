@@ -120,12 +120,16 @@ void ProxySvrHandle::DecodeAndDispatch(const ConnectionUeventPtr& conn,
       break;
 
     case morphling::global_api::COMPUTE_GEMM_DATA:
-      // Check if client is registered
-      if (!conn_registered_[client_addr]) {
-        LOG_ERROR << "Client " << client_addr
-                  << " not registered, disconnecting";
-        conn->ForceClose();
-        return;
+      // Check if client is connected via tracker
+      {
+        auto& tracker = DEVICE_TRACKER;
+        int64_t device_id = tracker.GetDeviceIdByAddr(client_addr);
+        if (device_id == -1 || !tracker.IsDeviceConnected(device_id)) {
+          LOG_ERROR << "Client " << client_addr
+                    << " not registered or not connected, disconnecting";
+          conn->ForceClose();
+          return;
+        }
       }
       HandleMatMul(conn, payload, size);
       conn_inflight_[client_addr] -= 1;
@@ -158,9 +162,8 @@ void ProxySvrHandle::HandleRegisterResponse(const ConnectionUeventPtr& conn,
   auto& tracker = DEVICE_TRACKER;
   int64_t device_id = tracker.RegisterDevice(client_addr, profile);
 
-  // Store device info and mark as registered
+  // Store device info
   device_info_[client_addr] = profile;
-  conn_registered_[client_addr] = true;
 
   LOG_DEBUG << "Client " << client_addr
             << " registered with device_id=" << device_id << ": "
@@ -208,8 +211,9 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                    .count()
             << "us";
 
-  // Remove partition from tracker when completed
+  // Mark partition as FINISHED and remove from tracker
   auto& tracker = DEVICE_TRACKER;
+  tracker.MarkPartitionFinished(part_key);
   tracker.RemovePartitionByKey(part_key);
   tracker.RecordPartitionProcessed(partition.dev_id);
 
@@ -225,6 +229,10 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
     auto buffer = partition->Serialize();
     conn->SendData(buffer->GetBuffer(), buffer->GetSize());
     conn_inflight_[client_addr] += 1;
+
+    // Mark partition as RUNNING when sent
+    auto& tracker = DEVICE_TRACKER;
+    tracker.MarkPartitionRunning(partition->GetPartitionKey());
   });
 
   if (conn_inflight_[client_addr] >= ctx_.max_inflight) {
@@ -241,9 +249,6 @@ void ProxySvrHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   LOG_INFO << "connected from " << client_addr;
   conn_inflight_[client_addr] = 0;
 
-  // Mark as not registered initially
-  conn_registered_[client_addr] = false;
-
   // Send registration request to client
   SendRegisterRequest(conn);
 }
@@ -252,14 +257,17 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   string client_addr = conn->GetPeerAddress().ToString();
   LOG_INFO << "disconnected from " << client_addr;
   conn_inflight_.erase(client_addr);
-  conn_registered_.erase(client_addr);
   device_info_.erase(client_addr);
 }
 
 /********************************ProxySvrImpl****************************************/
 
 ProxySvrImpl::ProxySvrImpl(ProxyEnvCfg& ctx)
-    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(5) {}
+    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(5) {
+  // Initialize with greedy scheduling policy by default
+  scheduling_policy_ = std::make_shared<RoundRobinSchedulingPolicy>(
+      ctx_.block_size, ctx_.enable_cli_cache);
+}
 
 ProxySvrImpl::~ProxySvrImpl() {
   LOG_INFO << "[ProxySvrImpl::~ProxySvrImpl] Shutting down ProxySvrImpl";
@@ -326,31 +334,7 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   handle->ConnectionSuccessCb(conn);
 
   std::string conn_addr = conn->GetPeerAddress().ToString();
-  auto& tracker = DEVICE_TRACKER;
-
-  // Check if this is a reconnection from an existing device
-  int64_t device_id = tracker.GetDeviceIdByAddr(conn_addr);
-
-  if (device_id != -1) {
-    // Reconnection: reuse the same device_id
-    LOG_INFO << "[ConnectionSuccessCb] Reconnection from " << conn_addr
-             << ", reusing device_id=" << device_id;
-    tracker.MarkDeviceConnected(device_id, conn_addr);
-  } else {
-    // New connection: will be registered when we receive device profile
-    LOG_INFO << "[ConnectionSuccessCb] New connection from " << conn_addr
-             << ", awaiting device profile";
-  }
-
   conn_map_[conn_addr] = conn;
-
-  LOG_INFO << "[ConnectionSuccessCb] Total active connections: "
-           << conn_map_.size();
-  LOG_INFO << "[ConnectionSuccessCb] Connection map contents:";
-  for (const auto& conn_pair : conn_map_) {
-    LOG_INFO << "  - " << conn_pair.first << " -> "
-             << (conn_pair.second ? "valid" : "null");
-  }
 }
 
 void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
@@ -379,7 +363,6 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   }
 
   // Step 2: Mark device as disconnected
-  tracker.MarkDeviceDisconnected(device_id);
   tracker.MarkPartitionsAsFailed(device_id);
 
   // Step 3: Remove connection from map
@@ -475,12 +458,13 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
              << (conn_pair.second ? "valid" : "null");
   }
 
-  RephrasePartitions(partitions);
-  // make shared partitions
+  // Create shared partitions directly
   std::vector<MatrixPartitionPtr> shared_partitions;
   for (auto& partition : partitions) {
     shared_partitions.push_back(std::make_shared<MatrixPartition>(partition));
   }
+
+  RephrasePartitions(shared_partitions);
 
   LOG_INFO << "[DispatchMatMulAsync] After RephrasePartitions - created "
            << shared_partitions.size() << " shared partitions";
@@ -593,7 +577,7 @@ void ProxySvrImpl::IncRspCbCount(int oid, size_t count) {
 }
 
 void ProxySvrImpl::RephrasePartitions(
-    std::vector<MatrixPartition>& partitions,
+    std::vector<MatrixPartitionPtr>& partitions,
     const std::unordered_set<int64_t>& excluded_devices) {
   // Get connected devices from tracker
   auto& tracker = DEVICE_TRACKER;
@@ -611,153 +595,78 @@ void ProxySvrImpl::RephrasePartitions(
 
   std::sort(device_ids.begin(), device_ids.end());
 
-  std::vector<float> device_time(actual_num_devices, 0);
-  device_tensors_.assign(actual_num_devices, std::unordered_set<TensorKey>());
+  auto assignments = scheduling_policy_->AssignPartitionsToDevices(
+      partitions, device_ids, excluded_devices);
 
-  LOG_INFO << "[RephrasePartitions] Initialized device_time vector with size "
-           << device_time.size() << ", connected devices: ";
-  for (size_t i = 0; i < device_ids.size(); ++i) {
-    LOG_INFO << "  [" << i << "] -> device_id=" << device_ids[i];
+  if (assignments.size() != partitions.size()) {
+    LOG_ERROR << "[RephrasePartitions] Policy returned " << assignments.size()
+              << " assignments for " << partitions.size() << " partitions";
+    return;
   }
 
-  // greedy algorithm to select the minimal time
-  for (size_t part_idx = 0; part_idx < partitions.size(); ++part_idx) {
-    auto& partition = partitions[part_idx];
-    LOG_DEBUG << "[RephrasePartitions] Processing partition " << part_idx << "/"
-              << partitions.size();
-
-    float min_time = std::numeric_limits<float>::max();
-    int min_device_idx = 0;
-    int64_t min_device_id = -1;
-    auto version = partition.version;
-    auto tensor_key_row = partition.GetRowKey();
-    auto tensor_key_col = partition.GetColKey();
-    bool min_r_cached = false;
-    bool min_c_cached = false;
-
-    LOG_INFO << "[RephrasePartitions] Processing partition " << part_idx
-             << " - checking " << actual_num_devices << " devices";
-
-    for (int i = 0; i < actual_num_devices; i++) {
-      int64_t device_id = device_ids[i];
-
-      // Skip excluded devices (used for retry scenarios)
-      if (excluded_devices.find(device_id) != excluded_devices.end()) {
-        LOG_DEBUG << "[RephrasePartitions] Skipping excluded device "
-                  << device_id;
-        continue;
-      }
-
-      auto& tensors = device_tensors_[i];
-
-      bool r_cached = tensors.find(tensor_key_row) != tensors.end();
-      bool c_cached = tensors.find(tensor_key_col) != tensors.end();
-
-      auto r_size = std::get<1>(partition.mat[0]);
-      auto c_size = std::get<1>(partition.mat[1]);
-      auto cached_r_size = (r_cached) ? 0 : r_size;
-      auto cached_c_size = (c_cached) ? 0 : c_size;
-
-      int64_t num_rows = r_size / partition.h_dim / sizeof(float);
-      int64_t num_cols = c_size / partition.h_dim / sizeof(float);
-
-      float ul_time = (float)(num_rows * num_cols) * sizeof(float) / MB;
-      float dl_time = (float)(cached_r_size + cached_c_size) / MB;
-      float flops = (float)2.0 * num_rows * num_cols * partition.h_dim / TB;
-
-      float time = std::max(std::max(ul_time, dl_time), flops) + device_time[i];
-      if (time < min_time) {
-        min_time = time;
-        min_device_idx = i;
-        min_device_id = device_id;
-        min_r_cached = r_cached;
-        min_c_cached = c_cached;
-      }
-    }
-
-    LOG_INFO << "[RephrasePartitions] Partition " << part_idx
-             << " assigned to device_id " << min_device_id
-             << " (index=" << min_device_idx << ") with time " << min_time;
-
-    if (min_device_id == -1 || min_time == std::numeric_limits<float>::max()) {
-      LOG_ERROR << "[RephrasePartitions] Failed to find available device for "
-                   "partition "
-                << part_idx
-                << ". excluded_devices.size()=" << excluded_devices.size()
-                << ", actual_num_devices=" << actual_num_devices;
-      assert(false && "No available device found for partition");
-      continue;
-    }
-
-    // update the time for the device
-    device_time[min_device_idx] = min_time;
-    partition.dev_id = min_device_id;  // Use actual device_id, not index
-    device_tensors_[min_device_idx].insert(tensor_key_row);
-    device_tensors_[min_device_idx].insert(tensor_key_col);
-
-    // Note: AddPartition will be called after shared_partitions are created
-    // in DispatchMatMulAsync, where we have MatrixPartitionPtr available
-
-    if (!ctx_.enable_cli_cache) continue;
-
-    if (min_r_cached) {
-      partition.mat[0] = {nullptr, 0};
-    }
-    if (min_c_cached) {
-      partition.mat[1] = {nullptr, 0};
-    }
+  // Apply assignments to partitions
+  for (size_t i = 0; i < partitions.size(); ++i) {
+    partitions[i]->dev_id = assignments[i];
+    LOG_DEBUG << "[RephrasePartitions] Partition " << i
+              << " assigned to device_id " << assignments[i];
   }
 
   LOG_INFO << "[RephrasePartitions] Completed partitioning";
-  LOG_INFO << "Device time: " << device_time;
 }
 
 void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
   auto& tracker = DEVICE_TRACKER;
 
-  // First, mark all partitions owned by this device as failed
-  // This sets is_failed flag on the shared partition objects
-  tracker.MarkPartitionsAsFailed(failed_device_id);
+  // Get partitions before redistribution to count OIDs
+  auto failed_partitions = tracker.GetDevicePartitions(failed_device_id);
 
-  // Prepare redistribution (collects partition info and OID counts)
-  auto redistribution =
-      tracker.PrepareDeviceFailureRedistribution(failed_device_id);
-
-  if (redistribution.partitions.empty()) {
+  if (failed_partitions.empty()) {
     LOG_INFO << "[HandleDeviceFailure] Device " << failed_device_id
              << " has no pending partitions to redistribute";
     return;
   }
 
-  // Find best target device
-  int64_t target_device_id = tracker.FindBestTargetDevice(failed_device_id);
+  // Count FAILED partitions and OIDs (only those that were RUNNING)
+  size_t num_failed_partitions = 0;
+  std::unordered_map<int64_t, size_t> oid_counts;
+  for (const auto& part : failed_partitions) {
+    if (part->state == PartitionState::FAILED) {
+      num_failed_partitions++;
+      oid_counts[part->oid]++;
+    }
+  }
 
-  if (target_device_id == -1) {
-    LOG_ERROR << "[HandleDeviceFailure] No suitable target device found for "
-                 "redistribution";
+  if (num_failed_partitions == 0) {
+    LOG_INFO << "[HandleDeviceFailure] Device " << failed_device_id
+             << " has no FAILED partitions to redistribute";
     return;
   }
 
-  redistribution.target_device_id = target_device_id;
-
-  size_t num_failed_partitions = redistribution.partitions.size();
   LOG_INFO << "[HandleDeviceFailure] Device " << failed_device_id
            << " failed with " << num_failed_partitions
-           << " partitions. Redistributing to device " << target_device_id;
+           << " partitions. Redistributing across all connected devices";
 
   LOG_INFO << "[HandleDeviceFailure] OID breakdown for failed partitions:";
-  for (const auto& [oid, count] : redistribution.oid_counts) {
+  for (const auto& [oid, count] : oid_counts) {
     LOG_INFO << "  - OID " << oid << ": " << count << " partitions";
   }
 
-  // Apply redistribution (moves partition metadata to target device)
-  tracker.ApplyFailureRedistribution(redistribution);
+  // Redistribute partitions across all connected devices
+  tracker.RedistributeFailedDevicePartitions(failed_device_id);
+
+  // Get connected devices to send redistributed partitions to them
+  std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
+
+  // Send idle partitions to their new owner devices
+  for (int64_t device_id : connected_devices) {
+    SendIdlePartitions(device_id);
+  }
 
   // CRITICAL: Decrement response counters for partitions from failed device
   // These partitions were in-flight when the device failed, so they will never
   // produce responses. We must decrement their response counters to prevent
   // WaitMatMul from hanging forever.
-  for (const auto& [oid, count] : redistribution.oid_counts) {
+  for (const auto& [oid, count] : oid_counts) {
     LOG_INFO << "[HandleDeviceFailure] Decrementing response counter for OID "
              << oid << " by " << count << " (in-flight partitions lost)";
     for (size_t i = 0; i < count; ++i) {
@@ -767,6 +676,78 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
 
   LOG_INFO << "[HandleDeviceFailure] Completed failure handling for device "
            << failed_device_id;
+}
+
+void ProxySvrImpl::SendIdlePartitions(int64_t device_id) {
+  auto& tracker = DEVICE_TRACKER;
+
+  // Get device address
+  std::string device_addr = tracker.GetDeviceAddr(device_id);
+  if (device_addr.empty()) {
+    LOG_ERROR << "[SendIdlePartitions] No address found for device_id "
+              << device_id;
+    return;
+  }
+
+  // Get connection for this device
+  auto conn_it = conn_map_.find(device_addr);
+  if (conn_it == conn_map_.end()) {
+    LOG_ERROR << "[SendIdlePartitions] No connection found for device_id "
+              << device_id << " (addr: " << device_addr << ")";
+    return;
+  }
+
+  // Get all partitions for this device
+  auto partitions = tracker.GetDevicePartitions(device_id);
+  if (partitions.empty()) {
+    LOG_DEBUG << "[SendIdlePartitions] No partitions for device_id "
+              << device_id;
+    return;
+  }
+
+  // Filter for IDLE partitions
+  std::vector<PartitionInfoPtr> idle_partitions;
+  for (const auto& part : partitions) {
+    if (part->state == PartitionState::IDLE) {
+      idle_partitions.push_back(part);
+    }
+  }
+
+  if (idle_partitions.empty()) {
+    LOG_DEBUG << "[SendIdlePartitions] No IDLE partitions for device_id "
+              << device_id;
+    return;
+  }
+
+  LOG_INFO << "[SendIdlePartitions] Sending " << idle_partitions.size()
+           << " IDLE partitions to device_id " << device_id;
+
+  uevent::ConnectionUeventPtr target_conn = conn_it->second;
+  auto* loop = target_conn->GetLoop();
+  if (!loop) {
+    LOG_ERROR << "[SendIdlePartitions] loop is nullptr for device_id "
+              << device_id;
+    return;
+  }
+
+  auto* handle = reinterpret_cast<ProxySvrHandle*>(loop->GetLoopHandle());
+  if (!handle) {
+    LOG_ERROR << "[SendIdlePartitions] handle is nullptr for device_id "
+              << device_id;
+    return;
+  }
+
+  // Send each IDLE partition
+  for (const auto& part_info : idle_partitions) {
+    LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
+              << " (oid=" << part_info->oid << ") to device_id " << device_id;
+    loop->RunInLoop(bind(&ProxySvrHandle::SendInLoop, handle, target_conn,
+                         part_info->partition));
+  }
+
+  LOG_INFO << "[SendIdlePartitions] Completed sending "
+           << idle_partitions.size() << " partitions to device_id "
+           << device_id;
 }
 
 void ProxySvrImpl::CheckFailedPartitions() {
