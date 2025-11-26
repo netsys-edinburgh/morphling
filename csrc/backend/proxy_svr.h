@@ -122,8 +122,8 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   void HandleDeviceFailure(int64_t failed_device_id);
   void CheckFailedPartitions();  // Periodic check for failed partitions
 
-  // Send idle partitions to their corresponding owner devices
-  void SendIdlePartitions(int64_t device_id);
+  // Redistribute idle partitions to devices
+  void SendIdlePartitions();
 
   // Set scheduling policy (optional, defaults to greedy for RephrasePartitions)
   void SetSchedulingPolicy(PartitionSchedulingPolicyPtr policy) {
@@ -147,6 +147,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::shared_ptr<uevent::ListenerUevent> listener_;
 
   std::unordered_map<std::string, uevent::ConnectionUeventPtr> conn_map_;
+  std::unordered_map<int64_t, uevent::ConnectionUeventPtr> device_conn_;
   // Note: Device ID management is now handled by DevicePartitionTracker
   // singleton
 
@@ -159,6 +160,9 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   // Access via DEVICE_TRACKER macro
 
   std::unordered_map<std::string, DeviceProfileData> registered_devices_;
+  uevent::TimerId
+      idle_partition_redistribute_timer_;  // Timer for periodic idle partition
+                                           // redistribution
   uevent::TimerId failed_partition_check_timer_;  // Timer for periodic
                                                   // partition health checks
 
