@@ -552,6 +552,19 @@ void DevicePartitionTracker::RecordPartitionProcessed(int64_t device_id) {
   }
 }
 
+std::vector<PartitionInfoPtr> DevicePartitionTracker::GetIdlePartitions()
+    const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  std::vector<PartitionInfoPtr> idle_partitions;
+  for (const auto& part_info : partitions_set_) {
+    if (part_info->state == PartitionState::IDLE) {
+      idle_partitions.push_back(part_info);
+    }
+  }
+  return idle_partitions;
+}
+
 void DevicePartitionTracker::RecordBytesSent(int64_t device_id,
                                              uint64_t bytes) {
   std::lock_guard<std::mutex> lock(mutex_);

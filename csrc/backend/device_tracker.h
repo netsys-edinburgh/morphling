@@ -133,6 +133,8 @@ class DevicePartitionTracker {
   size_t GetDevicePartitionCount(int64_t device_id) const;
   bool HasPendingPartitions(int64_t device_id) const;
 
+  std::vector<PartitionInfoPtr> GetIdlePartitions() const;
+
   // Partition redistribution on device failure
   void RedistributeFailedDevicePartitions(
       int64_t failed_device_id, PartitionSchedulingPolicyPtr policy = nullptr);

@@ -319,11 +319,11 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   LOG_INFO << "[ProxySvrImpl::Initialize] Server initialization completed. "
               "Waiting for connections...";
 
-  // Start periodic partition health check (every 5 seconds)
+  // Start periodic partition health check (every 0.1 seconds)
   failed_partition_check_timer_ = loop->RunEvery(
       0.1, std::bind(&ProxySvrImpl::CheckFailedPartitions, this));
   LOG_INFO << "[ProxySvrImpl::Initialize] Started periodic partition health "
-              "check (interval=5s)";
+              "check (interval=0.1s)";
 }
 
 void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
