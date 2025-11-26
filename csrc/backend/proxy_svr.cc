@@ -322,6 +322,8 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   // Start periodic partition health check (every 0.1 seconds)
   failed_partition_check_timer_ = loop->RunEvery(
       0.1, std::bind(&ProxySvrImpl::CheckFailedPartitions, this));
+  idle_partition_redistribute_timer_ =
+      loop->RunEvery(0.5, std::bind(&ProxySvrImpl::SendIdlePartitions, this));
   LOG_INFO << "[ProxySvrImpl::Initialize] Started periodic partition health "
               "check (interval=0.1s)";
 }
@@ -335,6 +337,15 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
 
   std::string conn_addr = conn->GetPeerAddress().ToString();
   conn_map_[conn_addr] = conn;
+
+  // Get device_id and update device_conn_ mapping
+  auto& tracker = DEVICE_TRACKER;
+  int64_t device_id = tracker.GetDeviceIdByAddr(conn_addr);
+  if (device_id != -1) {
+    device_conn_[device_id] = conn;
+    LOG_DEBUG << "[ConnectionSuccessCb] Mapped device_id " << device_id
+              << " to connection " << conn_addr;
+  }
 }
 
 void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
@@ -365,8 +376,11 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   // Step 2: Mark device as disconnected
   tracker.MarkPartitionsAsFailed(device_id);
 
-  // Step 3: Remove connection from map
+  // Step 3: Remove connection from maps
   conn_map_.erase(conn_addr);
+  if (device_id != -1) {
+    device_conn_.erase(device_id);
+  }
 
   LOG_INFO << "[ConnectionClosedCb] Connection removed. Remaining connections: "
            << conn_map_.size();
@@ -495,20 +509,11 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
       continue;
     }
 
-    // Find connection by device_id through the tracker
-    auto& tracker = DEVICE_TRACKER;
-    std::string device_addr = tracker.GetDeviceAddr(partition->dev_id);
-
-    if (device_addr.empty()) {
-      LOG_ERROR << "[DispatchMatMulAsync] No address found for dev_id "
-                << partition->dev_id;
-      continue;
-    }
-
-    auto conn_it = conn_map_.find(device_addr);
-    if (conn_it == conn_map_.end()) {
+    // Find connection by device_id using device_conn_
+    auto conn_it = device_conn_.find(partition->dev_id);
+    if (conn_it == device_conn_.end()) {
       LOG_ERROR << "[DispatchMatMulAsync] No connection found for dev_id "
-                << partition->dev_id << " (addr: " << device_addr << ")";
+                << partition->dev_id;
       continue;
     }
 
@@ -657,11 +662,6 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
   // Get connected devices to send redistributed partitions to them
   std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
 
-  // Send idle partitions to their new owner devices
-  for (int64_t device_id : connected_devices) {
-    SendIdlePartitions(device_id);
-  }
-
   // CRITICAL: Decrement response counters for partitions from failed device
   // These partitions were in-flight when the device failed, so they will never
   // produce responses. We must decrement their response counters to prevent
@@ -678,76 +678,32 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
            << failed_device_id;
 }
 
-void ProxySvrImpl::SendIdlePartitions(int64_t device_id) {
+void ProxySvrImpl::SendIdlePartitions() {
   auto& tracker = DEVICE_TRACKER;
 
-  // Get device address
-  std::string device_addr = tracker.GetDeviceAddr(device_id);
-  if (device_addr.empty()) {
-    LOG_ERROR << "[SendIdlePartitions] No address found for device_id "
-              << device_id;
-    return;
-  }
-
-  // Get connection for this device
-  auto conn_it = conn_map_.find(device_addr);
-  if (conn_it == conn_map_.end()) {
-    LOG_ERROR << "[SendIdlePartitions] No connection found for device_id "
-              << device_id << " (addr: " << device_addr << ")";
-    return;
-  }
-
-  // Get all partitions for this device
-  auto partitions = tracker.GetDevicePartitions(device_id);
-  if (partitions.empty()) {
-    LOG_DEBUG << "[SendIdlePartitions] No partitions for device_id "
-              << device_id;
-    return;
-  }
-
-  // Filter for IDLE partitions
-  std::vector<PartitionInfoPtr> idle_partitions;
-  for (const auto& part : partitions) {
-    if (part->state == PartitionState::IDLE) {
-      idle_partitions.push_back(part);
-    }
-  }
+  auto idle_partitions = tracker.GetIdlePartitions();
 
   if (idle_partitions.empty()) {
-    LOG_DEBUG << "[SendIdlePartitions] No IDLE partitions for device_id "
-              << device_id;
+    LOG_DEBUG << "[SendIdlePartitions] No IDLE partitions to send";
     return;
   }
 
   LOG_INFO << "[SendIdlePartitions] Sending " << idle_partitions.size()
-           << " IDLE partitions to device_id " << device_id;
-
-  uevent::ConnectionUeventPtr target_conn = conn_it->second;
-  auto* loop = target_conn->GetLoop();
-  if (!loop) {
-    LOG_ERROR << "[SendIdlePartitions] loop is nullptr for device_id "
-              << device_id;
-    return;
-  }
-
-  auto* handle = reinterpret_cast<ProxySvrHandle*>(loop->GetLoopHandle());
-  if (!handle) {
-    LOG_ERROR << "[SendIdlePartitions] handle is nullptr for device_id "
-              << device_id;
-    return;
-  }
+           << " IDLE partitions to devices";
 
   // Send each IDLE partition
   for (const auto& part_info : idle_partitions) {
     LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
-              << " (oid=" << part_info->oid << ") to device_id " << device_id;
+              << " (oid=" << part_info->oid << ") to devices";
+    auto& target_conn = device_conn_[part_info->owner_device_id];
+    auto* loop = target_conn->GetLoop();
+    auto* handle = reinterpret_cast<ProxySvrHandle*>(loop->GetLoopHandle());
     loop->RunInLoop(bind(&ProxySvrHandle::SendInLoop, handle, target_conn,
                          part_info->partition));
   }
 
   LOG_INFO << "[SendIdlePartitions] Completed sending "
-           << idle_partitions.size() << " partitions to device_id "
-           << device_id;
+           << idle_partitions.size() << " partitions to devices";
 }
 
 void ProxySvrImpl::CheckFailedPartitions() {
