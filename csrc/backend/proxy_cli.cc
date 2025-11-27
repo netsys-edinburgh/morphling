@@ -112,7 +112,7 @@ void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 /********************************ProxyCliImpl****************************************/
 
 ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx)
-    : ctx_(ctx), connector_(nullptr), cached_tensors_(5ull * GB) {}
+    : ctx_(ctx), connector_(nullptr), cached_tensors_(2ull * GB) {}
 
 void ProxyCliImpl::Initialize(UeventLoop* loop) {
   UsockAddress addr(ctx_.listen_ip, ctx_.listen_port);

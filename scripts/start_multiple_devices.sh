@@ -1,16 +1,16 @@
 #!/bin/bash
 
 # Batch device launch script
-# Usage: ./start_multiple_devices.sh <num_devices> [interval_seconds] [device_id_start]
+# Usage: ./start_multiple_devices.sh <num_devices> [interval_seconds] [batch_size]
 #
 # Examples:
-#   ./start_multiple_devices.sh 4           # Start 4 devices with default 5s interval, starting from device 0
+#   ./start_multiple_devices.sh 4           # Start 4 devices with default 5s interval
 #   ./start_multiple_devices.sh 4 3         # Start 4 devices with 3s interval
-#   ./start_multiple_devices.sh 4 2 10      # Start 4 devices with 2s interval, starting from device 10
+#   ./start_multiple_devices.sh 8 5 2       # Start 8 devices in batches of 2, with 5s interval between batches
 
 NUM_DEVICES=${1:-4}           # Default: 4 devices
 INTERVAL=${2:-5}              # Default: 5 seconds between launches
-START_ID=${3:-0}              # Default: start from device 0
+BATCH_SIZE=${3:-1}            # Default: 1 device per batch (original sequential behavior)
 
 # Validate input
 if ! [[ "$NUM_DEVICES" =~ ^[0-9]+$ ]] || [ "$NUM_DEVICES" -lt 1 ]; then
@@ -23,22 +23,29 @@ if ! [[ "$INTERVAL" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-if ! [[ "$START_ID" =~ ^[0-9]+$ ]]; then
-    echo "Error: START_ID must be a non-negative integer"
+if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ]; then
+    echo "Error: BATCH_SIZE must be a positive integer"
     exit 1
 fi
 
 echo "Starting $NUM_DEVICES device(s)..."
 echo "Interval: ${INTERVAL}s"
-echo "Starting device ID: $START_ID"
+echo "Batch size: $BATCH_SIZE"
 echo ""
 
 # Array to store PIDs of launched devices
 pids=()
 
-# Launch devices in a loop
+# Launch devices in batches
+batch_num=0
 for i in $(seq 0 $((NUM_DEVICES - 1))); do
-    DEVICE_ID=$((START_ID + i))
+    DEVICE_ID=$i
+    current_batch=$((i / BATCH_SIZE))
+    
+    # Print batch info at the start of each batch
+    if [ $((i % BATCH_SIZE)) -eq 0 ]; then
+        echo "[$(date '+%H:%M:%S')] Launching batch $((current_batch + 1)) (devices $DEVICE_ID to $((i + BATCH_SIZE - 1)))..."
+    fi
     
     echo "[$(date '+%H:%M:%S')] Launching device $DEVICE_ID..."
     
@@ -57,9 +64,9 @@ for i in $(seq 0 $((NUM_DEVICES - 1))); do
     # Save the PID
     pids+=($!)
     
-    # Wait before launching the next device (except after the last one)
-    if [ $i -lt $((NUM_DEVICES - 1)) ]; then
-        echo "Waiting ${INTERVAL}s before launching next device..."
+    # Wait before launching the next batch (not after individual devices)
+    if [ $((((i + 1) % BATCH_SIZE))) -eq 0 ] && [ $((i + 1)) -lt $NUM_DEVICES ]; then
+        echo "Batch complete. Waiting ${INTERVAL}s before launching next batch..."
         sleep "$INTERVAL"
     fi
 done
