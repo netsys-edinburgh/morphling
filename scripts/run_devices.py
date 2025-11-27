@@ -188,8 +188,7 @@ if __name__ == "__main__":
             str(device_args.ul_lat[i]),
             str(device_args.dl_lat[i]),
             model_args.backend,
-            model_args.redis_host,  # Pass redis_host as the 9th parameter
-            getattr(model_args, 'proxy_host', ''),  # Pass proxy_host as the 10th parameter (optional)
+            getattr(model_args, 'proxy_host', ''),  # Pass proxy_host as parameter
         ]
         # print("Running device", command)
         os.system(" ".join(command))

@@ -6,7 +6,6 @@ import time
 import uuid
 from argparse import REMAINDER, ArgumentParser
 
-import redis
 
 from morphling.common import bytes2human, human2bytes
 
@@ -51,13 +50,6 @@ def main():
         "--dl_lat",
         type=float,
         help="The downlink latency of the device",
-    )
-
-    parser.add_argument(
-        "--redis_host",
-        type=str,
-        default="morphling-redis:6379",
-        help="The host and port of the redis server",
     )
 
     parser.add_argument(
@@ -109,10 +101,6 @@ def main():
 
     os.environ["MORPHLING_PIN_SIZE"] = str(args.memory)
 
-    # connect to redis
-    host, port = args.redis_host.split(":")
-    redis_connector = redis.Redis(host=host, port=port)
-
     # device_uuid = str(uuid.uuid4())
     device_info = {
         "id": args.id,
@@ -128,15 +116,8 @@ def main():
     # FIXME: subject to change as we do not trust the device to do its own measurement
     # 1. latency and bandwidth are measured by the server
     # 2. server send random number matrix multiplication tasks to the device to measure flops, results needs to be matched.
-
-    # device reconnect is considered new device
-    print(f"Registering device {args.id} with info {device_info}", flush=True)
-    redis_connector.hmset(args.id, mapping=device_info)
-    # redis_connector.expire(args.id, 120)
-
-    # use threading to timer to refresh ttl
-    # threading.Timer(5, lambda: redis_connector.expire("devices", 5)).start()
-
+    
+    print(f"Initializing device {args.id} with info {device_info}", flush=True)
     if args.emulation:
         # enable interception of torch.mm
         print("Enabling interception of torch.mm")

@@ -15,5 +15,4 @@ morphling_device \
   --dl_lat 10 \
   --backend proxy \
   --cfg config/proxy/cli.ini \
-  --redis_host 128.110.220.77:6379 \
-  --proxy_host 128.110.220.77:39000
+  --proxy_host 155.98.37.203:39000
