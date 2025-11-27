@@ -62,11 +62,11 @@ include_directories($ENV{HOME})
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
 
-FetchContent_Declare(
-  gflags
-  GIT_REPOSITORY https://github.com/gflags/gflags.git
-  GIT_TAG v2.2.2
-)
+# FetchContent_Declare(
+#   gflags
+#   GIT_REPOSITORY https://github.com/gflags/gflags.git
+#   GIT_TAG v2.2.2
+# )
 
 # FetchContent_Declare(
 # glog
@@ -74,43 +74,39 @@ FetchContent_Declare(
 # GIT_TAG v0.6.0
 # )
 
-FetchContent_Declare(
-  rapidjson
-  GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
-  GIT_TAG v1.1.0
-)
+# FetchContent_Declare(
+#   rapidjson
+#   GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
+#   GIT_TAG v1.1.0
+# )
 
-
-FetchContent_Declare(
-  rabbitmq
-  GIT_REPOSITORY https://github.com/alanxz/rabbitmq-c.git
-  GIT_TAG v0.14.0
-)
-FetchContent_Declare(
-  mosquitto
-  GIT_REPOSITORY https://github.com/eclipse-mosquitto/mosquitto.git
-  GIT_TAG v2.0.20
-)
-FetchContent_Declare(
-  tcmalloc
-  GIT_REPOSITORY https://github.com/google/tcmalloc.git
-)
+# Use system-installed rabbitmq-c and mosquitto instead of fetching
+# FetchContent_Declare(
+#   rabbitmq
+#   GIT_REPOSITORY https://github.com/alanxz/rabbitmq-c.git
+#   GIT_TAG v0.14.0
+# )
+# FetchContent_Declare(
+#   mosquitto
+#   GIT_REPOSITORY https://github.com/eclipse-mosquitto/mosquitto.git
+#   GIT_TAG v2.0.20
+# )
+# FetchContent_MakeAvailable(rabbitmq mosquitto)
+# FetchContent_Declare(
+#   tcmalloc
+#   GIT_REPOSITORY https://github.com/google/tcmalloc.git
+# )
 # FetchContent_Declare(
 #   hiredis
 #   GIT_REPOSITORY https://github.com/redis/hiredis.git
 #   GIT_TAG v1.1.0
 # )
-FetchContent_Declare(
-  redis
-  GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
-  GIT_TAG 1.3.13
-)
-FetchContent_MakeAvailable(rapidjson gflags rabbitmq mosquitto redis tcmalloc)
-
-# if(NOT rabbitmq_POPULATED)
-#     FetchContent_Populate(rabbitmq)
-#     add_subdirectory(${rabbitmq_SOURCE_DIR} ${rabbitmq_BINARY_DIR})
-# endif()
+# Use system-installed redis-plus-plus instead of fetching
+# FetchContent_Declare(
+#   redis
+#   GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
+#   GIT_TAG 1.3.13
+# )
 
 # Use system-installed protobuf
 find_package(Protobuf REQUIRED)
@@ -268,12 +264,13 @@ include_directories(
   ${CONDA_PREFIX_PATH}/include
   ${absl_SOURCE_DIR}
   ${protobuf_SOURCE_DIR}/src
-  ${rabbitmq_SOURCE_DIR}/include
+  /usr/local/include
 )
 
 link_directories(
   ${CONDA_PREFIX_PATH}/lib
   $ENV{HOME}/hiredis
+  /usr/local/lib
 )
 
 file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
@@ -407,7 +404,7 @@ set(MORPHLING_MSG_SRC
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
-  rabbitmq libmosquitto
+  rabbitmq mosquitto
   ${Protobuf_LIBRARIES}
   redis++
   hiredis

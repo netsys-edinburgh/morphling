@@ -28,6 +28,7 @@ RUN apt-get install -y \
     # CMake和编译工具
     cmake \
     ninja-build \
+    ccache \
     # Python 3.10 相关
     python3.10 \
     python3.10-dev \
@@ -58,11 +59,8 @@ RUN apt-get install -y \
     iputils-ping \
     lsof \
     net-tools \
-    librabbitmq-dev \
     libmosquitto-dev \
     libhiredis-dev \
-
-
     # 清理缓存
     && rm -rf /var/lib/apt/lists/*
 
@@ -72,11 +70,22 @@ RUN apt-get update \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
-# 编译安装 redis-plus-plus
+# Compile and install rabbitmq-c from source (v0.14.0)
+RUN git clone --depth=1 -b v0.14.0 https://github.com/alanxz/rabbitmq-c.git /tmp/rabbitmq-c && \
+    cd /tmp/rabbitmq-c && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=OFF \
+          -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TOOLS=OFF \
+          -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" .. && \
+    make -j && make install && \
+    ldconfig && \
+    rm -rf /tmp/rabbitmq-c
+
+# 编译安装 redis-plus-plus with _GLIBCXX_USE_CXX11_ABI=0 for torch compatibility
 RUN git clone --depth=1 https://github.com/sewenew/redis-plus-plus.git /tmp/redis-plus-plus && \
     cd /tmp/redis-plus-plus && \
     mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release .. && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" .. && \
     make -j && make install && \
     ldconfig && \
     rm -rf /tmp/redis-plus-plus
@@ -133,13 +142,6 @@ RUN git clone -b ${PROTOBUF_VER} https://github.com/protocolbuffers/protobuf.git
     rm -rf /tmp/protobuf
 
 
-# 复制项目文件
-COPY . /app/
-
-# 构建和安装项目（使用系统 python）
-# 先设置CMake环境变量来帮助找到Python库
-ENV CMAKE_PREFIX_PATH="/usr/lib/x86_64-linux-gnu/cmake:$CMAKE_PREFIX_PATH"
-
 # 构建前创建 libpython3.10.12.so 的软链接，解决 ld 找不到该库的问题
 RUN if [ -f /usr/lib/x86_64-linux-gnu/libpython3.10.so.1.0 ]; then \
     ln -sf /usr/lib/x86_64-linux-gnu/libpython3.10.so.1.0 /usr/lib/x86_64-linux-gnu/libpython3.10.12.so; \
@@ -147,23 +149,30 @@ RUN if [ -f /usr/lib/x86_64-linux-gnu/libpython3.10.so.1.0 ]; then \
 fi && \
 ls -la /usr/lib/x86_64-linux-gnu/libpython3.10* || echo "Warning: No libpython3.10 found"
 
-# # 安装 RTTR (librttr) v0.9.6 from GitHub
-# RUN git clone --branch v0.9.6 --depth=1 https://github.com/rttrorg/rttr.git /tmp/rttr && \
-#     mkdir -p /tmp/rttr/build && cd /tmp/rttr/build && \
-#     cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=OFF -DBUILD_UNIT_TESTS=OFF -DBUILD_DOCUMENTATION=OFF -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
-#     make -j && make install && \
-#     rm -rf /tmp/rttr
-# 临时修复CMakeLists.txt以启用Python Development包查找
-# RUN sed -i 's/# find_package(Python COMPONENTS Development REQUIRED)/find_package(Python COMPONENTS Development REQUIRED)/' /app/CMakeLists.txt
+# Copy CMake files first to leverage Docker layer caching
+COPY CMakeLists.txt /app/
+COPY cmake/ /app/cmake/
 
-RUN export Python3_ROOT_DIR=/usr && \
+# Copy the rest of the project files
+COPY . /app/
+
+# 构建和安装项目（使用系统 python）with BuildKit cache mounts
+# Cache mounts persist across builds: CMake deps in /app/build/_deps, ccache in /ccache
+RUN --mount=type=cache,target=/app/build/_deps \
+    --mount=type=cache,target=/ccache \
+    --mount=type=cache,target=/root/.cache/cmake \
+    export CCACHE_DIR=/ccache && \
+    export CCACHE_MAXSIZE=5G && \
+    export Python3_ROOT_DIR=/usr && \
     export Python3_EXECUTABLE=/usr/bin/python3.10 && \
     export MORPHLING_PYTHON_EXECUTABLE=/usr/bin/python3.10 && \
     export LDFLAGS="-L/usr/lib/x86_64-linux-gnu" && \
     export CPPFLAGS="-I/usr/include/python3.10" && \
-    export CMAKE_ARGS="-DPython3_EXECUTABLE=/usr/bin/python3.10 -DPython3_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so -DPython3_INCLUDE_DIR=/usr/include/python3.10 -DCMAKE_PREFIX_PATH=/usr" && \
-    echo "=== 开始构建 ===" && \
-    uv pip install --system --no-build-isolation --no-cache --verbose .
+    export CMAKE_ARGS="-DPython3_EXECUTABLE=/usr/bin/python3.10 -DPython3_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so -DPython3_INCLUDE_DIR=/usr/include/python3.10 -DCMAKE_PREFIX_PATH=/usr -DFETCHCONTENT_BASE_DIR=/app/build/_deps -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache" && \
+    echo "=== 开始构建 (with cache mounts) ===" && \
+    uv pip install --system --no-build-isolation --no-cache --verbose . && \
+    echo "=== Build complete ===" && \
+    (ccache -s || echo "ccache stats not available")
 
 
 # 创建必要的目录
