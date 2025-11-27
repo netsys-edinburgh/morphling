@@ -14,6 +14,7 @@
 #include "network/uevent.h"
 #include "network/ueventloop_thread.h"
 #include "server_base.h"
+#include "device_tracker.h"
 
 struct BatchSendRecv {
   size_t sent;

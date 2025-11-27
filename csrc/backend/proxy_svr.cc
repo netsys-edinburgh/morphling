@@ -131,12 +131,28 @@ void ProxySvrHandle::HandleMatMul(const void* payload, size_t size) {
 void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
                                 const MatrixPartitionPtr partition) {
   string client_addr = conn->GetPeerAddress().ToString();
-  task_queue_.push_back([this, conn, partition, client_addr]() {
+  auto* handle = this;  // Capture this pointer for use in lambda
+  task_queue_.push_back([handle, conn, partition, client_addr]() {
     // Use protobuf serialization instead of binary
     auto [data, size] = partition->SerializeToProto();
     conn->SendData(data, size);
+    
+    // Record bytes sent (download/uplink to device)
+    DEVICE_TRACKER.RecordBytesSent(partition->dev_id, size);
+    
+    // Print real-time throughput
+    double upload_tp = DEVICE_TRACKER.GetUploadThroughput(partition->dev_id);
+    double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition->dev_id);
+    double total_tp = DEVICE_TRACKER.GetTotalThroughput(partition->dev_id);
+    
+    LOG_INFO << "[SendInLoop] Device " << partition->dev_id 
+             << " - Sent: " << size << " bytes"
+             << ", Upload: " << upload_tp << " B/s"
+             << ", Download: " << download_tp << " B/s"
+             << ", Total: " << total_tp << " B/s";
+    
     free(data);
-    conn_inflight_[client_addr] += 1;
+    handle->conn_inflight_[client_addr] += 1;
   });
 
   if (conn_inflight_[client_addr] >= ctx_.max_inflight) {
@@ -227,6 +243,8 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
     device_id = it->second;
     LOG_INFO << "[ConnectionSuccessCb] Reconnection from " << conn_addr 
              << ", reusing device_id=" << device_id;
+    // Update device state in tracker
+    DEVICE_TRACKER.UpdateDeviceLastSeen(device_id);
   } else {
     // New connection: assign a new persistent device_id
     device_id = next_device_id_;
@@ -234,6 +252,8 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
     conn_addr_to_device_id_[conn_addr] = device_id;
     LOG_INFO << "[ConnectionSuccessCb] New connection from " << conn_addr 
              << ", assigned device_id=" << device_id;
+    // Register device in tracker for throughput monitoring
+    DEVICE_TRACKER.RegisterDevice(conn_addr);
   }
   
   conn_map_[conn_addr] = conn;
@@ -287,6 +307,11 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   // Step 2: Remove connection from map and device_id mapping
   conn_map_.erase(conn_addr);
   conn_addr_to_device_id_.erase(conn_addr);
+  
+  // Unregister device from tracker
+  if (device_id != -1) {
+    DEVICE_TRACKER.UnregisterDevice(device_id);
+  }
 
   LOG_INFO << "[ConnectionClosedCb] Connection removed. Remaining connections: "
            << conn_map_.size();
