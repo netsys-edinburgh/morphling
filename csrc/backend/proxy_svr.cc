@@ -5,6 +5,7 @@
 #include "base/my_uuid.h"
 #include "common/generator.h"
 #include "common/stats.h"
+#include "device_tracker.h"
 #include "network/eventloop_libevent.h"
 #include "network/listener_libevent.h"
 #include "utils/logging.h"
@@ -70,8 +71,25 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
       return;
     }
 
+    // Record bytes received before processing (from device upload)
+    // We need to peek at the partition to get device_id
+    MatrixPartition temp_partition;
+    temp_partition.DeserializeFromProto(raw_data, datasize);
+    DEVICE_TRACKER.RecordBytesReceived(temp_partition.dev_id, datasize);
+
     HandleMatMul(raw_data, datasize);
     conn_inflight_[conn->GetPeerAddress().ToString()] -= 1;
+
+    // Log download throughput after receiving data from device
+    double download_tp = DEVICE_TRACKER.GetDownloadThroughput(temp_partition.dev_id);
+    double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(temp_partition.dev_id);
+    double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(temp_partition.dev_id);
+    
+    LOG_INFO << "[RequestCb] Device " << temp_partition.dev_id 
+             << " - Received: " << datasize << " bytes"
+             << ", Download TP: " << download_tp << " B/s"
+             << ", Last Packet TP: " << last_packet_tp << " B/s"
+             << ", Avg Packet TP: " << avg_packet_tp << " B/s";
 
     if (!task_queue_.empty()) {
       auto task = task_queue_.front();
@@ -137,19 +155,8 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
     auto [data, size] = partition->SerializeToProto();
     conn->SendData(data, size);
     
-    // Record bytes sent (download/uplink to device)
+    // Record bytes sent (upload to device)
     DEVICE_TRACKER.RecordBytesSent(partition->dev_id, size);
-    
-    // Print real-time throughput
-    double upload_tp = DEVICE_TRACKER.GetUploadThroughput(partition->dev_id);
-    double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition->dev_id);
-    double total_tp = DEVICE_TRACKER.GetTotalThroughput(partition->dev_id);
-    
-    LOG_INFO << "[SendInLoop] Device " << partition->dev_id 
-             << " - Sent: " << size << " bytes"
-             << ", Upload: " << upload_tp << " B/s"
-             << ", Download: " << download_tp << " B/s"
-             << ", Total: " << total_tp << " B/s";
     
     free(data);
     handle->conn_inflight_[client_addr] += 1;

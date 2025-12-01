@@ -203,7 +203,18 @@ void DevicePartitionTracker::RecordBytesSent(int64_t device_id,
 
   auto it = devices_map_.find(device_id);
   if (it != devices_map_.end()) {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - it->second->last_packet_time);
+    
+    // Calculate throughput for this packet: bytes / elapsed_time
+    double elapsed_seconds = (elapsed.count() == 0) ? 0.001 : (elapsed.count() / 1000.0);
+    it->second->last_packet_throughput = bytes / elapsed_seconds;
+    
     it->second->total_bytes_sent += bytes;
+    it->second->total_packets_sent++;
+    it->second->last_packet_time = now;
+    it->second->last_packet_size = bytes;
   }
 }
 
@@ -213,7 +224,18 @@ void DevicePartitionTracker::RecordBytesReceived(int64_t device_id,
 
   auto it = devices_map_.find(device_id);
   if (it != devices_map_.end()) {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - it->second->last_packet_time);
+    
+    // Calculate throughput for this packet: bytes / elapsed_time
+    double elapsed_seconds = (elapsed.count() == 0) ? 0.001 : (elapsed.count() / 1000.0);
+    it->second->last_packet_throughput = bytes / elapsed_seconds;
+    
     it->second->total_bytes_received += bytes;
+    it->second->total_packets_received++;
+    it->second->last_packet_time = now;
+    it->second->last_packet_size = bytes;
   }
 }
 
@@ -261,8 +283,45 @@ double DevicePartitionTracker::GetDownloadThroughput(int64_t device_id) const {
   return throughput;
 }
 
-double DevicePartitionTracker::GetTotalThroughput(int64_t device_id) const {
-  return GetUploadThroughput(device_id) + GetDownloadThroughput(device_id);
+
+double DevicePartitionTracker::GetLastPacketThroughput(int64_t device_id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  auto it = devices_map_.find(device_id);
+  if (it == devices_map_.end()) {
+    return 0.0;
+  }
+
+  return it->second->last_packet_throughput;
+}
+
+double DevicePartitionTracker::GetAveragePacketThroughput(int64_t device_id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  auto it = devices_map_.find(device_id);
+  if (it == devices_map_.end()) {
+    return 0.0;
+  }
+
+  auto now = std::chrono::steady_clock::now();
+  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      now - it->second->stats_start_time);
+  
+  if (elapsed.count() == 0) {
+    return 0.0;
+  }
+
+  uint64_t total_packets = it->second->total_packets_sent + it->second->total_packets_received;
+  if (total_packets == 0) {
+    return 0.0;
+  }
+
+  // Calculate average throughput: total_bytes / elapsed_time
+  // This is the same as overall throughput but normalized by packet count for understanding
+  double elapsed_seconds = elapsed.count() / 1000.0;
+  uint64_t total_bytes = it->second->total_bytes_sent + it->second->total_bytes_received;
+  double throughput = total_bytes / elapsed_seconds;
+  return throughput;
 }
 
 std::string DevicePartitionTracker::DebugString() const {

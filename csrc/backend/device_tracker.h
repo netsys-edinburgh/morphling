@@ -20,13 +20,27 @@ struct DeviceLiveness {
   std::chrono::steady_clock::time_point stats_start_time;  // Time when stats recording started
   uint64_t total_bytes_sent;
   uint64_t total_bytes_received;
+  
+  // Per-packet throughput tracking
+  std::chrono::steady_clock::time_point last_packet_time;  // Time of last packet
+  uint64_t last_packet_size;  // Size of last packet
+  double last_packet_throughput;  // Throughput of last packet (B/s)
+  
+  // Package count
+  uint64_t total_packets_sent;
+  uint64_t total_packets_received;
 
   DeviceLiveness()
       : device_id(-1),
         is_connected(false),
         total_bytes_sent(0),
         total_bytes_received(0),
-        stats_start_time(std::chrono::steady_clock::now()) {}
+        stats_start_time(std::chrono::steady_clock::now()),
+        last_packet_time(std::chrono::steady_clock::now()),
+        last_packet_size(0),
+        last_packet_throughput(0.0),
+        total_packets_sent(0),
+        total_packets_received(0) {}
 
   std::string DebugString() const;
 };
@@ -67,7 +81,8 @@ class DevicePartitionTracker {
   // Throughput calculation (bytes per second)
   double GetUploadThroughput(int64_t device_id) const;
   double GetDownloadThroughput(int64_t device_id) const;
-  double GetTotalThroughput(int64_t device_id) const;
+  double GetLastPacketThroughput(int64_t device_id) const;  // Throughput of last packet
+  double GetAveragePacketThroughput(int64_t device_id) const;  // Average throughput across all packets
 
   // Debug and monitoring
   std::string DebugString() const;

@@ -6,6 +6,7 @@
 #include "common/generator.h"
 #include "common/pytorch_defs.h"
 #include "common/stats.h"
+#include "device_tracker.h"
 #include "network/eventloop_libevent.h"
 #include "network/ueventloop_thread_pool.h"
 #include "utils/logging.h"
@@ -50,6 +51,20 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
 
   auto [data, size] = partition.SerializeToProto();
   conn->SendData(data, size);
+
+  // Record bytes sent (upload response back to server)
+  DEVICE_TRACKER.RecordBytesSent(partition.dev_id, size);
+  
+  // Log upload throughput after sending response
+  double upload_tp = DEVICE_TRACKER.GetUploadThroughput(partition.dev_id);
+  double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
+  double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+  
+  LOG_INFO << "[ResponseToCaller] Device " << partition.dev_id 
+           << " - Sent: " << size << " bytes"
+           << ", Upload TP: " << upload_tp << " B/s"
+           << ", Last Packet TP: " << last_packet_tp << " B/s"
+           << ", Avg Packet TP: " << avg_packet_tp << " B/s";
 
   // LOG_DEBUG << "Response sent to " << client_addr;
   free(data);
@@ -102,11 +117,20 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
 void ProxyCliHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   string client_addr = conn->GetPeerAddress().ToString();
   LOG_INFO << "connected to " << client_addr;
+  
+  // Register device in tracker for throughput monitoring
+  DEVICE_TRACKER.RegisterDevice(client_addr);
 }
 
 void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   string client_addr = conn->GetPeerAddress().ToString();
   LOG_INFO << "disconnected to " << client_addr;
+  
+  // Unregister device from tracker
+  int64_t device_id = DEVICE_TRACKER.GetDeviceIdByAddr(client_addr);
+  if (device_id != -1) {
+    DEVICE_TRACKER.UnregisterDevice(device_id);
+  }
 }
 
 /********************************ProxyCliImpl****************************************/
@@ -197,6 +221,21 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
     }
 
     auto partition = DecodeRequest(raw_data, datasize);
+    
+    // Record bytes received (download request from server)
+    DEVICE_TRACKER.RecordBytesReceived(partition.dev_id, datasize);
+    
+    // Log download throughput after receiving request
+    double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition.dev_id);
+    double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
+    double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+    
+    LOG_INFO << "[RequestCb] Device " << partition.dev_id 
+             << " - Received: " << datasize << " bytes"
+             << ", Download TP: " << download_tp << " B/s"
+             << ", Last Packet TP: " << last_packet_tp << " B/s"
+             << ", Avg Packet TP: " << avg_packet_tp << " B/s";
+    
     HandleMatMul(conn, partition);
     LOG_DEBUG << "Processed partition: " << partition.DebugString();
   }
