@@ -72,6 +72,10 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
            << ", Avg Packet TP: " << avg_packet_tp << " B/s"
            << " | Server Total TP: " << server_tp << " B/s";
 
+  // Log throughput to file
+  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, "UPLOAD",
+                                     size, upload_tp, start_us, end_us);
+
   // LOG_DEBUG << "Response sent to " << client_addr;
   free(data);
   // LOG_DEBUG << "Free data";
@@ -157,6 +161,10 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
 
   LOG_DEBUG << "ProxyCliImpl connected to:" << ctx_.listen_ip << ":"
             << ctx_.listen_port;
+
+  // Initialize performance logging
+  DEVICE_TRACKER.InitPerfLog("./perf.log");
+  LOG_INFO << "[ProxyCliImpl::Initialize] Performance logging initialized at ./perf.log";
 
   // InitLogger();
   // CUDA context warmup and do random matmul (skip if no CUDA available)
@@ -247,6 +255,10 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
              << ", Last Packet TP: " << last_packet_tp << " B/s"
              << ", Avg Packet TP: " << avg_packet_tp << " B/s"
              << " | Server Total TP: " << server_tp << " B/s";
+    
+    // Log throughput to file
+    DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, "DOWNLOAD",
+                                       datasize, download_tp, start_us, end_us);
     
     HandleMatMul(conn, partition);
     LOG_DEBUG << "Processed partition: " << partition.DebugString();

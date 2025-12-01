@@ -102,6 +102,13 @@ class DevicePartitionTracker {
   std::string DebugString() const;
   void DumpState() const;
 
+  // Performance logging to file
+  void LogThroughputToFile(int64_t device_id, const std::string& direction, 
+                           uint64_t bytes, double throughput, 
+                           uint64_t epoch_start_us, uint64_t epoch_end_us) const;
+  void InitPerfLog(const std::string& log_path = "./perf.log");
+  std::string GetPerfLogPath() const;
+
   // Clear all state (for testing)
   void Reset();
 
@@ -114,6 +121,7 @@ class DevicePartitionTracker {
 
   // State
   mutable std::mutex mutex_;
+  mutable std::mutex perf_log_mutex_;
 
   // Device liveness and ID management
   std::unordered_map<int64_t, DeviceLivenessPtr> devices_map_;
@@ -121,6 +129,9 @@ class DevicePartitionTracker {
   int64_t next_device_id_;
   std::unordered_map<std::string, int64_t> addr_to_device_id_;
   std::unordered_map<int64_t, std::string> device_id_to_addr_;
+  
+  // Performance log file path
+  std::string perf_log_path_;
 };
 
 // Convenient macro for accessing the DevicePartitionTracker singleton

@@ -97,6 +97,10 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
              << ", Avg Packet TP: " << avg_packet_tp << " B/s"
              << " | Server Total TP: " << server_tp << " B/s";
 
+    // Log throughput to file
+    DEVICE_TRACKER.LogThroughputToFile(temp_partition.dev_id, "DOWNLOAD",
+                                       datasize, download_tp, start_us, end_us);
+
     if (!task_queue_.empty()) {
       auto task = task_queue_.front();
       task_queue_.pop_front();
@@ -200,6 +204,10 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
            << ", listen_port=" << ctx_.listen_port;
   LOG_INFO << "[ProxySvrImpl::Initialize] Config - num_device="
            << ctx_.num_device << ", thread=" << ctx_.thread;
+
+  // Initialize performance logging
+  DEVICE_TRACKER.InitPerfLog("./perf.log");
+  LOG_INFO << "[ProxySvrImpl::Initialize] Performance logging initialized at ./perf.log";
 
   auto create_handle_cb = bind(ProxySvrHandle::CreateMyself, ref(ctx_), _1);
   UsockAddress addr(ctx_.listen_ip, ctx_.listen_port);

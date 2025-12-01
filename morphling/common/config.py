@@ -217,7 +217,7 @@ class EnhancedJSONEncoder(json.JSONEncoder):
 @dataclass
 class EmulatorConfig:
     gpu_memory: int = field(
-        default=10,
+        default=5,
         metadata={"help": "an integer in GB"},
     )
     cpu_memory: int = field(

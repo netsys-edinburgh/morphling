@@ -1,5 +1,7 @@
 #include "device_tracker.h"
 
+#include <fstream>
+#include <iomanip>
 #include <sstream>
 
 #include "base/logging.h"
@@ -382,33 +384,13 @@ double DevicePartitionTracker::GetServerAggregatedThroughput() const {
     return 0.0;
   }
 
-  // Find the earliest stats_start_time and use now
-  auto earliest_start = std::chrono::steady_clock::now();
-  bool found = false;
-  
+  // Sum up the last packet throughput from all devices
+  double total_server_tp = 0.0;
   for (const auto& [_, liveness] : devices_map_) {
-    if (!found || liveness->stats_start_time < earliest_start) {
-      earliest_start = liveness->stats_start_time;
-      found = true;
-    }
+    total_server_tp += liveness->last_packet_throughput;
   }
 
-  auto now = std::chrono::steady_clock::now();
-  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-      now - earliest_start);
-  
-  if (elapsed.count() == 0) {
-    return 0.0;
-  }
-
-  // Calculate total bytes across all devices
-  uint64_t total_bytes = 0;
-  for (const auto& [_, liveness] : devices_map_) {
-    total_bytes += liveness->total_bytes_sent + liveness->total_bytes_received;
-  }
-
-  double elapsed_seconds = elapsed.count() / 1000.0;
-  return total_bytes / elapsed_seconds;
+  return total_server_tp;
 }
 
 std::string DevicePartitionTracker::DebugString() const {
@@ -446,6 +428,64 @@ void DevicePartitionTracker::Reset() {
   addr_to_device_id_.clear();
   device_id_to_addr_.clear();
   devices_map_.clear();
+}
+
+void DevicePartitionTracker::InitPerfLog(const std::string& log_path) {
+  std::lock_guard<std::mutex> lock(perf_log_mutex_);
+  perf_log_path_ = log_path;
+  
+  // Create header for the log file
+  std::ofstream log_file(perf_log_path_, std::ios::out | std::ios::trunc);
+  if (log_file.is_open()) {
+    // CSV header format
+    log_file << "timestamp_us,device_id,direction,bytes,throughput_b_s,"
+             << "epoch_start_us,epoch_end_us,packet_duration_us\n";
+    log_file.close();
+    LOG_INFO << "[DeviceTracker] Performance log initialized at: " << log_path;
+  } else {
+    LOG_WARN << "[DeviceTracker] Failed to create performance log file: " << log_path;
+  }
+}
+
+std::string DevicePartitionTracker::GetPerfLogPath() const {
+  std::lock_guard<std::mutex> lock(perf_log_mutex_);
+  return perf_log_path_;
+}
+
+void DevicePartitionTracker::LogThroughputToFile(int64_t device_id, 
+                                                  const std::string& direction,
+                                                  uint64_t bytes, 
+                                                  double throughput,
+                                                  uint64_t epoch_start_us, 
+                                                  uint64_t epoch_end_us) const {
+  if (perf_log_path_.empty()) {
+    return;  // Log file not initialized
+  }
+
+  std::lock_guard<std::mutex> lock(perf_log_mutex_);
+  
+  // Get current timestamp
+  auto now = std::chrono::system_clock::now();
+  uint64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+      now.time_since_epoch()).count();
+  
+  // Calculate packet duration
+  uint64_t packet_duration_us = (epoch_end_us > epoch_start_us) ? 
+      (epoch_end_us - epoch_start_us) : 0;
+  
+  // Append to log file in CSV format
+  std::ofstream log_file(perf_log_path_, std::ios::app);
+  if (log_file.is_open()) {
+    log_file << now_us << "," 
+             << device_id << "," 
+             << direction << "," 
+             << bytes << "," 
+             << std::fixed << std::setprecision(2) << throughput << ","
+             << epoch_start_us << "," 
+             << epoch_end_us << "," 
+             << packet_duration_us << "\n";
+    log_file.close();
+  }
 }
 
 }  // namespace backend
