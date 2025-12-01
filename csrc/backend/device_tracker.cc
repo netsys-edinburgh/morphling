@@ -211,6 +211,14 @@ void DevicePartitionTracker::RecordBytesSent(int64_t device_id,
     double elapsed_seconds = (elapsed.count() == 0) ? 0.001 : (elapsed.count() / 1000.0);
     it->second->last_packet_throughput = bytes / elapsed_seconds;
     
+    // Record epoch timestamps (microseconds since epoch)
+    auto now_epoch = std::chrono::system_clock::now();
+    uint64_t current_epoch_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        now_epoch.time_since_epoch()).count();
+    
+    it->second->last_packet_start_epoch_us = it->second->last_packet_end_epoch_us;
+    it->second->last_packet_end_epoch_us = current_epoch_us;
+    
     it->second->total_bytes_sent += bytes;
     it->second->total_packets_sent++;
     it->second->last_packet_time = now;
@@ -231,6 +239,14 @@ void DevicePartitionTracker::RecordBytesReceived(int64_t device_id,
     // Calculate throughput for this packet: bytes / elapsed_time
     double elapsed_seconds = (elapsed.count() == 0) ? 0.001 : (elapsed.count() / 1000.0);
     it->second->last_packet_throughput = bytes / elapsed_seconds;
+    
+    // Record epoch timestamps (microseconds since epoch)
+    auto now_epoch = std::chrono::system_clock::now();
+    uint64_t current_epoch_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        now_epoch.time_since_epoch()).count();
+    
+    it->second->last_packet_start_epoch_us = it->second->last_packet_end_epoch_us;
+    it->second->last_packet_end_epoch_us = current_epoch_us;
     
     it->second->total_bytes_received += bytes;
     it->second->total_packets_received++;
@@ -322,6 +338,77 @@ double DevicePartitionTracker::GetAveragePacketThroughput(int64_t device_id) con
   uint64_t total_bytes = it->second->total_bytes_sent + it->second->total_bytes_received;
   double throughput = total_bytes / elapsed_seconds;
   return throughput;
+}
+
+void DevicePartitionTracker::GetLastPacketEpochTimestamps(int64_t device_id, 
+                                                          uint64_t& start_us, 
+                                                          uint64_t& end_us) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  start_us = 0;
+  end_us = 0;
+  
+  auto it = devices_map_.find(device_id);
+  if (it != devices_map_.end()) {
+    start_us = it->second->last_packet_start_epoch_us;
+    end_us = it->second->last_packet_end_epoch_us;
+  }
+}
+
+uint64_t DevicePartitionTracker::GetServerTotalBytesSent() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  uint64_t total = 0;
+  for (const auto& [_, liveness] : devices_map_) {
+    total += liveness->total_bytes_sent;
+  }
+  return total;
+}
+
+uint64_t DevicePartitionTracker::GetServerTotalBytesReceived() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  uint64_t total = 0;
+  for (const auto& [_, liveness] : devices_map_) {
+    total += liveness->total_bytes_received;
+  }
+  return total;
+}
+
+double DevicePartitionTracker::GetServerAggregatedThroughput() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  if (devices_map_.empty()) {
+    return 0.0;
+  }
+
+  // Find the earliest stats_start_time and use now
+  auto earliest_start = std::chrono::steady_clock::now();
+  bool found = false;
+  
+  for (const auto& [_, liveness] : devices_map_) {
+    if (!found || liveness->stats_start_time < earliest_start) {
+      earliest_start = liveness->stats_start_time;
+      found = true;
+    }
+  }
+
+  auto now = std::chrono::steady_clock::now();
+  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      now - earliest_start);
+  
+  if (elapsed.count() == 0) {
+    return 0.0;
+  }
+
+  // Calculate total bytes across all devices
+  uint64_t total_bytes = 0;
+  for (const auto& [_, liveness] : devices_map_) {
+    total_bytes += liveness->total_bytes_sent + liveness->total_bytes_received;
+  }
+
+  double elapsed_seconds = elapsed.count() / 1000.0;
+  return total_bytes / elapsed_seconds;
 }
 
 std::string DevicePartitionTracker::DebugString() const {

@@ -59,12 +59,18 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
   double upload_tp = DEVICE_TRACKER.GetUploadThroughput(partition.dev_id);
   double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
   double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+  double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
+  
+  uint64_t start_us, end_us;
+  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us, end_us);
   
   LOG_INFO << "[ResponseToCaller] Device " << partition.dev_id 
            << " - Sent: " << size << " bytes"
+           << " [" << start_us << " -> " << end_us << " us]"
            << ", Upload TP: " << upload_tp << " B/s"
            << ", Last Packet TP: " << last_packet_tp << " B/s"
-           << ", Avg Packet TP: " << avg_packet_tp << " B/s";
+           << ", Avg Packet TP: " << avg_packet_tp << " B/s"
+           << " | Server Total TP: " << server_tp << " B/s";
 
   // LOG_DEBUG << "Response sent to " << client_addr;
   free(data);
@@ -229,12 +235,18 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
     double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition.dev_id);
     double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
     double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+    double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
+    
+    uint64_t start_us, end_us;
+    DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us, end_us);
     
     LOG_INFO << "[RequestCb] Device " << partition.dev_id 
              << " - Received: " << datasize << " bytes"
+             << " [" << start_us << " -> " << end_us << " us]"
              << ", Download TP: " << download_tp << " B/s"
              << ", Last Packet TP: " << last_packet_tp << " B/s"
-             << ", Avg Packet TP: " << avg_packet_tp << " B/s";
+             << ", Avg Packet TP: " << avg_packet_tp << " B/s"
+             << " | Server Total TP: " << server_tp << " B/s";
     
     HandleMatMul(conn, partition);
     LOG_DEBUG << "Processed partition: " << partition.DebugString();

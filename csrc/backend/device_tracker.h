@@ -29,6 +29,10 @@ struct DeviceLiveness {
   // Package count
   uint64_t total_packets_sent;
   uint64_t total_packets_received;
+  
+  // Epoch timestamps (microseconds)
+  uint64_t last_packet_start_epoch_us;  // When last packet started (us since epoch)
+  uint64_t last_packet_end_epoch_us;    // When last packet ended (us since epoch)
 
   DeviceLiveness()
       : device_id(-1),
@@ -40,7 +44,9 @@ struct DeviceLiveness {
         last_packet_size(0),
         last_packet_throughput(0.0),
         total_packets_sent(0),
-        total_packets_received(0) {}
+        total_packets_received(0),
+        last_packet_start_epoch_us(0),
+        last_packet_end_epoch_us(0) {}
 
   std::string DebugString() const;
 };
@@ -83,6 +89,14 @@ class DevicePartitionTracker {
   double GetDownloadThroughput(int64_t device_id) const;
   double GetLastPacketThroughput(int64_t device_id) const;  // Throughput of last packet
   double GetAveragePacketThroughput(int64_t device_id) const;  // Average throughput across all packets
+  
+  // Get packet epoch timestamps for a device
+  void GetLastPacketEpochTimestamps(int64_t device_id, uint64_t& start_us, uint64_t& end_us) const;
+  
+  // Server-level aggregated statistics
+  uint64_t GetServerTotalBytesSent() const;
+  uint64_t GetServerTotalBytesReceived() const;
+  double GetServerAggregatedThroughput() const;  // All bytes / total time for all connected devices
 
   // Debug and monitoring
   std::string DebugString() const;
