@@ -87,7 +87,7 @@ class ProxySvrHandle : public uevent::LoopHandle {
   std::unordered_map<std::string, bool> conn_handshake_complete_;
   std::mutex handshake_mutex_;
 
-  std::unordered_map<std::string, DeviceProfileData> device_info_;
+  // std::unordered_map<std::string, DeviceProfileData> device_info_;
 };
 
 class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
@@ -104,7 +104,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   void DecRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] += count; }
 
   // Connection and device queries - delegates to DevicePartitionTracker
-  size_t GetConnectionCount() const { return conn_map_.size(); }
+  // size_t GetConnectionCount() const { return conn_map_.size(); }
   size_t GetRegisteredDeviceCount() const {
     return DEVICE_TRACKER.GetConnectedDeviceCount();
   }
@@ -146,8 +146,10 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   uevent::UeventLoop* loop_;
   std::shared_ptr<uevent::ListenerUevent> listener_;
 
-  std::unordered_map<std::string, uevent::ConnectionUeventPtr> conn_map_;
-  std::unordered_map<int64_t, uevent::ConnectionUeventPtr> device_conn_;
+  // std::unordered_map<std::string, uevent::ConnectionUeventPtr> conn_map_;
+  // Note: Device connections by device_id are now managed by
+  // DevicePartitionTracker Access via
+  // DEVICE_TRACKER.SetDeviceConnection/GetDeviceConnection/RemoveDeviceConnection
   // Note: Device ID management is now handled by DevicePartitionTracker
   // singleton
 
@@ -209,7 +211,7 @@ class ProxySvr {
     svr_->DispatchMatMulAsync(mat_a, mat_b);
   }
   torch::Tensor WaitMatMul(int oid) { return svr_->WaitMatMul(oid); }
-  size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }
+  // size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }
   size_t GetRegisteredDeviceCount() const {
     return svr_->GetRegisteredDeviceCount();
   }
