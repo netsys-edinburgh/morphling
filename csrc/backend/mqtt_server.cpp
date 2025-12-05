@@ -184,13 +184,13 @@ torch::Tensor MQTTServer::WaitMatMul(int oid) {
   return outputs_[oid];
 }
 
-void MQTTServer::PublishPartition(MatrixPartition& partition, int64_t oid,
+void MQTTServer::PublishPartition(MatrixPartitionPtr& partition, int64_t oid,
                                   int count) {
-  partition.oid = oid;
-  auto buffer = partition.Serialize();
+  partition->oid = oid;
+  auto buffer = partition->Serialize();
   auto topic =
-      std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
-  Publish(partition.dev_id, topic, buffer->GetBuffer(), buffer->GetSize());
+      std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition->dev_id);
+  Publish(partition->dev_id, topic, buffer->GetBuffer(), buffer->GetSize());
   // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
   pub_buffer_[count] = buffer->GetBuffer();
 }
@@ -202,7 +202,7 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
   auto a_shape = mat_a.sizes().vec();
   auto b_shape = mat_b.sizes().vec();
 
-  auto cur_ver = partitions[0].version;
+  auto cur_ver = partitions[0]->version;
   LOG_INFO << "[" << cur_ver << "] Number of partitions: " << partitions.size()
            << " for A: " << a_shape << " and B: " << b_shape;
 
@@ -211,7 +211,7 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
   int64_t total_bytes = 0;
   for (auto& partition : partitions) {
     total_bytes +=
-        std::get<1>(partition.mat[0]) + std::get<1>(partition.mat[1]);
+        std::get<1>(partition->mat[0]) + std::get<1>(partition->mat[1]);
   }
   LOG_INFO << "Total bytes: " << (total_bytes / 1e6) << "MB";
 
@@ -229,11 +229,11 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
     //                               count);
     // futures.push_back(std::async(std::launch::async, publish_func));
     // count++;
-    partition.oid = mm_count_;
-    auto buffer = partition.Serialize();
+    partition->oid = mm_count_;
+    auto buffer = partition->Serialize();
     auto topic =
-        std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
-    Publish(partition.dev_id, topic, buffer->GetBuffer(), buffer->GetSize());
+        std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition->dev_id);
+    Publish(partition->dev_id, topic, buffer->GetBuffer(), buffer->GetSize());
     // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
     pub_buffer_[count] = buffer->GetBuffer();
     // });
@@ -330,7 +330,8 @@ void MQTTServer::SetUpMosq(struct mosquitto* mosq) {
       });
 }
 
-void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
+void MQTTServer::RephrasePartitions(
+    std::vector<MatrixPartitionPtr>& partitions) {
   std::vector<float> device_time(num_devices_, 0);
   std::vector<float> device_ul_bw(num_devices_, 0);
   std::vector<float> device_dl_bw(num_devices_, 0);
@@ -354,9 +355,9 @@ void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
   for (auto& partition : partitions) {
     float min_time = std::numeric_limits<float>::max();
     int min_device = 0;
-    auto version = partition.version;
-    auto tensor_key_row = partition.GetRowKey();
-    auto tensor_key_col = partition.GetColKey();
+    auto version = partition->version;
+    auto tensor_key_row = partition->GetRowKey();
+    auto tensor_key_col = partition->GetColKey();
     bool min_r_cached = false;
     bool min_c_cached = false;
     for (int i = 0; i < num_devices_; i++) {
@@ -365,19 +366,19 @@ void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
       bool r_cached = tensors.find(tensor_key_row) != tensors.end();
       bool c_cached = tensors.find(tensor_key_col) != tensors.end();
 
-      auto r_size = std::get<1>(partition.mat[0]);
-      auto c_size = std::get<1>(partition.mat[1]);
+      auto r_size = std::get<1>(partition->mat[0]);
+      auto c_size = std::get<1>(partition->mat[1]);
       auto cached_r_size = (r_cached) ? 0 : r_size;
       auto cached_c_size = (c_cached) ? 0 : c_size;
 
-      int64_t num_rows = r_size / partition.h_dim / sizeof(float);
-      int64_t num_cols = c_size / partition.h_dim / sizeof(float);
+      int64_t num_rows = r_size / partition->h_dim / sizeof(float);
+      int64_t num_cols = c_size / partition->h_dim / sizeof(float);
 
       float ul_time =
           (float)(num_rows * num_cols) * sizeof(float) / device_ul_bw[i];
       float dl_time = (float)(cached_r_size + cached_c_size) / device_dl_bw[i];
       float flops =
-          (float)2.0 * num_rows * num_cols * partition.h_dim / device_flops[i];
+          (float)2.0 * num_rows * num_cols * partition->h_dim / device_flops[i];
 
       float time = std::max(std::max(ul_time, dl_time), flops) + device_time[i];
       // ul_time + dl_time + flops + device_time[i];
@@ -393,15 +394,15 @@ void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
     assert(min_time != std::numeric_limits<float>::max());
     // update the time for the device
     device_time[min_device] = min_time;
-    partition.dev_id = min_device;
+    partition->dev_id = min_device;
     device_tensors[min_device].insert(tensor_key_row);
     device_tensors[min_device].insert(tensor_key_col);
 
     if (min_r_cached) {
-      partition.mat[0] = {nullptr, 0};
+      partition->mat[0] = {nullptr, 0};
     }
     if (min_c_cached) {
-      partition.mat[1] = {nullptr, 0};
+      partition->mat[1] = {nullptr, 0};
     }
 
     // print device time

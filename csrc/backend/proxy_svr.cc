@@ -7,6 +7,7 @@
 #include "common/stats.h"
 #include "network/eventloop_libevent.h"
 #include "network/listener_libevent.h"
+#include "partition_tracker.h"
 #include "proto_base.h"
 #include "server_base.h"
 #include "utils/logging.h"
@@ -212,10 +213,9 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
             << "us";
 
   // Mark partition as FINISHED and remove from tracker
-  auto& tracker = DEVICE_TRACKER;
-  tracker.MarkPartitionFinished(part_key);
-  tracker.RemovePartitionByKey(part_key);
-  tracker.RecordPartitionProcessed(partition.dev_id);
+  PARTITION_TRACKER.MarkPartitionFinished(part_key);
+  PARTITION_TRACKER.RemovePartitionByKey(part_key);
+  DEVICE_TRACKER.RecordPartitionProcessed(partition.dev_id);
 
   reinterpret_cast<ProxySvrImpl*>(ctx_.instance)
       ->IncRspCbCount(partition.oid, 1);
@@ -223,16 +223,19 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
 
 void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
                                 const MatrixPartitionPtr partition) {
+  // check connection valid first
+  if (conn->IsClosed()) {
+    LOG_ERROR << "Connection to " << conn->GetPeerAddress().ToString()
+              << " is not valid. Cannot send partition.";
+    return;
+  }
+
   string client_addr = conn->GetPeerAddress().ToString();
   task_queue_.push_back([this, conn, partition, client_addr]() {
     // Use protobuf serialization instead of binary
     auto buffer = partition->Serialize();
     conn->SendData(buffer->GetBuffer(), buffer->GetSize());
     conn_inflight_[client_addr] += 1;
-
-    // Mark partition as RUNNING when sent
-    auto& tracker = DEVICE_TRACKER;
-    tracker.MarkPartitionRunning(partition->GetPartitionKey());
   });
 
   if (conn_inflight_[client_addr] >= ctx_.max_inflight) {
@@ -356,25 +359,25 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   handle->ConnectionClosedCb(conn);
 
   std::string conn_addr = conn->GetPeerAddress().ToString();
-  auto& tracker = DEVICE_TRACKER;
 
   // Find device ID by connection address
-  int64_t device_id = tracker.GetDeviceIdByAddr(conn_addr);
+  int64_t device_id = DEVICE_TRACKER.GetDeviceIdByAddr(conn_addr);
 
   LOG_INFO << "[ConnectionClosedCb] Device " << device_id
            << " (addr: " << conn_addr << ") disconnected";
 
   // Step 1: Check if failed device has pending partitions
-  bool has_pending_partitions = tracker.HasPendingPartitions(device_id);
-  size_t pending_count = tracker.GetDevicePartitionCount(device_id);
+  bool has_pending_partitions =
+      PARTITION_TRACKER.HasPendingPartitions(device_id);
+  size_t pending_count = PARTITION_TRACKER.GetDevicePartitionCount(device_id);
 
   if (has_pending_partitions) {
     LOG_WARN << "[ConnectionClosedCb] Device " << device_id << " failed with "
              << pending_count << " pending partitions";
   }
 
-  // Step 2: Mark device as disconnected
-  tracker.MarkPartitionsAsFailed(device_id);
+  // Step 2: Mark all running partitions as failed
+  PARTITION_TRACKER.MarkPartitionsAsFailed(device_id);
 
   // Step 3: Remove connection from maps
   conn_map_.erase(conn_addr);
@@ -455,7 +458,7 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
     return;
   }
 
-  auto cur_ver = partitions[0].version;
+  auto cur_ver = partitions[0]->version;
   LOG_INFO << "[" << cur_ver << "] Number of partitions: " << partitions.size()
            << " for A: " << a_shape << " and B: " << b_shape;
 
@@ -472,78 +475,37 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
              << (conn_pair.second ? "valid" : "null");
   }
 
-  // Create shared partitions directly
-  std::vector<MatrixPartitionPtr> shared_partitions;
-  for (auto& partition : partitions) {
-    shared_partitions.push_back(std::make_shared<MatrixPartition>(partition));
-  }
-
-  RephrasePartitions(shared_partitions);
+  RephrasePartitions(partitions);
 
   LOG_INFO << "[DispatchMatMulAsync] After RephrasePartitions - created "
-           << shared_partitions.size() << " shared partitions";
+           << partitions.size() << " partitions";
 
   auto start = std::chrono::high_resolution_clock::now();
 
   DecRspCbCount(mm_count_, partitions.size());
 
-  LOG_INFO << "[DispatchMatMulAsync] Starting to dispatch partitions - "
-              "conn_map_.size()="
-           << conn_map_.size();
+  LOG_INFO << "[DispatchMatMulAsync] Creating " << partitions.size()
+           << " partitions as IDLE";
 
-  auto& tracker = DEVICE_TRACKER;
-
-  for (auto& partition : shared_partitions) {
+  // Add all partitions to tracker as IDLE - they will be dispatched by
+  // SendIdlePartitions
+  for (auto& partition : partitions) {
     partition->oid = mm_count_;
 
-    // Add partition to tracker with ownership
-    tracker.AddPartition(partition->dev_id, partition->GetPartitionKey(),
-                         mm_count_, partition);
+    // Add partition to tracker with ownership (automatically marked as IDLE)
+    PARTITION_TRACKER.AddPartition(
+        partition->dev_id, partition->GetPartitionKey(), mm_count_, partition);
 
-    // Debug:
-    LOG_INFO << "[DispatchMatMulAsync] partition key="
-             << partition->GetPartitionKey() << ", dev_id=" << partition->dev_id
-             << ", conn_map_.size()=" << conn_map_.size();
-    if (conn_map_.empty()) {
-      LOG_ERROR << "[DispatchMatMulAsync] conn_map_ is empty!";
-      continue;
-    }
-
-    // Find connection by device_id using device_conn_
-    auto conn_it = device_conn_.find(partition->dev_id);
-    if (conn_it == device_conn_.end()) {
-      LOG_ERROR << "[DispatchMatMulAsync] No connection found for dev_id "
-                << partition->dev_id;
-      continue;
-    }
-
-    uevent::ConnectionUeventPtr target_conn = conn_it->second;
-
-    LOG_DEBUG << "[DispatchMatMulAsync] Found connection for dev_id "
-              << partition->dev_id;
-
-    auto* loop = target_conn->GetLoop();
-    if (!loop) {
-      LOG_ERROR << "[DispatchMatMulAsync] loop is nullptr for dev_id "
-                << partition->dev_id;
-      continue;
-    }
-    auto* handle = reinterpret_cast<ProxySvrHandle*>(loop->GetLoopHandle());
-    if (!handle) {
-      LOG_ERROR << "[DispatchMatMulAsync] handle is nullptr for dev_id "
-                << partition->dev_id;
-      continue;
-    }
-    LOG_DEBUG << "[DispatchMatMulAsync] SendInLoop for dev_id="
-              << partition->dev_id;
-    loop->RunInLoop(
-        bind(&ProxySvrHandle::SendInLoop, handle, target_conn, partition));
+    LOG_DEBUG << "[DispatchMatMulAsync] Created IDLE partition key="
+              << partition->GetPartitionKey()
+              << ", dev_id=" << partition->dev_id << ", oid=" << mm_count_;
   }
   auto end = std::chrono::high_resolution_clock::now();
-  LOG_INFO << "Publish time: "
+  LOG_INFO << "[DispatchMatMulAsync] Created " << partitions.size()
+           << " IDLE partitions in "
            << std::chrono::duration_cast<std::chrono::microseconds>(end - start)
                   .count()
-           << "us, number of partitions: " << partitions.size();
+           << "us. Partitions will be sent by SendIdlePartitions timer.";
   mm_count_++;
 }
 
@@ -601,7 +563,7 @@ void ProxySvrImpl::RephrasePartitions(
   std::sort(device_ids.begin(), device_ids.end());
 
   auto assignments = scheduling_policy_->AssignPartitionsToDevices(
-      partitions, device_ids, excluded_devices);
+      partitions, excluded_devices);
 
   if (assignments.size() != partitions.size()) {
     LOG_ERROR << "[RephrasePartitions] Policy returned " << assignments.size()
@@ -620,10 +582,9 @@ void ProxySvrImpl::RephrasePartitions(
 }
 
 void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
-  auto& tracker = DEVICE_TRACKER;
-
   // Get partitions before redistribution to count OIDs
-  auto failed_partitions = tracker.GetDevicePartitions(failed_device_id);
+  auto failed_partitions =
+      PARTITION_TRACKER.GetDevicePartitions(failed_device_id);
 
   if (failed_partitions.empty()) {
     LOG_INFO << "[HandleDeviceFailure] Device " << failed_device_id
@@ -657,10 +618,10 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
   }
 
   // Redistribute partitions across all connected devices
-  tracker.RedistributeFailedDevicePartitions(failed_device_id);
+  PARTITION_TRACKER.RedistributeFailedDevicePartitions(failed_device_id);
 
   // Get connected devices to send redistributed partitions to them
-  std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
+  std::vector<int64_t> connected_devices = DEVICE_TRACKER.GetConnectedDevices();
 
   // CRITICAL: Decrement response counters for partitions from failed device
   // These partitions were in-flight when the device failed, so they will never
@@ -679,9 +640,7 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
 }
 
 void ProxySvrImpl::SendIdlePartitions() {
-  auto& tracker = DEVICE_TRACKER;
-
-  auto idle_partitions = tracker.GetIdlePartitions();
+  auto idle_partitions = PARTITION_TRACKER.GetIdlePartitions();
 
   if (idle_partitions.empty()) {
     LOG_DEBUG << "[SendIdlePartitions] No IDLE partitions to send";
@@ -691,10 +650,17 @@ void ProxySvrImpl::SendIdlePartitions() {
   LOG_INFO << "[SendIdlePartitions] Sending " << idle_partitions.size()
            << " IDLE partitions to devices";
 
+  for (const auto& part_info : idle_partitions) {
+    // Mark partition as RUNNING before sent
+    PARTITION_TRACKER.MarkPartitionRunning(
+        part_info->partition->GetPartitionKey());
+  }
+
   // Send each IDLE partition
   for (const auto& part_info : idle_partitions) {
     LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
-              << " (oid=" << part_info->oid << ") to devices";
+              << " (oid=" << part_info->oid << ") to device "
+              << part_info->owner_device_id;
     auto& target_conn = device_conn_[part_info->owner_device_id];
     auto* loop = target_conn->GetLoop();
     auto* handle = reinterpret_cast<ProxySvrHandle*>(loop->GetLoopHandle());
@@ -722,8 +688,9 @@ void ProxySvrImpl::CheckFailedPartitions() {
     }
 
     // Check if disconnected device has pending partitions
-    if (tracker.HasPendingPartitions(device_id)) {
-      size_t pending_count = tracker.GetDevicePartitionCount(device_id);
+    if (PARTITION_TRACKER.HasPendingPartitions(device_id)) {
+      size_t pending_count =
+          PARTITION_TRACKER.GetDevicePartitionCount(device_id);
       LOG_WARN << "[CheckFailedPartitions] Detected disconnected device "
                << device_id << " with " << pending_count
                << " pending partitions. Initiating failure handling.";

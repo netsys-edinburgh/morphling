@@ -260,10 +260,10 @@ void UpdateMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
   // LOG_DEBUG("Updated matrix block, r: {}, c: {}, pivot: {}", r, c, pivot);
 }
 
-MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
-                                         const torch::Tensor& mat_b, int64_t r,
-                                         int64_t c, int64_t pivot,
-                                         int64_t block_size) {
+MatrixPartitionPtr CalculateMatrixPartition(const torch::Tensor& mat_a,
+                                            const torch::Tensor& mat_b,
+                                            int64_t r, int64_t c, int64_t pivot,
+                                            int64_t block_size) {
   auto a_shape = mat_a.sizes().vec();
   auto b_shape = mat_b.sizes().vec();
 
@@ -294,25 +294,25 @@ MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
   // fprintf(stderr, "size_r: %ld, size_c: %ld, a_bytes: %ld, b_bytes: %ld\n",
   // size_r, size_c, a_bytes, b_bytes);
 
-  MatrixPartition partition;
-  // partition.version = 0;  // need to set version
-  // partition.oid = -1;     // need to set oid
-  partition.row = r;
-  partition.col = c;
-  partition.h_dim = h_dim;
-  partition.pivot = pivot;
-  // partition.dev_id = -1;
-  partition.timestamp = CurrentTimeMicros();
-  partition.mat.push_back({offset_r_ptr, size_r});
-  partition.mat.push_back({offset_c_ptr, size_c});
-  // partition.block_size = block_size;
+  auto partition = std::make_shared<MatrixPartition>();
+  // partition->version = 0;  // need to set version
+  // partition->oid = -1;     // need to set oid
+  partition->row = r;
+  partition->col = c;
+  partition->h_dim = h_dim;
+  partition->pivot = pivot;
+  // partition->dev_id = -1;
+  partition->timestamp = CurrentTimeMicros();
+  partition->mat.push_back({offset_r_ptr, size_r});
+  partition->mat.push_back({offset_c_ptr, size_c});
+  // partition->block_size = block_size;
 
   return partition;
 }
 
-std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
-                                               const torch::Tensor& mat_b,
-                                               int64_t block_size) {
+std::vector<MatrixPartitionPtr> PartitionMatrices(const torch::Tensor& mat_a,
+                                                  const torch::Tensor& mat_b,
+                                                  int64_t block_size) {
   auto a_shape = mat_a.sizes().vec();
   auto b_shape = mat_b.sizes().vec();
 
@@ -322,7 +322,7 @@ std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
   int64_t h_dim = a_shape[a_shape.size() - 1];
   int64_t out_dim = b_shape[b_shape.size() - 2];
 
-  std::vector<MatrixPartition> partitions;
+  std::vector<MatrixPartitionPtr> partitions;
   auto uuid64 = GenUUID64();
 
   int64_t num_block_rows = in_dim / block_size + (in_dim % block_size != 0);
@@ -332,24 +332,23 @@ std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
     for (int c = 0; c < num_block_cols; ++c) {
       int64_t pivot = 0;
       if (mat_a.dim() == 2 && mat_b.dim() == 2) {
-        partitions.push_back(
-            CalculateMatrixPartition(mat_a, mat_b, r, c, pivot, block_size));
+        auto partition =
+            CalculateMatrixPartition(mat_a, mat_b, r, c, pivot, block_size);
+        partition->version = uuid64;
+        partitions.push_back(partition);
       } else {
         auto ld_combinations = CartesianProduct(
             std::vector<int64_t>(a_shape.begin(), a_shape.end() - 2));
         for (const auto ld : ld_combinations) {
-          partitions.push_back(
-              CalculateMatrixPartition(mat_a, mat_b, r, c, pivot, block_size));
+          auto partition =
+              CalculateMatrixPartition(mat_a, mat_b, r, c, pivot, block_size);
+          partition->version = uuid64;
+          partitions.push_back(partition);
           // fprintf(stderr, "r: %d, c: %d, pivot: %ld\n", r, c, pivot);
           pivot++;
         }
       }
     }
-  }
-
-  // set version to same uuid64
-  for (auto& partition : partitions) {
-    partition.version = uuid64;
   }
 
   return partitions;

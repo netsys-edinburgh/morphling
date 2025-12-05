@@ -5,6 +5,7 @@
 
 #include "base/logging.h"
 #include "device_tracker.h"
+#include "partition_tracker.h"
 
 namespace morphling {
 namespace backend {
@@ -15,14 +16,17 @@ namespace backend {
 
 std::vector<int64_t> RoundRobinSchedulingPolicy::AssignPartitionsToDevices(
     const std::vector<MatrixPartitionPtr>& partitions,
-    const std::vector<int64_t>& available_devices,
     const std::unordered_set<int64_t>& excluded_devices) {
   std::vector<int64_t> assignments;
   assignments.reserve(partitions.size());
 
+  // Get connected devices from tracker
+  auto& tracker = DEVICE_TRACKER;
+  std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
+
   // Filter out excluded devices
   std::vector<int64_t> eligible_devices;
-  for (int64_t device_id : available_devices) {
+  for (int64_t device_id : connected_devices) {
     if (excluded_devices.find(device_id) == excluded_devices.end()) {
       eligible_devices.push_back(device_id);
     }
@@ -33,10 +37,21 @@ std::vector<int64_t> RoundRobinSchedulingPolicy::AssignPartitionsToDevices(
     return assignments;
   }
 
+  // Initialize tensor cache for eligible devices
+  PARTITION_TRACKER.ClearAllDeviceTensors();
+
   // Assign partitions round-robin
   for (size_t i = 0; i < partitions.size(); ++i) {
-    int64_t device_id = eligible_devices[next_device_idx_];
+    int device_idx = next_device_idx_;
+    int64_t device_id = eligible_devices[device_idx];
     assignments.push_back(device_id);
+
+    // Track tensor keys for cache awareness
+    auto tensor_key_row = partitions[i]->GetRowKey();
+    auto tensor_key_col = partitions[i]->GetColKey();
+    PARTITION_TRACKER.AddTensorToDevice(device_id, tensor_key_row);
+    PARTITION_TRACKER.AddTensorToDevice(device_id, tensor_key_col);
+
     next_device_idx_ = (next_device_idx_ + 1) % eligible_devices.size();
   }
 
@@ -48,11 +63,14 @@ std::vector<int64_t> RoundRobinSchedulingPolicy::AssignPartitionsToDevices(
 
 std::unordered_map<std::string, int64_t>
 RoundRobinSchedulingPolicy::RedistributePartitions(
-    const std::vector<PartitionInfoPtr>& partitions,
-    const std::vector<int64_t>& available_devices) {
+    const std::vector<PartitionInfoPtr>& partitions) {
   std::unordered_map<std::string, int64_t> redistribution;
 
-  if (available_devices.empty()) {
+  // Get connected devices from tracker
+  auto& tracker = DEVICE_TRACKER;
+  std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
+
+  if (connected_devices.empty()) {
     LOG_ERROR << "[RoundRobinScheduling] No available devices for "
                  "redistribution";
     return redistribution;
@@ -60,13 +78,13 @@ RoundRobinSchedulingPolicy::RedistributePartitions(
 
   size_t device_idx = 0;
   for (const auto& part : partitions) {
-    int64_t target_device_id = available_devices[device_idx];
+    int64_t target_device_id = connected_devices[device_idx];
     redistribution[part->key] = target_device_id;
-    device_idx = (device_idx + 1) % available_devices.size();
+    device_idx = (device_idx + 1) % connected_devices.size();
   }
 
   LOG_INFO << "[RoundRobinScheduling] Redistributed " << partitions.size()
-           << " partitions across " << available_devices.size() << " devices";
+           << " partitions across " << connected_devices.size() << " devices";
 
   return redistribution;
 }
@@ -77,14 +95,17 @@ RoundRobinSchedulingPolicy::RedistributePartitions(
 
 std::vector<int64_t> GreedySchedulingPolicy::AssignPartitionsToDevices(
     const std::vector<MatrixPartitionPtr>& partitions,
-    const std::vector<int64_t>& available_devices,
     const std::unordered_set<int64_t>& excluded_devices) {
   std::vector<int64_t> assignments;
   assignments.reserve(partitions.size());
 
+  // Get connected devices from tracker
+  auto& tracker = DEVICE_TRACKER;
+  std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
+
   // Filter out excluded devices
   std::vector<int64_t> eligible_devices;
-  for (int64_t device_id : available_devices) {
+  for (int64_t device_id : connected_devices) {
     if (excluded_devices.find(device_id) == excluded_devices.end()) {
       eligible_devices.push_back(device_id);
     }
@@ -95,9 +116,11 @@ std::vector<int64_t> GreedySchedulingPolicy::AssignPartitionsToDevices(
     return assignments;
   }
 
+  // Initialize tensor cache for eligible devices
+  PARTITION_TRACKER.ClearAllDeviceTensors();
+
   int actual_num_devices = static_cast<int>(eligible_devices.size());
   std::vector<float> device_time(actual_num_devices, 0);
-  device_tensors_.assign(actual_num_devices, std::unordered_set<TensorKey>());
 
   // Greedy algorithm to select the device with minimal time
   for (const auto& partition : partitions) {
@@ -108,7 +131,8 @@ std::vector<int64_t> GreedySchedulingPolicy::AssignPartitionsToDevices(
     auto tensor_key_col = partition->GetColKey();
 
     for (int i = 0; i < actual_num_devices; i++) {
-      auto& tensors = device_tensors_[i];
+      int64_t device_id = eligible_devices[i];
+      const auto& tensors = PARTITION_TRACKER.GetDeviceTensors(device_id);
 
       bool r_cached = tensors.find(tensor_key_row) != tensors.end();
       bool c_cached = tensors.find(tensor_key_col) != tensors.end();
@@ -133,9 +157,10 @@ std::vector<int64_t> GreedySchedulingPolicy::AssignPartitionsToDevices(
     }
 
     device_time[min_device_idx] = min_time;
-    assignments.push_back(eligible_devices[min_device_idx]);
-    device_tensors_[min_device_idx].insert(tensor_key_row);
-    device_tensors_[min_device_idx].insert(tensor_key_col);
+    int64_t assigned_device_id = eligible_devices[min_device_idx];
+    assignments.push_back(assigned_device_id);
+    PARTITION_TRACKER.AddTensorToDevice(assigned_device_id, tensor_key_row);
+    PARTITION_TRACKER.AddTensorToDevice(assigned_device_id, tensor_key_col);
   }
 
   LOG_INFO << "[GreedyScheduling] Assigned " << partitions.size()
@@ -147,12 +172,11 @@ std::vector<int64_t> GreedySchedulingPolicy::AssignPartitionsToDevices(
 
 std::unordered_map<std::string, int64_t>
 GreedySchedulingPolicy::RedistributePartitions(
-    const std::vector<PartitionInfoPtr>& partitions,
-    const std::vector<int64_t>& available_devices) {
+    const std::vector<PartitionInfoPtr>& partitions) {
   // For redistribution, fall back to round-robin as we don't have
   // partition details to compute costs
   RoundRobinSchedulingPolicy rr_policy;
-  return rr_policy.RedistributePartitions(partitions, available_devices);
+  return rr_policy.RedistributePartitions(partitions);
 }
 
 // ============================================================================
@@ -161,14 +185,17 @@ GreedySchedulingPolicy::RedistributePartitions(
 
 std::vector<int64_t> LoadBalancedSchedulingPolicy::AssignPartitionsToDevices(
     const std::vector<MatrixPartitionPtr>& partitions,
-    const std::vector<int64_t>& available_devices,
     const std::unordered_set<int64_t>& excluded_devices) {
   std::vector<int64_t> assignments;
   assignments.reserve(partitions.size());
 
+  // Get connected devices from tracker
+  auto& tracker = DEVICE_TRACKER;
+  std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
+
   // Filter out excluded devices
   std::vector<int64_t> eligible_devices;
-  for (int64_t device_id : available_devices) {
+  for (int64_t device_id : connected_devices) {
     if (excluded_devices.find(device_id) == excluded_devices.end()) {
       eligible_devices.push_back(device_id);
     }
@@ -179,16 +206,16 @@ std::vector<int64_t> LoadBalancedSchedulingPolicy::AssignPartitionsToDevices(
     return assignments;
   }
 
-  auto& tracker = DEVICE_TRACKER;
-
   // Assign each partition to the device with the least current load
   for (const auto& partition : partitions) {
     int64_t best_device = eligible_devices[0];
-    size_t min_partitions = tracker.GetDevicePartitionCount(best_device);
+    size_t min_partitions =
+        PARTITION_TRACKER.GetDevicePartitionCount(best_device);
 
     for (size_t i = 1; i < eligible_devices.size(); ++i) {
       int64_t device_id = eligible_devices[i];
-      size_t partition_count = tracker.GetDevicePartitionCount(device_id);
+      size_t partition_count =
+          PARTITION_TRACKER.GetDevicePartitionCount(device_id);
 
       if (partition_count < min_partitions) {
         min_partitions = partition_count;
@@ -208,31 +235,33 @@ std::vector<int64_t> LoadBalancedSchedulingPolicy::AssignPartitionsToDevices(
 
 std::unordered_map<std::string, int64_t>
 LoadBalancedSchedulingPolicy::RedistributePartitions(
-    const std::vector<PartitionInfoPtr>& partitions,
-    const std::vector<int64_t>& available_devices) {
+    const std::vector<PartitionInfoPtr>& partitions) {
   std::unordered_map<std::string, int64_t> redistribution;
 
-  if (available_devices.empty()) {
+  // Get connected devices from tracker
+  auto& tracker = DEVICE_TRACKER;
+  std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
+
+  if (connected_devices.empty()) {
     LOG_ERROR << "[LoadBalancedScheduling] No available devices for "
                  "redistribution";
     return redistribution;
   }
 
-  auto& tracker = DEVICE_TRACKER;
-
   // Track partition counts for load balancing during redistribution
   std::unordered_map<int64_t, size_t> current_loads;
-  for (int64_t device_id : available_devices) {
-    current_loads[device_id] = tracker.GetDevicePartitionCount(device_id);
+  for (int64_t device_id : connected_devices) {
+    current_loads[device_id] =
+        PARTITION_TRACKER.GetDevicePartitionCount(device_id);
   }
 
   // Assign each partition to the device with minimum load
   for (const auto& part : partitions) {
-    int64_t best_device = available_devices[0];
+    int64_t best_device = connected_devices[0];
     size_t min_load = current_loads[best_device];
 
-    for (size_t i = 1; i < available_devices.size(); ++i) {
-      int64_t device_id = available_devices[i];
+    for (size_t i = 1; i < connected_devices.size(); ++i) {
+      int64_t device_id = connected_devices[i];
       if (current_loads[device_id] < min_load) {
         min_load = current_loads[device_id];
         best_device = device_id;
@@ -244,7 +273,7 @@ LoadBalancedSchedulingPolicy::RedistributePartitions(
   }
 
   LOG_INFO << "[LoadBalancedScheduling] Redistributed " << partitions.size()
-           << " partitions across " << available_devices.size()
+           << " partitions across " << connected_devices.size()
            << " devices using load balancing";
 
   return redistribution;

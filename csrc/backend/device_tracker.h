@@ -9,53 +9,14 @@
 #include <unordered_set>
 #include <vector>
 
-#include "common/pytorch_defs.h"
 #include "morphling.pb.h"
-#include "sched_policy.h"
-#include "server_base.h"
+#include "partition_tracker.h"
 
 // Convenient macro for accessing the DevicePartitionTracker singleton
 #define DEVICE_TRACKER morphling::backend::DevicePartitionTracker::GetInstance()
 
 namespace morphling {
 namespace backend {
-
-// Partition execution state
-enum class PartitionState {
-  IDLE = 0,     // Created but not yet sent to device
-  RUNNING = 1,  // Sent to device, waiting for response
-  FAILED = 2,   // Device failed while processing
-  FINISHED = 3  // Response received, computation complete
-};
-
-// Partition tracking structure with ownership and OID tracking
-struct PartitionInfo {
-  std::string key;
-  int64_t oid;  // Operation ID to track which MatMul this partition belongs to
-  int64_t owner_device_id;  // Device that owns this partition
-  bool is_failed;           // True if this partition's owner device has failed
-                            // (deprecated, use state)
-  PartitionState state;     // Current execution state of the partition
-  MatrixPartitionPtr partition;  // Shared pointer to partition data
-
-  PartitionInfo()
-      : oid(-1),
-        owner_device_id(-1),
-        is_failed(false),
-        state(PartitionState::IDLE) {}
-  PartitionInfo(const std::string& k, int64_t o, int64_t owner,
-                MatrixPartitionPtr p)
-      : key(k),
-        oid(o),
-        owner_device_id(owner),
-        is_failed(false),
-        state(PartitionState::IDLE),
-        partition(p) {}
-};
-typedef std::shared_ptr<MatrixPartition> MatrixPartitionPtr;
-typedef std::shared_ptr<PartitionInfo> PartitionInfoPtr;
-
-// Device liveness information
 struct DeviceLiveness {
   int64_t device_id;
   std::string conn_addr;
@@ -112,33 +73,6 @@ class DevicePartitionTracker {
   size_t GetConnectedDeviceCount() const;
   size_t GetTotalDeviceCount() const;
 
-  // Partition tracking
-  void AddPartition(int64_t device_id, const std::string& partition_key,
-                    int64_t oid, MatrixPartitionPtr partition);
-  void RemovePartition(int64_t device_id, const std::string& partition_key);
-  void RemovePartitionByKey(const std::string& partition_key);
-
-  // Mark all partitions owned by a device as failed (ownership removed)
-  void MarkPartitionsAsFailed(int64_t device_id);
-
-  // State management for partitions
-  void MarkPartitionRunning(const std::string& partition_key);
-  void MarkPartitionFinished(const std::string& partition_key);
-  void MarkPartitionFailed(const std::string& partition_key);
-  void MarkPartitionIdle(const std::string& partition_key);
-  void MarkDevicePartitionsRunning(
-      int64_t device_id);  // Mark all IDLE partitions as RUNNING
-
-  std::vector<PartitionInfoPtr> GetDevicePartitions(int64_t device_id) const;
-  size_t GetDevicePartitionCount(int64_t device_id) const;
-  bool HasPendingPartitions(int64_t device_id) const;
-
-  std::vector<PartitionInfoPtr> GetIdlePartitions() const;
-
-  // Partition redistribution on device failure
-  void RedistributeFailedDevicePartitions(
-      int64_t failed_device_id, PartitionSchedulingPolicyPtr policy = nullptr);
-
   // Statistics
   void RecordPartitionProcessed(int64_t device_id);
   void RecordBytesSent(int64_t device_id, uint64_t bytes);
@@ -168,14 +102,6 @@ class DevicePartitionTracker {
   int64_t next_device_id_;
   std::unordered_map<std::string, int64_t> addr_to_device_id_;
   std::unordered_map<int64_t, std::string> device_id_to_addr_;
-
-  // Partition tracking: device_id -> [PartitionInfo, ...]
-  std::unordered_set<PartitionInfoPtr> partitions_set_;
-  std::unordered_map<std::string, PartitionInfoPtr> partition_map_;
-  std::unordered_map<int64_t, std::vector<PartitionInfoPtr>> device_partitions_;
-
-  // Reverse index: partition_key -> device_id (for fast lookup)
-  std::unordered_map<std::string, int64_t> partition_to_device_;
 };
 
 }  // namespace backend
