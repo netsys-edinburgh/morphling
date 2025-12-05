@@ -661,6 +661,11 @@ void ProxySvrImpl::SendIdlePartitions() {
     LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
               << " (oid=" << part_info->oid << ") to device "
               << part_info->owner_device_id;
+    if (part_info->state != PartitionState::RUNNING) {
+      LOG_ERROR << "[SendIdlePartitions] Partition " << part_info->key
+                << " not in RUNNING state before sending!";
+      continue;
+    }
     auto& target_conn = device_conn_[part_info->owner_device_id];
     auto* loop = target_conn->GetLoop();
     auto* handle = reinterpret_cast<ProxySvrHandle*>(loop->GetLoopHandle());
