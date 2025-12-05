@@ -28,14 +28,12 @@ class PartitionSchedulingPolicy {
   // Returns device_id for each partition (by index)
   virtual std::vector<int64_t> AssignPartitionsToDevices(
       const std::vector<MatrixPartitionPtr>& partitions,
-      const std::vector<int64_t>& available_devices,
       const std::unordered_set<int64_t>& excluded_devices = {}) = 0;
 
   // Redistribute failed partitions to available devices
   // Returns mapping of partition -> target_device_id
   virtual std::unordered_map<std::string, int64_t> RedistributePartitions(
-      const std::vector<PartitionInfoPtr>& partitions,
-      const std::vector<int64_t>& available_devices) = 0;
+      const std::vector<PartitionInfoPtr>& partitions) = 0;
 
  protected:
   int block_size_;
@@ -53,12 +51,10 @@ class RoundRobinSchedulingPolicy : public PartitionSchedulingPolicy {
 
   std::vector<int64_t> AssignPartitionsToDevices(
       const std::vector<MatrixPartitionPtr>& partitions,
-      const std::vector<int64_t>& available_devices,
       const std::unordered_set<int64_t>& excluded_devices = {}) override;
 
   std::unordered_map<std::string, int64_t> RedistributePartitions(
-      const std::vector<PartitionInfoPtr>& partitions,
-      const std::vector<int64_t>& available_devices) override;
+      const std::vector<PartitionInfoPtr>& partitions) override;
 
  private:
   size_t next_device_idx_ = 0;
@@ -73,15 +69,10 @@ class GreedySchedulingPolicy : public PartitionSchedulingPolicy {
 
   std::vector<int64_t> AssignPartitionsToDevices(
       const std::vector<MatrixPartitionPtr>& partitions,
-      const std::vector<int64_t>& available_devices,
       const std::unordered_set<int64_t>& excluded_devices = {}) override;
 
   std::unordered_map<std::string, int64_t> RedistributePartitions(
-      const std::vector<PartitionInfoPtr>& partitions,
-      const std::vector<int64_t>& available_devices) override;
-
- private:
-  std::vector<std::unordered_set<TensorKey>> device_tensors_;
+      const std::vector<PartitionInfoPtr>& partitions) override;
 };
 
 // Load-balanced scheduling policy (considers current device load)
@@ -93,12 +84,10 @@ class LoadBalancedSchedulingPolicy : public PartitionSchedulingPolicy {
 
   std::vector<int64_t> AssignPartitionsToDevices(
       const std::vector<MatrixPartitionPtr>& partitions,
-      const std::vector<int64_t>& available_devices,
       const std::unordered_set<int64_t>& excluded_devices = {}) override;
 
   std::unordered_map<std::string, int64_t> RedistributePartitions(
-      const std::vector<PartitionInfoPtr>& partitions,
-      const std::vector<int64_t>& available_devices) override;
+      const std::vector<PartitionInfoPtr>& partitions) override;
 };
 
 }  // namespace backend

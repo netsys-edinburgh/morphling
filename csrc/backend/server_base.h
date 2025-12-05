@@ -306,13 +306,13 @@ typedef std::shared_ptr<DevicePerf> DevicePerfPtr;
 //   uint64_t time;
 // };
 
-MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
-                                         const torch::Tensor& mat_b, int64_t r,
-                                         int64_t c, int64_t pivot,
-                                         int64_t block_size);
+MatrixPartitionPtr CalculateMatrixPartition(const torch::Tensor& mat_a,
+                                            const torch::Tensor& mat_b,
+                                            int64_t r, int64_t c, int64_t pivot,
+                                            int64_t block_size);
 
 // The computation must be AB^T
 // Every matrix is partitioned into blocks on rows since torch is row major
-std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
-                                               const torch::Tensor& mat_b,
-                                               int64_t block_size);
+std::vector<MatrixPartitionPtr> PartitionMatrices(const torch::Tensor& mat_a,
+                                                  const torch::Tensor& mat_b,
+                                                  int64_t block_size);
