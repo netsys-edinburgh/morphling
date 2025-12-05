@@ -4,11 +4,11 @@ import asyncio
 import os
 import subprocess
 import time
+from dataclasses import dataclass, field
+from typing import Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser
-from dataclasses import dataclass, field
-from typing import Optional
 
 import morphling
 
@@ -16,6 +16,7 @@ import morphling
 from morphling.backend import AutoBackend
 from morphling.entrypoint import DeviceConfigArguments, ModelConfigArguments
 from morphling.hooks import apply_hooks
+
 torch.autograd.set_detect_anomaly(True)
 
 # # if SIGINT is received, kill all the devices
@@ -188,8 +189,9 @@ if __name__ == "__main__":
             str(device_args.ul_lat[i]),
             str(device_args.dl_lat[i]),
             model_args.backend,
-            model_args.redis_host,  # Pass redis_host as the 9th parameter
-            getattr(model_args, 'proxy_host', ''),  # Pass proxy_host as the 10th parameter (optional)
+            getattr(
+                model_args, "proxy_host", ""
+            ),  # Pass proxy_host as the 10th parameter (optional)
         ]
         # print("Running device", command)
         os.system(" ".join(command))
@@ -205,30 +207,34 @@ if __name__ == "__main__":
     #     / # mosquitto_sub -t '$SYS/broker/subscriptions/count' -v
     # $SYS/broker/subscriptions/count 40
     # $SYS/broker/subscriptions/count 41
-    
+
     # Wait for devices to connect for proxy backend
     if model_args.backend == "proxy":
         print("Waiting for devices to connect to proxy server...")
         timeout = 120  # 2 minutes timeout
         start_time = time.time()
-        
+
         while time.time() - start_time < timeout:
             try:
                 connection_count = backend.get_connection_count()
-                print(f"Connected devices: {connection_count}/{device_args.num_devices}")
-                
+                print(
+                    f"Connected devices: {connection_count}/{device_args.num_devices}"
+                )
+
                 if connection_count >= device_args.num_devices:
                     print("All devices connected!")
                     break
-                    
+
                 time.sleep(2)
             except Exception as e:
                 print(f"Error checking connection count: {e}")
                 time.sleep(2)
         else:
-            print(f"Timeout waiting for devices to connect. Connected: {backend.get_connection_count()}/{device_args.num_devices}")
+            print(
+                f"Timeout waiting for devices to connect. Connected: {backend.get_connection_count()}/{device_args.num_devices}"
+            )
             # Continue anyway
-    
+
     time.sleep(5)
 
     # random text for seqlen > 128
@@ -279,7 +285,7 @@ if __name__ == "__main__":
     out_hidden_states = outputs.hidden_states
     out_attentions = outputs.attentions
     print("out_logits", out_logits)
-    
+
     # Save logits to pt file
     os.makedirs("logits_comparison", exist_ok=True)
     suffix = "with_hooks" if local_enable_hooks else "without_hooks"
