@@ -9,12 +9,7 @@
 #include "common/types_and_defs.h"
 #include "global_api.pb.h"
 #include "morphling.pb.h"
-
-// Forward declarations
-namespace uevent {
-class ConnectionUevent;
-typedef std::shared_ptr<ConnectionUevent> ConnectionUeventPtr;
-}  // namespace uevent
+#include "network/uevent.h"
 
 // Common message handler signature
 // All message handlers follow this signature: (connection, payload, size)

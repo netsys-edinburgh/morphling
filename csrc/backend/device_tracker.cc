@@ -238,6 +238,38 @@ void DevicePartitionTracker::RecordBytesReceived(int64_t device_id,
   }
 }
 
+void DevicePartitionTracker::SetDeviceConnection(
+    int64_t device_id, const uevent::ConnectionUeventPtr& conn) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  if (devices_map_.find(device_id) == devices_map_.end()) {
+    LOG_WARN << "[DeviceTracker] Cannot set connection for unknown device "
+             << device_id;
+    return;
+  }
+
+  device_conn_[device_id] = conn;
+  LOG_DEBUG << "[DeviceTracker] Set connection for device_id " << device_id;
+}
+
+uevent::ConnectionUeventPtr DevicePartitionTracker::GetDeviceConnection(
+    int64_t device_id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  auto it = device_conn_.find(device_id);
+  if (it != device_conn_.end()) {
+    return it->second;
+  }
+  return nullptr;
+}
+
+void DevicePartitionTracker::RemoveDeviceConnection(int64_t device_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  device_conn_.erase(device_id);
+  LOG_DEBUG << "[DeviceTracker] Removed connection for device_id " << device_id;
+}
+
 std::string DevicePartitionTracker::DebugString() const {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -274,6 +306,7 @@ void DevicePartitionTracker::Reset() {
   device_id_to_addr_.clear();
   devices_map_.clear();
   devices_set_.clear();
+  device_conn_.clear();
 }
 
 }  // namespace backend

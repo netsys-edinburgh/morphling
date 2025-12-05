@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "morphling.pb.h"
+#include "network/uevent.h"
 #include "partition_tracker.h"
 
 // Convenient macro for accessing the DevicePartitionTracker singleton
@@ -78,6 +79,12 @@ class DevicePartitionTracker {
   void RecordBytesSent(int64_t device_id, uint64_t bytes);
   void RecordBytesReceived(int64_t device_id, uint64_t bytes);
 
+  // Connection management
+  void SetDeviceConnection(int64_t device_id,
+                           const uevent::ConnectionUeventPtr& conn);
+  uevent::ConnectionUeventPtr GetDeviceConnection(int64_t device_id) const;
+  void RemoveDeviceConnection(int64_t device_id);
+
   // Debug and monitoring
   std::string DebugString() const;
   void DumpState() const;
@@ -102,6 +109,9 @@ class DevicePartitionTracker {
   int64_t next_device_id_;
   std::unordered_map<std::string, int64_t> addr_to_device_id_;
   std::unordered_map<int64_t, std::string> device_id_to_addr_;
+
+  // Connection management
+  std::unordered_map<int64_t, uevent::ConnectionUeventPtr> device_conn_;
 };
 
 }  // namespace backend

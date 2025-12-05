@@ -28,8 +28,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("initialize", &ProxySvr::Initialize)
       .def("start", &ProxySvr::Start)
       .def("async_dispatch_matmul", &ProxySvr::DispatchMatMulAsync)
-      .def("wait_matmul", &ProxySvr::WaitMatMul)
-      .def("get_connection_count", &ProxySvr::GetConnectionCount);
+      .def("wait_matmul", &ProxySvr::WaitMatMul);
+  //   .def("get_connection_count", &ProxySvr::GetConnectionCount);
 
   py::class_<ProxyCli>(m, "ProxyCli")
       .def(py::init<>())
