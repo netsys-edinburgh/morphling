@@ -733,7 +733,7 @@ SerializationBufferPtr DeviceProfileData::SerializeProto() const {
   uint32_t payload_size = sizeof(proto_size) + sizeof(tensor_size) + proto_size;
   uint64_t total_size = sizeof(payload_size) + payload_size;
 
-  SerializationBufferPtr buffer;
+  SerializationBufferPtr buffer = std::make_shared<SerializationBuffer>();
   buffer->Allocate(total_size);
 
   buffer->WriteUInt32(payload_size, true);
