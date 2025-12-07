@@ -354,8 +354,9 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   // Start periodic partition health check (every 0.1 seconds)
   failed_partition_check_timer_ = loop->RunEvery(
       0.1, std::bind(&ProxySvrImpl::CheckFailedPartitions, this));
-  idle_partition_redistribute_timer_ =
-      loop->RunEvery(0.5, std::bind(&ProxySvrImpl::SendIdlePartitions, this));
+  // idle_partition_redistribute_timer_ =
+  //     loop->RunEvery(0.5, std::bind(&ProxySvrImpl::SendIdlePartitions,
+  //     this));
   LOG_INFO << "[ProxySvrImpl::Initialize] Started periodic partition health "
               "check (interval=0.1s)";
 }
@@ -365,8 +366,9 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   loop->AssertInLoopThread();
   auto* loop_handle = loop->GetLoopHandle();
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
-  // handle->ConnectionSuccessCb(conn);
-  loop->RunInLoop(bind(&ProxySvrHandle::ConnectionSuccessCb, handle, conn));
+  handle->ConnectionSuccessCb(conn);
+  // loop->RunInLoop(bind(&ProxySvrHandle::ConnectionSuccessCb, handle, conn));
+  loop_->QueueInLoop(bind(&ProxySvrImpl::SendIdlePartitions, this));
 
   // std::string conn_addr = conn->GetPeerAddress().ToString();
   // conn_map_[conn_addr] = conn;
@@ -386,8 +388,10 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   loop->AssertInLoopThread();
   auto* loop_handle = loop->GetLoopHandle();
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
+  handle->ConnectionClosedCb(conn);
+  loop_->QueueInLoop(bind(&ProxySvrImpl::SendIdlePartitions, this));
 
-  loop->RunInLoop(bind(&ProxySvrHandle::ConnectionClosedCb, handle, conn));
+  // loop->RunInLoop(bind(&ProxySvrHandle::ConnectionClosedCb, handle, conn));
 
   // LOG_INFO << "[ConnectionClosedCb] Connection removed. Remaining
   // connections: "
@@ -507,6 +511,8 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
                   .count()
            << "us. Partitions will be sent by SendIdlePartitions timer.";
   mm_count_++;
+
+  loop_->QueueInLoop(bind(&ProxySvrImpl::SendIdlePartitions, this));
 }
 
 torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
@@ -596,7 +602,7 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
   size_t num_failed_partitions = 0;
   std::unordered_map<int64_t, size_t> oid_counts;
   for (const auto& part : failed_partitions) {
-    if (part->state == PartitionState::FAILED) {
+    if (part->state == PartitionState::IDLE) {
       num_failed_partitions++;
       oid_counts[part->oid]++;
     }
@@ -618,7 +624,7 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
   }
 
   // Redistribute partitions across all connected devices
-  PARTITION_TRACKER.RedistributeFailedDevicePartitions(failed_device_id);
+  // PARTITION_TRACKER.RedistributeFailedDevicePartitions(failed_device_id);
 
   // Get connected devices to send redistributed partitions to them
   std::vector<int64_t> connected_devices = DEVICE_TRACKER.GetConnectedDevices();
@@ -647,6 +653,14 @@ void ProxySvrImpl::SendIdlePartitions() {
     return;
   }
 
+  auto redistributed =
+      scheduling_policy_->RedistributePartitions(idle_partitions);
+
+  if (redistributed.empty()) {
+    LOG_DEBUG << "[SendIdlePartitions] No available devices for redistribution";
+    return;
+  }
+
   LOG_INFO << "[SendIdlePartitions] Sending " << idle_partitions.size()
            << " IDLE partitions to devices";
 
@@ -661,11 +675,11 @@ void ProxySvrImpl::SendIdlePartitions() {
     LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
               << " (oid=" << part_info->oid << ") to device "
               << part_info->owner_device_id;
-    if (part_info->state != PartitionState::RUNNING) {
-      LOG_ERROR << "[SendIdlePartitions] Partition " << part_info->key
-                << " not in RUNNING state before sending!";
-      continue;
-    }
+    // if (part_info->state != PartitionState::RUNNING) {
+    //   LOG_ERROR << "[SendIdlePartitions] Partition " << part_info->key
+    //             << " not in RUNNING state before sending!";
+    //   continue;
+    // }
     auto target_conn =
         DEVICE_TRACKER.GetDeviceConnection(part_info->owner_device_id);
     if (!target_conn) {
