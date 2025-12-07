@@ -24,7 +24,7 @@ typedef std::shared_ptr<PartitionSchedulingPolicy> PartitionSchedulingPolicyPtr;
 enum class PartitionState {
   IDLE = 0,     // Created but not yet sent to device
   RUNNING = 1,  // Sent to device, waiting for response
-  FAILED = 2,   // Device failed while processing
+  // FAILED = 2,   // Device failed while processing
   FINISHED = 3  // Response received, computation complete
 };
 
@@ -32,23 +32,16 @@ enum class PartitionState {
 struct PartitionInfo {
   std::string key;
   int64_t oid;  // Operation ID to track which MatMul this partition belongs to
-  int64_t owner_device_id;  // Device that owns this partition
-  bool is_failed;           // True if this partition's owner device has failed
-                            // (deprecated, use state)
-  PartitionState state;     // Current execution state of the partition
+  int64_t owner_device_id;       // Device that owns this partition
+  PartitionState state;          // Current execution state of the partition
   MatrixPartitionPtr partition;  // Shared pointer to partition data
 
-  PartitionInfo()
-      : oid(-1),
-        owner_device_id(-1),
-        is_failed(false),
-        state(PartitionState::IDLE) {}
+  PartitionInfo() : oid(-1), owner_device_id(-1), state(PartitionState::IDLE) {}
   PartitionInfo(const std::string& k, int64_t o, int64_t owner,
                 MatrixPartitionPtr p)
       : key(k),
         oid(o),
         owner_device_id(owner),
-        is_failed(false),
         state(PartitionState::IDLE),
         partition(p) {}
 };

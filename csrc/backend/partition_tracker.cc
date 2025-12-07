@@ -117,8 +117,7 @@ void PartitionTracker::MarkPartitionsAsFailed(int64_t device_id) {
   for (auto& part_info : it->second) {
     // Only mark RUNNING partitions as FAILED (not IDLE or already FINISHED)
     if (part_info->state == PartitionState::RUNNING) {
-      part_info->is_failed = true;
-      part_info->state = PartitionState::FAILED;
+      part_info->state = PartitionState::IDLE;
       // Clear ownership - partition is now orphaned
       part_info->owner_device_id = -1;
       marked_count++;
@@ -171,8 +170,7 @@ void PartitionTracker::MarkPartitionFailed(const std::string& partition_key) {
     return;
   }
 
-  it->second->state = PartitionState::FAILED;
-  it->second->is_failed = true;
+  it->second->state = PartitionState::IDLE;
   LOG_DEBUG << "[PartitionTracker] Partition " << partition_key
             << " marked as FAILED";
 }
@@ -188,7 +186,6 @@ void PartitionTracker::MarkPartitionIdle(const std::string& partition_key) {
   }
 
   it->second->state = PartitionState::IDLE;
-  it->second->is_failed = false;
   LOG_DEBUG << "[PartitionTracker] Partition " << partition_key
             << " marked as IDLE";
 }
@@ -267,7 +264,7 @@ void PartitionTracker::RedistributeFailedDevicePartitions(
   std::vector<PartitionInfoPtr> partitions_to_redistribute;
   std::unordered_map<int64_t, size_t> oid_counts;
   for (const auto& part : it->second) {
-    if (part->state == PartitionState::FAILED) {
+    if (part->state == PartitionState::IDLE) {
       partitions_to_redistribute.push_back(part);
       oid_counts[part->oid]++;
     }
@@ -306,7 +303,6 @@ void PartitionTracker::RedistributeFailedDevicePartitions(
 
     // Update ownership and reset state to IDLE
     part->owner_device_id = target_device_id;
-    part->is_failed = false;
     part->state = PartitionState::IDLE;
 
     // Add to target device's partition list
@@ -394,9 +390,6 @@ std::string PartitionTracker::DebugString() const {
       case PartitionState::RUNNING:
         running++;
         break;
-      case PartitionState::FAILED:
-        failed++;
-        break;
       case PartitionState::FINISHED:
         finished++;
         break;
@@ -404,7 +397,7 @@ std::string PartitionTracker::DebugString() const {
   }
 
   oss << "  By state: IDLE=" << idle << ", RUNNING=" << running
-      << ", FAILED=" << failed << ", FINISHED=" << finished << "\n";
+      << ", FINISHED=" << finished << "\n";
   oss << "}";
   return oss.str();
 }
