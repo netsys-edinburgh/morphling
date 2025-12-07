@@ -29,6 +29,7 @@ namespace backend {
 ProxySvrHandle::ProxySvrHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
     : ctx_(ctx), loop_(loop) {
   SRV_STATS->Initialize();
+  // Scheduling policy is now in ctx_.sched_policy
 }
 
 void ProxySvrHandle::ThreadInit(uevent::UeventLoop* loop) {
@@ -171,6 +172,8 @@ void ProxySvrHandle::HandleRegisterResponse(const ConnectionUeventPtr& conn,
   LOG_DEBUG << "Client " << client_addr
             << " registered with device_id=" << device_id << ": "
             << profile.DebugString();
+
+  loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, this));
 }
 
 void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
@@ -297,8 +300,6 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 ProxySvrImpl::ProxySvrImpl(ProxyEnvCfg& ctx)
     : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(5) {
   // Initialize with greedy scheduling policy by default
-  scheduling_policy_ = std::make_shared<RoundRobinSchedulingPolicy>(
-      ctx_.block_size, ctx_.enable_cli_cache);
 }
 
 ProxySvrImpl::~ProxySvrImpl() {
@@ -368,7 +369,7 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
   handle->ConnectionSuccessCb(conn);
   // loop->RunInLoop(bind(&ProxySvrHandle::ConnectionSuccessCb, handle, conn));
-  loop_->QueueInLoop(bind(&ProxySvrImpl::SendIdlePartitions, this));
+  loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
 
   // std::string conn_addr = conn->GetPeerAddress().ToString();
   // conn_map_[conn_addr] = conn;
@@ -389,7 +390,7 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   auto* loop_handle = loop->GetLoopHandle();
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
   handle->ConnectionClosedCb(conn);
-  loop_->QueueInLoop(bind(&ProxySvrImpl::SendIdlePartitions, this));
+  loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
 
   // loop->RunInLoop(bind(&ProxySvrHandle::ConnectionClosedCb, handle, conn));
 
@@ -475,15 +476,14 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
            << partitions.size();
   std::random_shuffle(partitions.begin(), partitions.end());
 
-  LOG_INFO
-      << "[DispatchMatMulAsync] Before RephrasePartitions - ctx_.num_device="
-      << ctx_.num_device;
+  // LOG_INFO
+  //     << "[DispatchMatMulAsync] Before RephrasePartitions - ctx_.num_device="
+  //     << ctx_.num_device;
 
-  RephrasePartitions(partitions);
+  // RephrasePartitions(partitions);
 
-  LOG_INFO << "[DispatchMatMulAsync] After RephrasePartitions - created "
-           << partitions.size() << " partitions";
-
+  // LOG_INFO << "[DispatchMatMulAsync] After RephrasePartitions - created "
+  //          << partitions.size() << " partitions";
   auto start = std::chrono::high_resolution_clock::now();
 
   DecRspCbCount(mm_count_, partitions.size());
@@ -512,7 +512,8 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
            << "us. Partitions will be sent by SendIdlePartitions timer.";
   mm_count_++;
 
-  loop_->QueueInLoop(bind(&ProxySvrImpl::SendIdlePartitions, this));
+  auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_->GetLoopHandle());
+  loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
 }
 
 torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
@@ -568,7 +569,7 @@ void ProxySvrImpl::RephrasePartitions(
 
   std::sort(device_ids.begin(), device_ids.end());
 
-  auto assignments = scheduling_policy_->AssignPartitionsToDevices(
+  auto assignments = ctx_.sched_policy->AssignPartitionsToDevices(
       partitions, excluded_devices);
 
   if (assignments.size() != partitions.size()) {
@@ -645,7 +646,7 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
            << failed_device_id;
 }
 
-void ProxySvrImpl::SendIdlePartitions() {
+void ProxySvrHandle::SendIdlePartitions() {
   auto idle_partitions = PARTITION_TRACKER.GetIdlePartitions();
 
   if (idle_partitions.empty()) {
@@ -654,7 +655,7 @@ void ProxySvrImpl::SendIdlePartitions() {
   }
 
   auto redistributed =
-      scheduling_policy_->RedistributePartitions(idle_partitions);
+      ctx_.sched_policy->RedistributePartitions(idle_partitions);
 
   if (redistributed.empty()) {
     LOG_DEBUG << "[SendIdlePartitions] No available devices for redistribution";

@@ -1,5 +1,6 @@
 #include "env_cfg.h"
 
+#include "backend/sched_policy.h"
 #include "base/ini_config.h"
 #include "base/logging.h"
 
@@ -30,6 +31,9 @@
       value = cfg.GetValue(section, key);                                   \
     }                                                                       \
   }
+
+ProxyEnvCfg::ProxyEnvCfg() = default;
+ProxyEnvCfg::~ProxyEnvCfg() = default;
 
 int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
   base::IniConfig parser;
@@ -64,7 +68,36 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
 
   PARSE_INT_ENVCFG(parser, "internal", "cleanup_wait", false, 60, cleanup_wait);
   PARSE_INT_ENVCFG(parser, "internal", "tcp_timeout", false, 5, tcp_timeout);
-  PARSE_INT_ENVCFG(parser, "internal", "enable_cli_cache", false, 0, enable_cli_cache);
+  PARSE_INT_ENVCFG(parser, "internal", "enable_cli_cache", false, 0,
+                   enable_cli_cache);
+
+  // Parse scheduling policy type (default to ROUND_ROBIN)
+  int sched_policy_int = 0;
+  PARSE_INT_ENVCFG(parser, "worker", "sched_policy", false, 0,
+                   sched_policy_int);
+  sched_policy_type = static_cast<SchedulingPolicyType>(sched_policy_int);
+
+  // Initialize scheduling policy based on type
+  switch (sched_policy_type) {
+    case SchedulingPolicyType::ROUND_ROBIN:
+      sched_policy =
+          std::make_unique<morphling::backend::RoundRobinSchedulingPolicy>(
+              block_size, enable_cli_cache);
+      break;
+    case SchedulingPolicyType::GREEDY:
+      sched_policy =
+          std::make_unique<morphling::backend::GreedySchedulingPolicy>(
+              block_size, enable_cli_cache);
+      break;
+    case SchedulingPolicyType::LOAD_BALANCED:
+      sched_policy =
+          std::make_unique<morphling::backend::LoadBalancedSchedulingPolicy>(
+              block_size, enable_cli_cache);
+      break;
+    default:
+      throw std::invalid_argument("Invalid scheduling policy type");
+      break;
+  }
 
   base::Logger::setLogLevel(log_level);
 

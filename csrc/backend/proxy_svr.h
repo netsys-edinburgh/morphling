@@ -59,6 +59,9 @@ class ProxySvrHandle : public uevent::LoopHandle {
   void SendInLoop(const uevent::ConnectionUeventPtr& conn,
                   const MatrixPartitionPtr partition);
 
+  // Redistribute idle partitions to devices
+  void SendIdlePartitions();
+
   // send perf request to device
   void SendPerfInLoop(const uevent::ConnectionUeventPtr& conn,
                       const DevicePerfPtr perf);
@@ -88,6 +91,7 @@ class ProxySvrHandle : public uevent::LoopHandle {
   std::mutex handshake_mutex_;
 
   // std::unordered_map<std::string, DeviceProfileData> device_info_;
+  // Scheduling policy is now in ctx_.sched_policy
 };
 
 class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
@@ -121,14 +125,6 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   // Device failure handling
   void HandleDeviceFailure(int64_t failed_device_id);
   void CheckFailedPartitions();  // Periodic check for failed partitions
-
-  // Redistribute idle partitions to devices
-  void SendIdlePartitions();
-
-  // Set scheduling policy (optional, defaults to greedy for RephrasePartitions)
-  void SetSchedulingPolicy(PartitionSchedulingPolicyPtr policy) {
-    scheduling_policy_ = policy;
-  }
 
  private:
   void ConnectionSuccessCb(const uevent::ConnectionUeventPtr& conn);
@@ -167,9 +163,6 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
                                            // redistribution
   uevent::TimerId failed_partition_check_timer_;  // Timer for periodic
                                                   // partition health checks
-
-  // Scheduling policy for partition assignment
-  PartitionSchedulingPolicyPtr scheduling_policy_;
 };
 
 typedef std::shared_ptr<ProxySvrImpl> ProxySvrImplPtr;
