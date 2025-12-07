@@ -80,6 +80,7 @@ RoundRobinSchedulingPolicy::RedistributePartitions(
   for (const auto& part : partitions) {
     int64_t target_device_id = connected_devices[device_idx];
     redistribution[part->key] = target_device_id;
+    part->owner_device_id = target_device_id;
     device_idx = (device_idx + 1) % connected_devices.size();
   }
 
@@ -269,6 +270,7 @@ LoadBalancedSchedulingPolicy::RedistributePartitions(
     }
 
     redistribution[part->key] = best_device;
+    part->owner_device_id = best_device;
     current_loads[best_device]++;  // Update load for next iteration
   }
 
