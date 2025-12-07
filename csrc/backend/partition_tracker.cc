@@ -103,7 +103,7 @@ void PartitionTracker::RemovePartitionByKey(const std::string& partition_key) {
   }
 }
 
-void PartitionTracker::MarkPartitionsAsFailed(int64_t device_id) {
+void PartitionTracker::MarkDevicePartitionsFailed(int64_t device_id) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   auto it = device_partitions_.find(device_id);

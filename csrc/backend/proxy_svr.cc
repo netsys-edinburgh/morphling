@@ -286,12 +286,13 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   }
 
   // Step 2: Mark all running partitions as failed
-  PARTITION_TRACKER.MarkPartitionsAsFailed(device_id);
+  PARTITION_TRACKER.MarkDevicePartitionsFailed(device_id);
 
   // Step 3: Remove connection from maps
   // conn_map_.erase(conn_addr);
   if (device_id != -1) {
     DEVICE_TRACKER.RemoveDeviceConnection(device_id);
+    DEVICE_TRACKER.UnregisterDevice(device_id);
   }
 }
 
@@ -353,8 +354,8 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
               "Waiting for connections...";
 
   // Start periodic partition health check (every 0.1 seconds)
-  failed_partition_check_timer_ = loop->RunEvery(
-      0.1, std::bind(&ProxySvrImpl::CheckFailedPartitions, this));
+  // failed_partition_check_timer_ = loop->RunEvery(
+  //     0.1, std::bind(&ProxySvrImpl::CheckFailedPartitions, this));
   // idle_partition_redistribute_timer_ =
   //     loop->RunEvery(0.5, std::bind(&ProxySvrImpl::SendIdlePartitions,
   //     this));
