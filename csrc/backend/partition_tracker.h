@@ -70,7 +70,7 @@ class PartitionTracker {
   void RemovePartitionByKey(const std::string& partition_key);
 
   // Mark all partitions owned by a device as failed (ownership removed)
-  void MarkPartitionsAsFailed(int64_t device_id);
+  void MarkDevicePartitionsFailed(int64_t device_id);
 
   // State management for partitions
   void MarkPartitionRunning(const std::string& partition_key);
