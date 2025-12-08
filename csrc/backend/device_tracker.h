@@ -24,17 +24,39 @@ struct DeviceLiveness {
   bool is_connected;
   std::chrono::steady_clock::time_point last_seen;
   std::chrono::steady_clock::time_point connected_at;
+  std::chrono::steady_clock::time_point stats_start_time;  // Time when stats recording started
   uint64_t total_partitions_processed;
   uint64_t total_bytes_sent;
   uint64_t total_bytes_received;
   DeviceProfileData profile;
+  
+  // Per-packet throughput tracking
+  std::chrono::steady_clock::time_point last_packet_time;  // Time of last packet
+  uint64_t last_packet_size;  // Size of last packet
+  double last_packet_throughput;  // Throughput of last packet (B/s)
+  
+  // Package count
+  uint64_t total_packets_sent;
+  uint64_t total_packets_received;
+  
+  // Epoch timestamps (microseconds)
+  uint64_t last_packet_start_epoch_us;  // When last packet started (us since epoch)
+  uint64_t last_packet_end_epoch_us;    // When last packet ended (us since epoch)
 
   DeviceLiveness()
       : device_id(-1),
         is_connected(false),
         total_partitions_processed(0),
         total_bytes_sent(0),
-        total_bytes_received(0) {}
+        total_bytes_received(0),
+        stats_start_time(std::chrono::steady_clock::now()),
+        last_packet_time(std::chrono::steady_clock::now()),
+        last_packet_size(0),
+        last_packet_throughput(0.0),
+        total_packets_sent(0),
+        total_packets_received(0),
+        last_packet_start_epoch_us(0),
+        last_packet_end_epoch_us(0) {}
 
   std::string DebugString() const;
 };
@@ -79,6 +101,27 @@ class DevicePartitionTracker {
   void RecordBytesSent(int64_t device_id, uint64_t bytes);
   void RecordBytesReceived(int64_t device_id, uint64_t bytes);
 
+  // Throughput calculation (bytes per second)
+  double GetUploadThroughput(int64_t device_id) const;
+  double GetDownloadThroughput(int64_t device_id) const;
+  double GetLastPacketThroughput(int64_t device_id) const;  // Throughput of last packet
+  double GetAveragePacketThroughput(int64_t device_id) const;  // Average throughput across all packets
+  
+  // Get packet epoch timestamps for a device
+  void GetLastPacketEpochTimestamps(int64_t device_id, uint64_t& start_us, uint64_t& end_us) const;
+  
+  // Server-level aggregated statistics
+  uint64_t GetServerTotalBytesSent() const;
+  uint64_t GetServerTotalBytesReceived() const;
+  double GetServerAggregatedThroughput() const;  // All bytes / total time for all connected devices
+
+  // Performance logging to file
+  void LogThroughputToFile(int64_t device_id, const std::string& direction, 
+                           uint64_t bytes, double throughput, 
+                           uint64_t epoch_start_us, uint64_t epoch_end_us) const;
+  void InitPerfLog(const std::string& log_path = "./perf.log");
+  std::string GetPerfLogPath() const;
+
   // Connection management
   void SetDeviceConnection(int64_t device_id,
                            const uevent::ConnectionUeventPtr& conn);
@@ -101,6 +144,7 @@ class DevicePartitionTracker {
 
   // State
   mutable std::mutex mutex_;
+  mutable std::mutex perf_log_mutex_;
 
   // Device liveness and ID management
   std::unordered_set<DeviceLivenessPtr> devices_set_;
@@ -112,6 +156,9 @@ class DevicePartitionTracker {
 
   // Connection management
   std::unordered_map<int64_t, uevent::ConnectionUeventPtr> device_conn_;
+  
+  // Performance log file path
+  std::string perf_log_path_;
 };
 
 }  // namespace backend
