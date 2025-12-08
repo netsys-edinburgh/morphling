@@ -231,34 +231,8 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
       return;
     }
 
-    auto partition = DecodeRequest(raw_data, datasize);
-    
-    // Record bytes received (download request from server)
-    DEVICE_TRACKER.RecordBytesReceived(partition.dev_id, datasize);
-    
-    // Log download throughput after receiving request
-    double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition.dev_id);
-    double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
-    double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
-    double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
-    
-    uint64_t start_us, end_us;
-    DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us, end_us);
-    
-    LOG_INFO << "[RequestCb] Device " << partition.dev_id 
-             << " - Received: " << datasize << " bytes"
-             << " [" << start_us << " -> " << end_us << " us]"
-             << ", Download TP: " << download_tp << " B/s"
-             << ", Last Packet TP: " << last_packet_tp << " B/s"
-             << ", Avg Packet TP: " << avg_packet_tp << " B/s"
-             << " | Server Total TP: " << server_tp << " B/s";
-    
-    // Log throughput to file
-    DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, "DOWNLOAD",
-                                       datasize, download_tp, start_us, end_us);
-    
-    HandleMatMul(conn, partition);
-    LOG_DEBUG << "Processed partition: " << partition.DebugString();
+    // Decode and dispatch message
+    DecodeAndDispatch(conn, raw_data, datasize);
   }
 }
 
@@ -342,6 +316,30 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
   LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
             << "us";
+
+  // Record bytes received (download request from server)
+  DEVICE_TRACKER.RecordBytesReceived(partition.dev_id, size);
+  
+  // Log download throughput after receiving request
+  double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition.dev_id);
+  double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
+  double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+  double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
+  
+  uint64_t start_us, end_us;
+  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us, end_us);
+  
+  LOG_INFO << "[HandleMatMulRequest] Device " << partition.dev_id 
+           << " - Received: " << size << " bytes"
+           << " [" << start_us << " -> " << end_us << " us]"
+           << ", Download TP: " << download_tp << " B/s"
+           << ", Last Packet TP: " << last_packet_tp << " B/s"
+           << ", Avg Packet TP: " << avg_packet_tp << " B/s"
+           << " | Server Total TP: " << server_tp << " B/s";
+  
+  // Log throughput to file
+  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, "DOWNLOAD",
+                                     size, download_tp, start_us, end_us);
 
   // Process the partition
   HandleMatMul(conn, partition);
