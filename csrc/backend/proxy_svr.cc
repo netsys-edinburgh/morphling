@@ -5,6 +5,7 @@
 #include "base/my_uuid.h"
 #include "common/generator.h"
 #include "common/stats.h"
+#include "device_tracker.h"
 #include "network/eventloop_libevent.h"
 #include "network/listener_libevent.h"
 #include "partition_tracker.h"
@@ -100,6 +101,32 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
 
     // Decode and dispatch message
     DecodeAndDispatch(conn, raw_data, datasize);
+    
+    // Record bytes received for throughput tracking
+    MatrixPartition temp_partition;
+    temp_partition.Deserialize(raw_data, datasize, SerializationFormat::PROTOBUF);
+    DEVICE_TRACKER.RecordBytesReceived(temp_partition.dev_id, datasize);
+    
+    // Log throughput after receiving data from device
+    double download_tp = DEVICE_TRACKER.GetDownloadThroughput(temp_partition.dev_id);
+    double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(temp_partition.dev_id);
+    double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(temp_partition.dev_id);
+    double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
+    
+    uint64_t start_us, end_us;
+    DEVICE_TRACKER.GetLastPacketEpochTimestamps(temp_partition.dev_id, start_us, end_us);
+    
+    LOG_INFO << "[RequestCb] Device " << temp_partition.dev_id 
+             << " - Received: " << datasize << " bytes"
+             << " [" << start_us << " -> " << end_us << " us]"
+             << ", Download TP: " << download_tp << " B/s"
+             << ", Last Packet TP: " << last_packet_tp << " B/s"
+             << ", Avg Packet TP: " << avg_packet_tp << " B/s"
+             << " | Server Total TP: " << server_tp << " B/s";
+    
+    // Log throughput to file
+    DEVICE_TRACKER.LogThroughputToFile(temp_partition.dev_id, "DOWNLOAD",
+                                       datasize, download_tp, start_us, end_us);
   }
 }
 
@@ -315,6 +342,10 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   LOG_INFO << "[ProxySvrImpl::Initialize] Config - num_device="
            << ctx_.num_device << ", thread=" << ctx_.thread;
 
+  // Initialize performance logging
+  DEVICE_TRACKER.InitPerfLog("./perf.log");
+  LOG_INFO << "[ProxySvrImpl::Initialize] Performance logging initialized at ./perf.log";
+
   loop_ = loop;
 
   auto create_handle_cb = bind(ProxySvrHandle::CreateMyself, ref(ctx_), _1);
@@ -371,18 +402,6 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   handle->ConnectionSuccessCb(conn);
   // loop->RunInLoop(bind(&ProxySvrHandle::ConnectionSuccessCb, handle, conn));
   loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
-
-  // std::string conn_addr = conn->GetPeerAddress().ToString();
-  // conn_map_[conn_addr] = conn;
-
-  // Get device_id and store connection in tracker
-  // auto& tracker = DEVICE_TRACKER;
-  // int64_t device_id = tracker.GetDeviceIdByAddr(conn_addr);
-  // if (device_id != -1) {
-  //   DEVICE_TRACKER.SetDeviceConnection(device_id, conn);
-  //   LOG_DEBUG << "[ConnectionSuccessCb] Set connection for device_id "
-  //             << device_id;
-  // }
 }
 
 void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
@@ -392,6 +411,13 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
   handle->ConnectionClosedCb(conn);
   loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
+
+  // Unregister device from tracker
+  string client_addr = conn->GetPeerAddress().ToString();
+  int64_t device_id = DEVICE_TRACKER.GetDeviceIdByAddr(client_addr);
+  if (device_id != -1) {
+    DEVICE_TRACKER.UnregisterDevice(device_id);
+  }
 
   // loop->RunInLoop(bind(&ProxySvrHandle::ConnectionClosedCb, handle, conn));
 
