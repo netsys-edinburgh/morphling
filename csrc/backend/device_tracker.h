@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "base/log_file.h"
 #include "morphling.pb.h"
 #include "network/uevent.h"
 #include "partition_tracker.h"
@@ -119,6 +120,12 @@ class DevicePartitionTracker {
   void LogThroughputToFile(int64_t device_id, const std::string& direction, 
                            uint64_t bytes, double throughput, 
                            uint64_t epoch_start_us, uint64_t epoch_end_us) const;
+  
+  // Virtual time logging to file (separate log entry with virtual time info)
+  void LogVirtualTimeEvent(int64_t device_id, const std::string& phase, 
+                           const std::string& event,
+                           uint64_t vt_start_us, uint64_t vt_end_us) const;
+  
   void InitPerfLog(const std::string& log_path = "./perf.log");
   std::string GetPerfLogPath() const;
 
@@ -157,8 +164,8 @@ class DevicePartitionTracker {
   // Connection management
   std::unordered_map<int64_t, uevent::ConnectionUeventPtr> device_conn_;
   
-  // Performance log file path
-  std::string perf_log_path_;
+  // Performance log file using LogFile class
+  mutable std::unique_ptr<base::LogFile> perf_log_file_;
 };
 
 }  // namespace backend

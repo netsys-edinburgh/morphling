@@ -497,31 +497,27 @@ void DevicePartitionTracker::DumpState() const {
 void DevicePartitionTracker::InitPerfLog(const std::string& log_path) {
   std::lock_guard<std::mutex> lock(perf_log_mutex_);
   
-  // Only initialize once - check if path is already set
-  if (!perf_log_path_.empty()) {
-    LOG_DEBUG << "[DeviceTracker] Performance log already initialized at: " 
-              << perf_log_path_;
+  // Only initialize once - check if file is already set
+  if (perf_log_file_) {
+    LOG_DEBUG << "[DeviceTracker] Performance log already initialized";
     return;
   }
   
-  perf_log_path_ = log_path;
+  // Create LogFile with rollSize of 512MB, thread-safe, flush every 3 seconds
+  perf_log_file_ = std::make_unique<base::LogFile>(log_path, 512 * 1024 * 1024, true, 3);
   
-  // Create header for the log file (only on first initialization)
-  std::ofstream log_file(perf_log_path_, std::ios::out | std::ios::trunc);
-  if (log_file.is_open()) {
-    // CSV header format
-    log_file << "timestamp_us,device_id,direction,bytes,throughput_b_s,"
-             << "epoch_start_us,epoch_end_us,packet_duration_us\n";
-    log_file.close();
-    LOG_INFO << "[DeviceTracker] Performance log initialized at: " << log_path;
-  } else {
-    LOG_WARN << "[DeviceTracker] Failed to create performance log file: " << log_path;
-  }
+  // Write header for the log file
+  const char* header = "timestamp_us,device_id,direction,bytes,throughput_b_s,"
+                       "epoch_start_us,epoch_end_us,packet_duration_us\n";
+  perf_log_file_->append(header, strlen(header));
+  perf_log_file_->flush();
+  
+  LOG_INFO << "[DeviceTracker] Performance log initialized at: " << log_path;
 }
 
 std::string DevicePartitionTracker::GetPerfLogPath() const {
-  std::lock_guard<std::mutex> lock(perf_log_mutex_);
-  return perf_log_path_;
+  // perf_log_path_ removed; returning empty string for compatibility
+  return "";
 }
 
 void DevicePartitionTracker::LogThroughputToFile(int64_t device_id, 
@@ -530,12 +526,10 @@ void DevicePartitionTracker::LogThroughputToFile(int64_t device_id,
                                                   double throughput,
                                                   uint64_t epoch_start_us, 
                                                   uint64_t epoch_end_us) const {
-  if (perf_log_path_.empty()) {
+  if (!perf_log_file_) {
     return;  // Log file not initialized
   }
 
-  std::lock_guard<std::mutex> lock(perf_log_mutex_);
-  
   // Get current timestamp
   auto now = std::chrono::system_clock::now();
   uint64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -545,18 +539,47 @@ void DevicePartitionTracker::LogThroughputToFile(int64_t device_id,
   uint64_t packet_duration_us = (epoch_end_us > epoch_start_us) ? 
       (epoch_end_us - epoch_start_us) : 0;
   
-  // Append to log file in CSV format
-  std::ofstream log_file(perf_log_path_, std::ios::app);
-  if (log_file.is_open()) {
-    log_file << now_us << "," 
-             << device_id << "," 
-             << direction << "," 
-             << bytes << "," 
-             << std::fixed << std::setprecision(2) << throughput << ","
-             << epoch_start_us << "," 
-             << epoch_end_us << "," 
-             << packet_duration_us << "\n";
-    log_file.close();
+  // Format and append to log file
+  char buf[256];
+  int len = snprintf(buf, sizeof(buf),
+                     "%lu,%ld,%s,%lu,%.2f,%lu,%lu,%lu\n",
+                     now_us, device_id, direction.c_str(), bytes, throughput,
+                     epoch_start_us, epoch_end_us, packet_duration_us);
+  if (len > 0 && len < (int)sizeof(buf)) {
+    perf_log_file_->append(buf, len);
+  }
+}
+
+void DevicePartitionTracker::LogVirtualTimeEvent(int64_t device_id, 
+                                                  const std::string& phase,
+                                                  const std::string& event,
+                                                  uint64_t vt_start_us,
+                                                  uint64_t vt_end_us) const {
+  if (!perf_log_file_) {
+    LOG_DEBUG << "[LogVirtualTimeEvent] perf_log_file_ not initialized, skipping";
+    return;
+  }
+
+  // Get current system timestamp
+  auto now = std::chrono::system_clock::now();
+  uint64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+      now.time_since_epoch()).count();
+  
+  uint64_t vt_duration_us = (vt_end_us > vt_start_us) ? 
+      (vt_end_us - vt_start_us) : 0;
+  
+  // Format and append to log file
+  // Format: VTIME,timestamp_us,device_id,phase,event,vt_start_us,vt_end_us,vt_duration_us
+  char buf[256];
+  int len = snprintf(buf, sizeof(buf),
+                     "VTIME,%lu,%ld,%s,%s,%lu,%lu,%lu\n",
+                     now_us, device_id, phase.c_str(), event.c_str(),
+                     vt_start_us, vt_end_us, vt_duration_us);
+  if (len > 0 && len < (int)sizeof(buf)) {
+    perf_log_file_->append(buf, len);
+    LOG_DEBUG << "[LogVirtualTimeEvent] Appended VTIME event for device " << device_id;
+  } else {
+    LOG_WARN << "[LogVirtualTimeEvent] Format error, len=" << len;
   }
 }
 
@@ -571,6 +594,7 @@ void DevicePartitionTracker::Reset() {
   devices_set_.clear();
   device_conn_.clear();
 }
+
 
 }  // namespace backend
 }  // namespace morphling
