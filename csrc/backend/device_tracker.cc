@@ -496,9 +496,17 @@ void DevicePartitionTracker::DumpState() const {
 
 void DevicePartitionTracker::InitPerfLog(const std::string& log_path) {
   std::lock_guard<std::mutex> lock(perf_log_mutex_);
+  
+  // Only initialize once - check if path is already set
+  if (!perf_log_path_.empty()) {
+    LOG_DEBUG << "[DeviceTracker] Performance log already initialized at: " 
+              << perf_log_path_;
+    return;
+  }
+  
   perf_log_path_ = log_path;
   
-  // Create header for the log file
+  // Create header for the log file (only on first initialization)
   std::ofstream log_file(perf_log_path_, std::ios::out | std::ios::trunc);
   if (log_file.is_open()) {
     // CSV header format

@@ -203,8 +203,8 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
     packsize = ntohl(packsize);
     size_t datasize = packsize + sizeof(packsize);
 
-    LOG_DEBUG << "packsize: " << packsize << ", datasize: " << datasize
-              << ", readable: " << readable;
+    // LOG_DEBUG << "packsize: " << packsize << ", datasize: " << datasize
+    //           << ", readable: " << readable;
     if (readable < datasize) {
       // std::unique_ptr<unsigned char[]> data(new unsigned char[readable]);
       // unsigned char* raw_data = data.get();

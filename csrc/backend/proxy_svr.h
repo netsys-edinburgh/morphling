@@ -108,7 +108,9 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   void DecRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] += count; }
 
   // Connection and device queries - delegates to DevicePartitionTracker
-  // size_t GetConnectionCount() const { return conn_map_.size(); }
+  size_t GetConnectionCount() const {
+    return DEVICE_TRACKER.GetConnectedDeviceCount();
+  }
   size_t GetRegisteredDeviceCount() const {
     return DEVICE_TRACKER.GetConnectedDeviceCount();
   }
@@ -204,7 +206,7 @@ class ProxySvr {
     svr_->DispatchMatMulAsync(mat_a, mat_b);
   }
   torch::Tensor WaitMatMul(int oid) { return svr_->WaitMatMul(oid); }
-  // size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }
+  size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }
   size_t GetRegisteredDeviceCount() const {
     return svr_->GetRegisteredDeviceCount();
   }
