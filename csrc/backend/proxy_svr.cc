@@ -698,6 +698,9 @@ void ProxySvrHandle::SendIdlePartitions() {
 
   // Send each IDLE partition
   for (const auto& part_info : idle_partitions) {
+    // Update partition's dev_id to match the assigned device
+    part_info->partition->dev_id = part_info->owner_device_id;
+    
     LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
               << " (oid=" << part_info->oid << ") to device "
               << part_info->owner_device_id;
