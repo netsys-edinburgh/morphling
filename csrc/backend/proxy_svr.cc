@@ -180,6 +180,9 @@ void ProxySvrHandle::HandleRegisterResponse(const ConnectionUeventPtr& conn,
 void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                                   const void* payload, size_t size) {
   auto start = std::chrono::high_resolution_clock::now();
+  
+  // Record RECEIVE start time (virtual time)
+  uint64_t vt_receive_start = VirtualClockNow();
 
   // Use standard Deserialize interface
   MatrixPartition partition;
@@ -242,6 +245,11 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                    .count()
             << "us";
 
+  // Record RECEIVE end time (virtual time)
+  uint64_t vt_receive_end = VirtualClockNow();
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, "RECEIVE", "END",
+                                     vt_receive_start, vt_receive_end);
+
   // Mark partition as FINISHED and remove from tracker
   PARTITION_TRACKER.MarkPartitionFinished(part_key);
   PARTITION_TRACKER.RemovePartitionByKey(part_key);
@@ -261,11 +269,20 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
   }
 
   string client_addr = conn->GetPeerAddress().ToString();
+  
   task_queue_.push_back([this, conn, partition, client_addr]() {
+    // Record SEND start time (virtual time)
+    uint64_t vt_send_start = VirtualClockNow();
+    
     // Use protobuf serialization instead of binary
     auto buffer = partition->Serialize();
     conn->SendData(buffer->GetBuffer(), buffer->GetSize());
     conn_inflight_[client_addr] += 1;
+    
+    // Record SEND end time (virtual time)
+    uint64_t vt_send_end = VirtualClockNow();
+    DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, "SEND", "END",
+                                       vt_send_start, vt_send_end);
   });
 
   if (conn_inflight_[client_addr] >= ctx_.max_inflight) {
@@ -339,6 +356,10 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
            << ", listen_port=" << ctx_.listen_port;
   LOG_INFO << "[ProxySvrImpl::Initialize] Config - num_device="
            << ctx_.num_device << ", thread=" << ctx_.thread;
+
+  // Initialize virtual clock
+  base::VirtualClock::instance().Initialize();
+  LOG_INFO << "[ProxySvrImpl::Initialize] Virtual clock initialized";
 
   // Initialize performance logging
   DEVICE_TRACKER.InitPerfLog("./perf.log");

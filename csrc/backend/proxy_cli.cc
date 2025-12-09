@@ -92,6 +92,14 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
 void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
                                      const MatrixPartition& partition) {
   auto part_key = partition.GetPartitionKey();
+  
+  // Record COMPUTE start time (virtual time)
+  uint64_t vt_compute_start = VirtualClockNow();
+  LOG_INFO << "[HandlePartition] Logging COMPUTE START for device " << partition.dev_id 
+           << ", vt_start=" << vt_compute_start;
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, "COMPUTE", "START",
+                                     vt_compute_start, vt_compute_start);
+  
   // create tensors from partition
   auto [r_ptr, r_size] = partition.mat[0];
   auto [c_ptr, c_size] = partition.mat[1];
@@ -117,6 +125,13 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   auto mm_time = duration.count();
   LOG_DEBUG << part_key << " Matmul real time: " << duration.count()
             << "us, Matmul logical time: " << mm_time;
+
+  // Record COMPUTE end time (virtual time)
+  uint64_t vt_compute_end = VirtualClockNow();
+  LOG_INFO << "[HandlePartition] Logging COMPUTE END for device " << partition.dev_id 
+           << ", vt_start=" << vt_compute_start << ", vt_end=" << vt_compute_end;
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, "COMPUTE", "END",
+                                     vt_compute_start, vt_compute_end);
 
   MatrixPartition response = partition;
   response.h_dim = result.size(1);
@@ -155,6 +170,10 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
 
   LOG_DEBUG << "ProxyCliImpl connected to:" << ctx_.listen_ip << ":"
             << ctx_.listen_port;
+
+  // Initialize virtual clock
+  base::VirtualClock::instance().Initialize();
+  LOG_INFO << "[ProxyCliImpl::Initialize] Virtual clock initialized";
 
   // Initialize performance logging
   DEVICE_TRACKER.InitPerfLog("./perf.log");

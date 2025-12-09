@@ -67,3 +67,14 @@ inline uint64_t CurrentTimeMicros() {
              std::chrono::system_clock::now().time_since_epoch())
       .count();
 }
+
+// Virtual clock functions (convenience wrappers)
+#include "base/virtual_clock.h"
+
+inline uint64_t VirtualClockNow() {
+  return base::VirtualClock::instance().GetCurrentTime();
+}
+
+inline uint64_t VirtualClockElapsed() {
+  return base::VirtualClock::instance().GetElapsedTime();
+}
