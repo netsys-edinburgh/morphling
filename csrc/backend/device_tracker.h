@@ -127,6 +127,15 @@ class DevicePartitionTracker {
                            uint64_t vt_start_us, uint64_t vt_end_us) const;
   
   void InitPerfLog(const std::string& log_path = "./perf.log");
+  
+  // Initialize separate performance logs for Server and each Device
+  // This avoids multi-process race conditions by giving each entity its own log file
+  // log_dir: directory to store logs, e.g., "./logs"
+  // entity_type: "server" or "device"
+  // entity_id: device_id for devices, ignored for server
+  void InitSeparatePerfLog(const std::string& log_dir, 
+                           const std::string& entity_type,
+                           int64_t entity_id = -1);
   std::string GetPerfLogPath() const;
 
   // Connection management

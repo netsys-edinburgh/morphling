@@ -175,9 +175,10 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
   base::VirtualClock::instance().Initialize();
   LOG_INFO << "[ProxyCliImpl::Initialize] Virtual clock initialized";
 
-  // Initialize performance logging
-  DEVICE_TRACKER.InitPerfLog("./perf.log");
-  LOG_INFO << "[ProxyCliImpl::Initialize] Performance logging initialized at ./perf.log";
+  // Initialize performance logging (client side)
+  // Client processes requests from all devices, so we use device ID 0 for client-side processing
+  DEVICE_TRACKER.InitSeparatePerfLog("./logs", "device", 0);
+  LOG_INFO << "[ProxyCliImpl::Initialize] Performance logging initialized at ./logs/perf_device_0.log";
 
   // CUDA context warmup and do random matmul (skip if no CUDA available)
   if (torch::cuda::is_available()) {

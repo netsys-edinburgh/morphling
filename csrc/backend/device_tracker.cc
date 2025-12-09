@@ -515,6 +515,54 @@ void DevicePartitionTracker::InitPerfLog(const std::string& log_path) {
   LOG_INFO << "[DeviceTracker] Performance log initialized at: " << log_path;
 }
 
+void DevicePartitionTracker::InitSeparatePerfLog(const std::string& log_dir,
+                                                  const std::string& entity_type,
+                                                  int64_t entity_id) {
+  std::lock_guard<std::mutex> lock(perf_log_mutex_);
+  
+  // Only initialize once
+  if (perf_log_file_) {
+    LOG_DEBUG << "[DeviceTracker] Performance log already initialized";
+    return;
+  }
+  
+  // Generate file path based on entity type
+  std::string log_path;
+  if (entity_type == "server") {
+    log_path = log_dir + "/perf_server.log";
+  } else if (entity_type == "device") {
+    log_path = log_dir + "/perf_device_" + std::to_string(entity_id) + ".log";
+  } else {
+    LOG_ERROR << "[DeviceTracker] Unknown entity_type: " << entity_type;
+    return;
+  }
+  
+  // Create log directory if it doesn't exist
+  int ret = system(("mkdir -p " + log_dir).c_str());
+  if (ret != 0) {
+    LOG_WARN << "[DeviceTracker] Failed to create log directory: " << log_dir;
+  }
+  
+  // Create LogFile with rollSize of 512MB, thread-safe, flush every 3 seconds
+  perf_log_file_ = std::make_unique<base::LogFile>(log_path, 512 * 1024 * 1024, true, 3);
+  
+  // Write header for the log file with VTIME support
+  const char* header = "timestamp_us,device_id,direction,bytes,throughput_b_s,"
+                       "epoch_start_us,epoch_end_us,packet_duration_us\n";
+  perf_log_file_->append(header, strlen(header));
+  
+  // Write a comment line indicating this is a separate log
+  std::string comment = "# Separate performance log for " + entity_type;
+  if (entity_type == "device") {
+    comment += " " + std::to_string(entity_id);
+  }
+  comment += "\n";
+  perf_log_file_->append(comment.c_str(), comment.length());
+  perf_log_file_->flush();
+  
+  LOG_INFO << "[DeviceTracker] Separate performance log initialized at: " << log_path;
+}
+
 std::string DevicePartitionTracker::GetPerfLogPath() const {
   // perf_log_path_ removed; returning empty string for compatibility
   return "";
