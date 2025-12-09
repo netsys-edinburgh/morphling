@@ -361,9 +361,9 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   base::VirtualClock::instance().Initialize();
   LOG_INFO << "[ProxySvrImpl::Initialize] Virtual clock initialized";
 
-  // Initialize performance logging
-  DEVICE_TRACKER.InitPerfLog("./perf.log");
-  LOG_INFO << "[ProxySvrImpl::Initialize] Performance logging initialized at ./perf.log";
+  // Initialize performance logging (server side)
+  DEVICE_TRACKER.InitSeparatePerfLog("./logs", "server");
+  LOG_INFO << "[ProxySvrImpl::Initialize] Performance logging initialized at ./logs/perf_server.log";
 
   loop_ = loop;
 

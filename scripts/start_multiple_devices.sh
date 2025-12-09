@@ -59,7 +59,7 @@ for i in $(seq 0 $((NUM_DEVICES - 1))); do
       --dl_lat 10 \
       --backend proxy \
       --cfg config/proxy/cli.ini \
-      --proxy_host 155.98.37.203:39000 &
+      --proxy_host 127.0.0.1:39000 &
     
     # Save the PID
     pids+=($!)
