@@ -152,6 +152,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   // singleton
 
   std::atomic_int mm_count_{0};
+  std::atomic_int gemm_id_count_{0};  // global gemm operation id counter
   std::vector<torch::Tensor> outputs_;
   std::vector<std::atomic_ullong> rsp_cb_counts_;
   std::vector<std::unordered_set<TensorKey>> device_tensors_;
