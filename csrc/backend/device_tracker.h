@@ -117,12 +117,14 @@ class DevicePartitionTracker {
   double GetServerAggregatedThroughput() const;  // All bytes / total time for all connected devices
 
   // Performance logging to file
-  void LogThroughputToFile(int64_t device_id, const std::string& direction, 
+  void LogThroughputToFile(int64_t device_id, int64_t gemm_id, 
+                           const std::string& direction, 
                            uint64_t bytes, double throughput, 
                            uint64_t epoch_start_us, uint64_t epoch_end_us) const;
   
   // Virtual time logging to file (separate log entry with virtual time info)
-  void LogVirtualTimeEvent(int64_t device_id, const std::string& phase, 
+  void LogVirtualTimeEvent(int64_t device_id, int64_t gemm_id,
+                           const std::string& phase, 
                            const std::string& event,
                            uint64_t vt_start_us, uint64_t vt_end_us) const;
   

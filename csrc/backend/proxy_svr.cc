@@ -217,7 +217,7 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
            << " | Server Total TP: " << server_tp << " B/s";
   
   // Log throughput to file
-  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, "DOWNLOAD",
+  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
                                      size, download_tp, start_us, end_us);
 
   auto [o_ptr, o_size] = partition.mat[0];
@@ -247,7 +247,7 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
 
   // Record RECEIVE end time (virtual time)
   uint64_t vt_receive_end = VirtualClockNow();
-  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, "RECEIVE", "END",
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "END",
                                      vt_receive_start, vt_receive_end);
 
   // Mark partition as FINISHED and remove from tracker
@@ -281,7 +281,7 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
     
     // Record SEND end time (virtual time)
     uint64_t vt_send_end = VirtualClockNow();
-    DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, "SEND", "END",
+    DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id, "SEND", "END",
                                        vt_send_start, vt_send_end);
   });
 
@@ -541,6 +541,7 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
   // SendIdlePartitions
   for (auto& partition : partitions) {
     partition->oid = mm_count_;
+    partition->gemm_id = gemm_id_count_;  // assign global gemm_id
 
     // Add partition to tracker with ownership (automatically marked as IDLE)
     PARTITION_TRACKER.AddPartition(
@@ -548,15 +549,18 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
 
     LOG_DEBUG << "[DispatchMatMulAsync] Created IDLE partition key="
               << partition->GetPartitionKey()
-              << ", dev_id=" << partition->dev_id << ", oid=" << mm_count_;
+              << ", dev_id=" << partition->dev_id << ", oid=" << mm_count_
+              << ", gemm_id=" << partition->gemm_id;
   }
   auto end = std::chrono::high_resolution_clock::now();
   LOG_INFO << "[DispatchMatMulAsync] Created " << partitions.size()
            << " IDLE partitions in "
            << std::chrono::duration_cast<std::chrono::microseconds>(end - start)
                   .count()
-           << "us. Partitions will be sent by SendIdlePartitions timer.";
+           << "us. Partitions will be sent by SendIdlePartitions timer. gemm_id_count="
+           << gemm_id_count_;
   mm_count_++;
+  gemm_id_count_++;  // increment global gemm_id for next operation
 
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_->GetLoopHandle());
   loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));

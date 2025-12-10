@@ -546,10 +546,12 @@ void DevicePartitionTracker::InitSeparatePerfLog(const std::string& log_dir,
   // Create LogFile with rollSize of 512MB, thread-safe, flush every 3 seconds
   perf_log_file_ = std::make_unique<base::LogFile>(log_path, 512 * 1024 * 1024, true, 3);
   
-  // Write header for the log file with VTIME support
-  const char* header = "timestamp_us,device_id,direction,bytes,throughput_b_s,"
-                       "epoch_start_us,epoch_end_us,packet_duration_us\n";
-  perf_log_file_->append(header, strlen(header));
+  // Write headers for the log file
+  std::string vtime_header = "# VTIME format: VTIME,timestamp_us,device_id,gemm_id,phase,event,vt_start_us,vt_end_us,vt_duration_us\n";
+  std::string throughput_header = "# Throughput format: timestamp_us,device_id,gemm_id,direction,bytes,throughput_b_s,epoch_start_us,epoch_end_us,packet_duration_us\n";
+  
+  perf_log_file_->append(vtime_header.c_str(), vtime_header.length());
+  perf_log_file_->append(throughput_header.c_str(), throughput_header.length());
   
   // Write a comment line indicating this is a separate log
   std::string comment = "# Separate performance log for " + entity_type;
@@ -568,7 +570,7 @@ std::string DevicePartitionTracker::GetPerfLogPath() const {
   return "";
 }
 
-void DevicePartitionTracker::LogThroughputToFile(int64_t device_id, 
+void DevicePartitionTracker::LogThroughputToFile(int64_t device_id, int64_t gemm_id,
                                                   const std::string& direction,
                                                   uint64_t bytes, 
                                                   double throughput,
@@ -588,17 +590,18 @@ void DevicePartitionTracker::LogThroughputToFile(int64_t device_id,
       (epoch_end_us - epoch_start_us) : 0;
   
   // Format and append to log file
+  // Format: timestamp_us,device_id,gemm_id,direction,bytes,throughput,epoch_start_us,epoch_end_us,packet_duration_us
   char buf[256];
   int len = snprintf(buf, sizeof(buf),
-                     "%lu,%ld,%s,%lu,%.2f,%lu,%lu,%lu\n",
-                     now_us, device_id, direction.c_str(), bytes, throughput,
+                     "%lu,%ld,%ld,%s,%lu,%.2f,%lu,%lu,%lu\n",
+                     now_us, device_id, gemm_id, direction.c_str(), bytes, throughput,
                      epoch_start_us, epoch_end_us, packet_duration_us);
   if (len > 0 && len < (int)sizeof(buf)) {
     perf_log_file_->append(buf, len);
   }
 }
 
-void DevicePartitionTracker::LogVirtualTimeEvent(int64_t device_id, 
+void DevicePartitionTracker::LogVirtualTimeEvent(int64_t device_id, int64_t gemm_id,
                                                   const std::string& phase,
                                                   const std::string& event,
                                                   uint64_t vt_start_us,
@@ -617,15 +620,16 @@ void DevicePartitionTracker::LogVirtualTimeEvent(int64_t device_id,
       (vt_end_us - vt_start_us) : 0;
   
   // Format and append to log file
-  // Format: VTIME,timestamp_us,device_id,phase,event,vt_start_us,vt_end_us,vt_duration_us
+  // Format: VTIME,timestamp_us,device_id,gemm_id,phase,event,vt_start_us,vt_end_us,vt_duration_us
   char buf[256];
   int len = snprintf(buf, sizeof(buf),
-                     "VTIME,%lu,%ld,%s,%s,%lu,%lu,%lu\n",
-                     now_us, device_id, phase.c_str(), event.c_str(),
+                     "VTIME,%lu,%ld,%ld,%s,%s,%lu,%lu,%lu\n",
+                     now_us, device_id, gemm_id, phase.c_str(), event.c_str(),
                      vt_start_us, vt_end_us, vt_duration_us);
   if (len > 0 && len < (int)sizeof(buf)) {
     perf_log_file_->append(buf, len);
-    LOG_DEBUG << "[LogVirtualTimeEvent] Appended VTIME event for device " << device_id;
+    LOG_DEBUG << "[LogVirtualTimeEvent] Appended VTIME event for device " << device_id 
+              << " gemm_id " << gemm_id;
   } else {
     LOG_WARN << "[LogVirtualTimeEvent] Format error, len=" << len;
   }

@@ -451,6 +451,7 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
   gemm_data->set_h_dim(h_dim);
   gemm_data->set_dev_id(dev_id);
   gemm_data->set_oid(oid);
+  gemm_data->set_gemm_id(gemm_id);
   gemm_data->set_timestamp(timestamp);
 
   for (const auto& m : mat) {
@@ -562,10 +563,12 @@ void MatrixPartition::DeserializeProto(const void* data, size_t size) {
   h_dim = gemm_data.h_dim();
   dev_id = gemm_data.dev_id();
   oid = gemm_data.oid();
+  gemm_id = gemm_data.gemm_id();
   timestamp = gemm_data.timestamp();
 
   LOG_INFO << "Partition fields: version=" << version << ", row=" << row
-           << ", col=" << col << ", pivot=" << pivot << ", h_dim=" << h_dim;
+           << ", col=" << col << ", pivot=" << pivot << ", h_dim=" << h_dim
+           << ", gemm_id=" << gemm_id;
 
   // Extract tensor data pointers
   mat.clear();

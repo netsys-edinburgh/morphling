@@ -11,7 +11,9 @@ from collections import defaultdict
 import re
 
 def parse_vtime_event(line):
-    """Parse a VTIME event line and return (timestamp_us, line_content)"""
+    """Parse a VTIME event line and return (timestamp_us, line_content)
+    Format: VTIME,timestamp_us,device_id,gemm_id,phase,event,vt_start_us,vt_end_us,vt_duration_us
+    """
     parts = line.strip().split(',')
     if len(parts) >= 2:
         try:
@@ -21,8 +23,11 @@ def parse_vtime_event(line):
             return None
     return None
 
+
 def parse_throughput_event(line):
-    """Parse a throughput event line and return (timestamp_us, line_content)"""
+    """Parse a throughput event line and return (timestamp_us, line_content)
+    Format: timestamp_us,device_id,gemm_id,direction,bytes,throughput,epoch_start_us,epoch_end_us,packet_duration_us
+    """
     parts = line.strip().split(',')
     if len(parts) >= 1 and parts[0].isdigit():
         try:
@@ -98,6 +103,12 @@ def merge_logs(log_dir, output_file=None):
         
         print(f"  Loaded {event_count} events from {log_file.name}")
     
+    # Add headers if not found
+    if not header_written:
+        all_events.insert(0, (0, "# VTIME format: VTIME,timestamp_us,device_id,gemm_id,phase,event,vt_start_us,vt_end_us,vt_duration_us"))
+        all_events.insert(1, (0, "# Throughput format: timestamp_us,device_id,gemm_id,direction,bytes,throughput_b_s,epoch_start_us,epoch_end_us,packet_duration_us"))
+        header_written = True
+    
     if not all_events:
         print("Error: No events found in any log files")
         return False
@@ -114,15 +125,17 @@ def merge_logs(log_dir, output_file=None):
     
     # Print statistics
     vtime_count = sum(1 for _, line in all_events if line.startswith('VTIME,'))
-    throughput_count = sum(1 for _, line in all_events if line[0].isdigit())
+    throughput_count = sum(1 for _, line in all_events if line[0].isdigit() and not line.startswith('#'))
+    header_count = sum(1 for _, line in all_events if line.startswith('#'))
     
     print(f"\n" + "="*60)
     print(f"Merge completed successfully!")
     print(f"="*60)
     print(f"Output file: {output_file}")
-    print(f"Total events: {len(all_events) - 1}")  # -1 for header
+    print(f"Total events: {len(all_events) - header_count}")
     print(f"  VTIME events: {vtime_count}")
     print(f"  Throughput events: {throughput_count}")
+    print(f"  Headers/Comments: {header_count}")
     print(f"="*60)
     
     return True
