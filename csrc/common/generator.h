@@ -69,7 +69,7 @@ inline uint64_t CurrentTimeMicros() {
 }
 
 // Virtual clock functions (convenience wrappers)
-#include "base/virtual_clock.h"
+#include "timer/virtual_clock.h"
 
 inline uint64_t VirtualClockNow() {
   return base::VirtualClock::instance().GetCurrentTime();

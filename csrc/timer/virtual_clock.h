@@ -1,5 +1,5 @@
-#ifndef MUDUO_BASE_VIRTUAL_CLOCK_H
-#define MUDUO_BASE_VIRTUAL_CLOCK_H
+#ifndef MUDUO_TIMER_VIRTUAL_CLOCK_H
+#define MUDUO_TIMER_VIRTUAL_CLOCK_H
 
 #include <atomic>
 #include <chrono>
@@ -79,4 +79,4 @@ class VirtualClock {
 
 }  // namespace base
 
-#endif  // MUDUO_BASE_VIRTUAL_CLOCK_H
+#endif  // MUDUO_TIMER_VIRTUAL_CLOCK_H
