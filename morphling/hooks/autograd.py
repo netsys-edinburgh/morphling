@@ -9,6 +9,7 @@ from morphling.common import get_logger
 
 logger = get_logger()
 _backend: BaseBackend = None
+_enable_verification = False
 
 HOOK_TYPES = [
     "linear",
@@ -75,6 +76,14 @@ class LinearFunction(torch.autograd.Function):
         if bias is not None:
             output = output + bias.unsqueeze(0).expand_as(output)
 
+        if _enable_verification:
+            ref = torch.matmul(input, weight)
+            if bias is not None:
+                ref = ref + bias.unsqueeze(0).expand_as(ref)
+            assert torch.allclose(output, ref), (
+                f"Output is not close! input shape: {input.shape}, weight shape: {weight.shape}, max diff: {torch.max(torch.abs(output - ref))}"
+            )
+
         return output
 
     @staticmethod
@@ -119,6 +128,25 @@ class LinearFunction(torch.autograd.Function):
 
         if bias is not None and ctx.needs_input_grad[2]:
             grad_bias = grad_output.sum(0)
+
+        if _enable_verification:
+            if ctx.needs_input_grad[0]:
+                ref_grad_input = torch.matmul(grad_output, weight)
+                assert torch.allclose(grad_input, ref_grad_input), (
+                    f"grad_input is not close! max diff: {torch.max(torch.abs(grad_input - ref_grad_input))}"
+                )
+            if ctx.needs_input_grad[1]:
+                ref_grad_weight = torch.matmul(
+                    grad_output.transpose(-2, -1), input
+                ).transpose(-2, -1)
+                assert torch.allclose(grad_weight, ref_grad_weight), (
+                    f"grad_weight is not close! max diff: {torch.max(torch.abs(grad_weight - ref_grad_weight))}"
+                )
+            if bias is not None and ctx.needs_input_grad[2]:
+                ref_grad_bias = grad_output.sum(0)
+                assert torch.allclose(grad_bias, ref_grad_bias), (
+                    f"grad_bias is not close! max diff: {torch.max(torch.abs(grad_bias - ref_grad_bias))}"
+                )
 
         return grad_input, grad_weight, grad_bias
 

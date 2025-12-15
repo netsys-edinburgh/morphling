@@ -22,27 +22,65 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import morphling
 from morphling.backend import AutoBackend
+from morphling.entrypoint import DeviceConfigArguments, ModelConfigArguments
 from morphling.hooks import apply_hooks
-from morphling.entrypoint import ModelConfigArguments, DeviceConfigArguments
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run server-only for DeviceEmulator")
-    parser.add_argument("--backend", type=str, default="proxy",
-                        help="Backend to use: proxy, mqtt, rabbitmq, amqp")
-    parser.add_argument("--model_name", type=str, default=None,
-                        help="(Optional) model name to load for the server")
-    parser.add_argument("--block_size", type=int, default=1024,
-                        help="Block size used by some backends")
-    parser.add_argument("--no-model", dest="load_model", action="store_false",
-                        help="Do not load the model; only start backend")
-    parser.add_argument("--no-wait", dest="no_wait", action="store_true",
-                        help="Start immediately without waiting for any devices")
-    parser.add_argument("--enable-cache", dest="enable_cache", action="store_true",
-                        help="Enable client-side caching (for proxy backend)")
-    parser.add_argument("--enable-hooks", dest="enable_hooks", action="store_true",
-                        help="Enable hooks for distributed computation (apply_hooks)")
-    parser.set_defaults(load_model=True, enable_cache=False, enable_hooks=False, no_wait=False)
+    parser = argparse.ArgumentParser(
+        description="Run server-only for DeviceEmulator"
+    )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="proxy",
+        help="Backend to use: proxy, mqtt, rabbitmq, amqp",
+    )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default=None,
+        help="(Optional) model name to load for the server",
+    )
+    parser.add_argument(
+        "--block_size",
+        type=int,
+        default=1024,
+        help="Block size used by some backends",
+    )
+    parser.add_argument(
+        "--no-model",
+        dest="load_model",
+        action="store_false",
+        help="Do not load the model; only start backend",
+    )
+    parser.add_argument(
+        "--no-wait",
+        dest="no_wait",
+        action="store_true",
+        help="Start immediately without waiting for any devices",
+    )
+    parser.add_argument(
+        "--enable-cache",
+        dest="enable_cache",
+        action="store_true",
+        help="Enable client-side caching (for proxy backend)",
+    )
+    parser.add_argument(
+        "--enable-hooks",
+        dest="enable_hooks",
+        action="store_true",
+        help="Enable hooks for distributed computation (apply_hooks)",
+    )
+    parser.add_argument(
+        "--enable-verification",
+        dest="enable_verification",
+        action="store_true",
+        help="Enable output verification in hooks (for debugging)",
+    )
+    parser.set_defaults(
+        load_model=True, enable_cache=False, enable_hooks=False, no_wait=False
+    )
     return parser.parse_args()
 
 
@@ -53,7 +91,9 @@ async def start_backend_async(backend_name: str, block_size: int):
     return backend
 
 
-def start_backend_sync(backend_name: str, block_size: int, enable_cache: bool = False):
+def start_backend_sync(
+    backend_name: str, block_size: int, enable_cache: bool = False
+):
     # Some backends (like mqtt/proxy) may use synchronous initialization
     backend = None
     if backend_name in ("mqtt", "proxy"):
@@ -63,7 +103,13 @@ def start_backend_sync(backend_name: str, block_size: int, enable_cache: bool = 
             if backend_name == "proxy":
                 # ProxySvr.initialize() expects a config file path and optional cache flag
                 import os
-                config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "proxy", "svr.ini")
+
+                config_path = os.path.join(
+                    os.path.dirname(os.path.dirname(__file__)),
+                    "config",
+                    "proxy",
+                    "svr.ini",
+                )
 
                 # Check if initialize accepts cache parameter
                 if enable_cache and hasattr(backend, "set_cache_enabled"):
@@ -84,13 +130,17 @@ def start_backend_sync(backend_name: str, block_size: int, enable_cache: bool = 
     else:
         # Use asyncio for rabbitmq/amqp style backends
         loop = asyncio.get_event_loop()
-        backend = loop.run_until_complete(start_backend_async(backend_name, block_size))
+        backend = loop.run_until_complete(
+            start_backend_async(backend_name, block_size)
+        )
     return backend
 
 
-def wait_for_devices(backend, min_devices: int, timeout: int = 120, no_wait: bool = False):
+def wait_for_devices(
+    backend, min_devices: int, timeout: int = 120, no_wait: bool = False
+):
     """Wait for minimum number of devices to connect
-    
+
     Args:
         backend: The backend instance
         min_devices: Minimum devices required before starting
@@ -99,9 +149,15 @@ def wait_for_devices(backend, min_devices: int, timeout: int = 120, no_wait: boo
     """
     if no_wait:
         print("No-wait mode: Starting immediately without waiting for devices")
-        return backend.get_connection_count() if hasattr(backend, "get_connection_count") else 0
-    
-    print(f"Waiting for at least {min_devices} device(s) to connect (timeout: {timeout}s)...")
+        return (
+            backend.get_connection_count()
+            if hasattr(backend, "get_connection_count")
+            else 0
+        )
+
+    print(
+        f"Waiting for at least {min_devices} device(s) to connect (timeout: {timeout}s)..."
+    )
     start_time = time.time()
 
     while time.time() - start_time < timeout:
@@ -109,7 +165,9 @@ def wait_for_devices(backend, min_devices: int, timeout: int = 120, no_wait: boo
             if hasattr(backend, "get_connection_count"):
                 connection_count = backend.get_connection_count()
                 elapsed = int(time.time() - start_time)
-                print(f"[{elapsed}s] Connected devices: {connection_count}/{min_devices}")
+                print(
+                    f"[{elapsed}s] Connected devices: {connection_count}/{min_devices}"
+                )
 
                 if connection_count >= min_devices:
                     print(f"✓ {connection_count} device(s) connected!")
@@ -123,39 +181,57 @@ def wait_for_devices(backend, min_devices: int, timeout: int = 120, no_wait: boo
             print(f"Error checking connection count: {e}")
             time.sleep(2)
 
-    final_count = backend.get_connection_count() if hasattr(backend, 'get_connection_count') else 0
-    print(f"Timeout after {timeout}s. Connected: {final_count}/{min_devices} devices")
+    final_count = (
+        backend.get_connection_count()
+        if hasattr(backend, "get_connection_count")
+        else 0
+    )
+    print(
+        f"Timeout after {timeout}s. Connected: {final_count}/{min_devices} devices"
+    )
     return final_count
 
 
 def main():
     args = parse_args()
-    print(f"Starting server-only with backend={args.backend}, load_model={args.load_model}")
+    print(
+        f"Starting server-only with backend={args.backend}, load_model={args.load_model}"
+    )
 
     # Optionally load model (on CPU by default)
     model = None
     tokenizer = None
     if args.load_model and args.model_name:
         print("Loading model (this may take a while)...")
-        model = AutoModelForCausalLM.from_pretrained(args.model_name, torch_dtype=None)
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_name, torch_dtype=None
+        )
         model.eval()
         tokenizer = AutoTokenizer.from_pretrained(args.model_name)
         print("Model loaded")
 
     # Initialize backend
     print("Initializing backend...")
-    backend = start_backend_sync(args.backend, args.block_size, args.enable_cache)
+    backend = start_backend_sync(
+        args.backend, args.block_size, args.enable_cache
+    )
     print("Backend started. Server is now listening for device connections.")
 
     # Set backend for morphling hooks
     morphling.hooks.autograd._backend = backend
+    morphling.hooks.autograd._enable_verification = args.enable_verification
+
+    if args.enable_verification:
+        print("✓ Output verification in hooks ENABLED")
 
     # Wait for minimum devices to connect
     min_devices = 1
     connected = wait_for_devices(backend, min_devices, no_wait=args.no_wait)
 
     if connected < min_devices and not args.no_wait:
-        print(f"Warning: Only {connected} device(s) connected, but {min_devices} required.")
+        print(
+            f"Warning: Only {connected} device(s) connected, but {min_devices} required."
+        )
         print("Continuing anyway (new devices can join dynamically)...")
     elif connected == 0 and not args.no_wait:
         print("⚠ No devices connected, but starting in dynamic mode")
@@ -164,11 +240,17 @@ def main():
     if connected > 0 and model is not None and tokenizer is not None:
         print("\n=== Running Text Generation Inference ===")
         # Print current device status
-        current_devices = backend.get_connection_count() if hasattr(backend, "get_connection_count") else connected
+        current_devices = (
+            backend.get_connection_count()
+            if hasattr(backend, "get_connection_count")
+            else connected
+        )
         print(f"📊 Current connected devices: {current_devices}")
-        print(f"💡 Note: Backend (C++ RephrasePartitions) will dynamically allocate tasks based on actual device count")
+        print(
+            f"💡 Note: Backend (C++ RephrasePartitions) will dynamically allocate tasks based on actual device count"
+        )
         print()
-        
+
         input_text = ["Hello, my dog is cute. He is a good " * 128]
         inputs = tokenizer(
             input_text,
@@ -181,8 +263,12 @@ def main():
 
         # Apply hooks for distributed computation (similar to run_devices.py line 236)
         if args.enable_hooks:
-            print("✓ Distributed computation mode: apply_hooks('linear') ENABLED")
-            print("  → Linear layer computations will be offloaded to remote devices")
+            print(
+                "✓ Distributed computation mode: apply_hooks('linear') ENABLED"
+            )
+            print(
+                "  → Linear layer computations will be offloaded to remote devices"
+            )
             apply_hooks("linear")
         else:
             print("✗ Local computation mode: apply_hooks('linear') DISABLED")
@@ -190,30 +276,40 @@ def main():
 
         inputs = inputs.to("cpu")
         model = model.to("cpu")
-        
+
         # Debug: Print input info
         print(f"Input shape: {inputs['input_ids'].shape}")
         print(f"First 10 token IDs: {inputs['input_ids'][0, :10]}")
-        
+
         start = time.time()
         outputs = model(**inputs, return_dict=True)
         end = time.time()
-        print(f"Inference finished in {end-start:.2f}s")
-        
+        print(f"Inference finished in {end - start:.2f}s")
+
         # Print device info during inference
-        final_devices = backend.get_connection_count() if hasattr(backend, "get_connection_count") else current_devices
+        final_devices = (
+            backend.get_connection_count()
+            if hasattr(backend, "get_connection_count")
+            else current_devices
+        )
         if final_devices > current_devices:
-            print(f"✓ Device(s) joined during inference: {current_devices} → {final_devices}")
+            print(
+                f"✓ Device(s) joined during inference: {current_devices} → {final_devices}"
+            )
         else:
-            print(f"  Device count: {final_devices} (consistent throughout inference)")
-        
+            print(
+                f"  Device count: {final_devices} (consistent throughout inference)"
+            )
+
         if hasattr(outputs, "logits"):
             print("logits shape:", outputs.logits.shape)
-            
+
             # Save logits to pt file
             os.makedirs("logits_comparison", exist_ok=True)
             suffix = "with_hooks" if args.enable_hooks else "without_hooks"
-            logits_path = os.path.join("logits_comparison", f"logits_{suffix}.pt")
+            logits_path = os.path.join(
+                "logits_comparison", f"logits_{suffix}.pt"
+            )
             torch.save(outputs.logits.cpu().detach(), logits_path)
             print(f"✓ Saved logits to {logits_path}")
         print("=== Inference Done ===\n")
@@ -248,6 +344,7 @@ def main():
             print("Error while stopping backend:", e)
         print("Server shutdown complete.")
         import sys
+
         sys.exit(0)
 
 
