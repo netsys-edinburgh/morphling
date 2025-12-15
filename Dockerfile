@@ -129,7 +129,8 @@ WORKDIR /app
 # copy requirements.txt first to leverage Docker cache
 COPY requirements.txt /app/
 # 安装 Python 依赖和 PyTorch（使用 uv）
-RUN uv pip install --system --no-cache -r /app/requirements.txt
+RUN uv pip install --system --no-cache -r /app/requirements.txt && \
+    uv pip install --system --no-cache pandas
 
 
 ARG PROTOBUF_VER=v3.21.12

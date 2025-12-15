@@ -283,6 +283,7 @@ file(GLOB BACKEND_SRC "csrc/backend/*.cpp" "csrc/backend/*.cc")
 file(GLOB COMMON_SRC "csrc/common/*.cpp" "csrc/common/*.cc")
 file(GLOB NETWORK_SRC "csrc/network/*.cc")
 file(GLOB BASE_SRC "csrc/base/*.cc")
+file(GLOB TIMER_SRC "csrc/timer/*.cc")
 
 # add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
 # target_link_libraries(morphling_interceptor PUBLIC
@@ -361,6 +362,7 @@ get_torch_gpu_compiler_flags(MORPHLING_GPU_FLAGS ${MORPHLING_GPU_LANG})
 set(MORPHLING_EXT_SRC
   ${UTILS_SRC}
   ${BASE_SRC}
+  ${TIMER_SRC}
   ${INTERCEPT_SRC}
   ${hw_proto_srcs}
   "csrc/python/checkpoint_py.cpp"
@@ -391,6 +393,7 @@ set(MORPHLING_MSG_SRC
   ${BACKEND_SRC}
   ${NETWORK_SRC}
   ${BASE_SRC}
+  ${TIMER_SRC}
   ${COMMON_SRC}
   ${hw_proto_srcs}
   ${global_api_proto_srcs}

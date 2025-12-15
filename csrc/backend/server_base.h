@@ -185,6 +185,7 @@ struct MatrixPartition : public ISerializable {
   int64_t h_dim;             // hidden dimension
   int64_t dev_id;            // device id
   int64_t oid;               // output matrix id for parallel matmul
+  int64_t gemm_id;           // global gemm operation id
   uint64_t timestamp;        // timestamp on sending the message
   std::vector<PtrData> mat;  // if ptr is null and size is 0, means that this
                              // entry need to be fetched from cache first mat is

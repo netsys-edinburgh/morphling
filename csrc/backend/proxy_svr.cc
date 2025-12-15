@@ -5,6 +5,7 @@
 #include "base/my_uuid.h"
 #include "common/generator.h"
 #include "common/stats.h"
+#include "device_tracker.h"
 #include "network/eventloop_libevent.h"
 #include "network/listener_libevent.h"
 #include "partition_tracker.h"
@@ -179,6 +180,9 @@ void ProxySvrHandle::HandleRegisterResponse(const ConnectionUeventPtr& conn,
 void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                                   const void* payload, size_t size) {
   auto start = std::chrono::high_resolution_clock::now();
+  
+  // Record RECEIVE start time (virtual time)
+  uint64_t vt_receive_start = VirtualClockNow();
 
   // Use standard Deserialize interface
   MatrixPartition partition;
@@ -191,6 +195,30 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                                                                      start)
                    .count()
             << "us";
+
+  // Record bytes received (download request from device)
+  DEVICE_TRACKER.RecordBytesReceived(partition.dev_id, size);
+  
+  // Log download throughput after receiving response
+  double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition.dev_id);
+  double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
+  double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+  double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
+  
+  uint64_t start_us, end_us;
+  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us, end_us);
+  
+  LOG_INFO << "[HandleMatMul] Device " << partition.dev_id 
+           << " - Received: " << size << " bytes"
+           << " [" << start_us << " -> " << end_us << " us]"
+           << ", Download TP: " << download_tp << " B/s"
+           << ", Last Packet TP: " << last_packet_tp << " B/s"
+           << ", Avg Packet TP: " << avg_packet_tp << " B/s"
+           << " | Server Total TP: " << server_tp << " B/s";
+  
+  // Log throughput to file
+  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
+                                     size, download_tp, start_us, end_us);
 
   auto [o_ptr, o_size] = partition.mat[0];
   int64_t row_size = o_size / partition.h_dim / sizeof(float);
@@ -217,6 +245,11 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                    .count()
             << "us";
 
+  // Record RECEIVE end time (virtual time)
+  uint64_t vt_receive_end = VirtualClockNow();
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "END",
+                                     vt_receive_start, vt_receive_end);
+
   // Mark partition as FINISHED and remove from tracker
   PARTITION_TRACKER.MarkPartitionFinished(part_key);
   PARTITION_TRACKER.RemovePartitionByKey(part_key);
@@ -236,11 +269,20 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
   }
 
   string client_addr = conn->GetPeerAddress().ToString();
+  
   task_queue_.push_back([this, conn, partition, client_addr]() {
+    // Record SEND start time (virtual time)
+    uint64_t vt_send_start = VirtualClockNow();
+    
     // Use protobuf serialization instead of binary
     auto buffer = partition->Serialize();
     conn->SendData(buffer->GetBuffer(), buffer->GetSize());
     conn_inflight_[client_addr] += 1;
+    
+    // Record SEND end time (virtual time)
+    uint64_t vt_send_end = VirtualClockNow();
+    DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id, "SEND", "END",
+                                       vt_send_start, vt_send_end);
   });
 
   if (conn_inflight_[client_addr] >= ctx_.max_inflight) {
@@ -315,6 +357,14 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   LOG_INFO << "[ProxySvrImpl::Initialize] Config - num_device="
            << ctx_.num_device << ", thread=" << ctx_.thread;
 
+  // Initialize virtual clock
+  base::VirtualClock::instance().Initialize();
+  LOG_INFO << "[ProxySvrImpl::Initialize] Virtual clock initialized";
+
+  // Initialize performance logging (server side)
+  DEVICE_TRACKER.InitSeparatePerfLog("./logs", "server");
+  LOG_INFO << "[ProxySvrImpl::Initialize] Performance logging initialized at ./logs/perf_server.log";
+
   loop_ = loop;
 
   auto create_handle_cb = bind(ProxySvrHandle::CreateMyself, ref(ctx_), _1);
@@ -371,18 +421,6 @@ void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   handle->ConnectionSuccessCb(conn);
   // loop->RunInLoop(bind(&ProxySvrHandle::ConnectionSuccessCb, handle, conn));
   loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
-
-  // std::string conn_addr = conn->GetPeerAddress().ToString();
-  // conn_map_[conn_addr] = conn;
-
-  // Get device_id and store connection in tracker
-  // auto& tracker = DEVICE_TRACKER;
-  // int64_t device_id = tracker.GetDeviceIdByAddr(conn_addr);
-  // if (device_id != -1) {
-  //   DEVICE_TRACKER.SetDeviceConnection(device_id, conn);
-  //   LOG_DEBUG << "[ConnectionSuccessCb] Set connection for device_id "
-  //             << device_id;
-  // }
 }
 
 void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
@@ -392,6 +430,13 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
   handle->ConnectionClosedCb(conn);
   loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
+
+  // Unregister device from tracker
+  string client_addr = conn->GetPeerAddress().ToString();
+  int64_t device_id = DEVICE_TRACKER.GetDeviceIdByAddr(client_addr);
+  if (device_id != -1) {
+    DEVICE_TRACKER.UnregisterDevice(device_id);
+  }
 
   // loop->RunInLoop(bind(&ProxySvrHandle::ConnectionClosedCb, handle, conn));
 
@@ -496,6 +541,7 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
   // SendIdlePartitions
   for (auto& partition : partitions) {
     partition->oid = mm_count_;
+    partition->gemm_id = gemm_id_count_;  // assign global gemm_id
 
     // Add partition to tracker with ownership (automatically marked as IDLE)
     PARTITION_TRACKER.AddPartition(
@@ -503,15 +549,18 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
 
     LOG_DEBUG << "[DispatchMatMulAsync] Created IDLE partition key="
               << partition->GetPartitionKey()
-              << ", dev_id=" << partition->dev_id << ", oid=" << mm_count_;
+              << ", dev_id=" << partition->dev_id << ", oid=" << mm_count_
+              << ", gemm_id=" << partition->gemm_id;
   }
   auto end = std::chrono::high_resolution_clock::now();
   LOG_INFO << "[DispatchMatMulAsync] Created " << partitions.size()
            << " IDLE partitions in "
            << std::chrono::duration_cast<std::chrono::microseconds>(end - start)
                   .count()
-           << "us. Partitions will be sent by SendIdlePartitions timer.";
+           << "us. Partitions will be sent by SendIdlePartitions timer. gemm_id_count="
+           << gemm_id_count_;
   mm_count_++;
+  gemm_id_count_++;  // increment global gemm_id for next operation
 
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_->GetLoopHandle());
   loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
@@ -674,6 +723,9 @@ void ProxySvrHandle::SendIdlePartitions() {
 
   // Send each IDLE partition
   for (const auto& part_info : idle_partitions) {
+    // Update partition's dev_id to match the assigned device
+    part_info->partition->dev_id = part_info->owner_device_id;
+    
     LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
               << " (oid=" << part_info->oid << ") to device "
               << part_info->owner_device_id;
