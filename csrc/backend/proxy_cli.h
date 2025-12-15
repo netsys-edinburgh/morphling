@@ -63,6 +63,7 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
                         const google::protobuf::Message& pb);
 
  private:
+  MatrixPartition DecodeRequest(const void* payload, size_t size);
   void FillPartition(MatrixPartition& partition);
   void CacheTensor(const TensorKey& key, void* ptr, int64_t size,
                    int64_t h_dim);

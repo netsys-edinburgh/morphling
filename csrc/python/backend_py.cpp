@@ -19,7 +19,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("set_cache_enabled", &ProxySvr::SetCacheEnabled)
       .def("async_dispatch_matmul", &ProxySvr::DispatchMatMulAsync)
       .def("wait_matmul", &ProxySvr::WaitMatMul)
-      //   .def("get_connection_count", &ProxySvr::GetConnectionCount);
+      .def("get_connection_count", &ProxySvr::GetConnectionCount)
       .def("get_registered_device_count", &ProxySvr::GetRegisteredDeviceCount);
 
   py::class_<ProxyCli>(m, "ProxyCli")
