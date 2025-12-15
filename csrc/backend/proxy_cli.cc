@@ -6,6 +6,7 @@
 #include "common/generator.h"
 #include "common/pytorch_defs.h"
 #include "common/stats.h"
+#include "device_tracker.h"
 #include "network/eventloop_libevent.h"
 #include "network/ueventloop_thread_pool.h"
 #include "proto_base.h"
@@ -53,20 +54,52 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
   }
 
   auto buffer = partition.Serialize();
-  conn->SendData(buffer->GetBuffer(), buffer->GetSize());
+  auto data = buffer->GetBuffer();
+  auto size = buffer->GetSize();
+  conn->SendData(data, size);
 
-  // LOG_DEBUG << "Response sent to " << client_addr;
+  // Record bytes sent (upload response back to server)
+  DEVICE_TRACKER.RecordBytesSent(partition.dev_id, size);
+  
+  // Log upload throughput after sending response
+  double upload_tp = DEVICE_TRACKER.GetUploadThroughput(partition.dev_id);
+  double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
+  double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+  double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
+  
+  uint64_t start_us, end_us;
+  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us, end_us);
+  
+  LOG_INFO << "[ResponseToCaller] Device " << partition.dev_id 
+           << " - Sent: " << size << " bytes"
+           << " [" << start_us << " -> " << end_us << " us]"
+           << ", Upload TP: " << upload_tp << " B/s"
+           << ", Last Packet TP: " << last_packet_tp << " B/s"
+           << ", Avg Packet TP: " << avg_packet_tp << " B/s"
+           << " | Server Total TP: " << server_tp << " B/s";
+
+  // Log throughput to file
+  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "UPLOAD",
+                                     size, upload_tp, start_us, end_us);
 
   RECORD_SRV_COUNT(SRV_TOTAL_QUERY, 1);
-  RECORD_SRV_COUNT(SRV_TOTAL_TRAFFIC, buffer->GetSize());
+  RECORD_SRV_COUNT(SRV_TOTAL_TRAFFIC, size);
 
   LOG_DEBUG << "Response sent to " << client_addr
-            << ", size: " << buffer->GetSize();
+            << ", size: " << size;
 }
 
 void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
                                      const MatrixPartition& partition) {
   auto part_key = partition.GetPartitionKey();
+  
+  // Record COMPUTE start time (virtual time)
+  uint64_t vt_compute_start = VirtualClockNow();
+  LOG_INFO << "[HandlePartition] Logging COMPUTE START for device " << partition.dev_id 
+           << ", gemm_id=" << partition.gemm_id << ", vt_start=" << vt_compute_start;
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "COMPUTE", "START",
+                                     vt_compute_start, vt_compute_start);
+  
   // create tensors from partition
   auto [r_ptr, r_size] = partition.mat[0];
   auto [c_ptr, c_size] = partition.mat[1];
@@ -92,6 +125,13 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   auto mm_time = duration.count();
   LOG_DEBUG << part_key << " Matmul real time: " << duration.count()
             << "us, Matmul logical time: " << mm_time;
+
+  // Record COMPUTE end time (virtual time)
+  uint64_t vt_compute_end = VirtualClockNow();
+  LOG_INFO << "[HandlePartition] Logging COMPUTE END for device " << partition.dev_id 
+           << ", gemm_id=" << partition.gemm_id << ", vt_start=" << vt_compute_start << ", vt_end=" << vt_compute_end;
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "COMPUTE", "END",
+                                     vt_compute_start, vt_compute_end);
 
   MatrixPartition response = partition;
   response.h_dim = result.size(1);
@@ -131,19 +171,23 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
   LOG_DEBUG << "ProxyCliImpl connected to:" << ctx_.listen_ip << ":"
             << ctx_.listen_port;
 
-  // InitLogger();
+  // Initialize virtual clock
+  base::VirtualClock::instance().Initialize();
+  LOG_INFO << "[ProxyCliImpl::Initialize] Virtual clock initialized";
+
+  // Initialize performance logging (client side)
+  // Client processes requests from all devices, so we use device ID 0 for client-side processing
+  DEVICE_TRACKER.InitSeparatePerfLog("./logs", "device", 0);
+  LOG_INFO << "[ProxyCliImpl::Initialize] Performance logging initialized at ./logs/perf_device_0.log";
+
   // CUDA context warmup and do random matmul (skip if no CUDA available)
-  try {
-    if (torch::cuda::is_available()) {
-      torch::Tensor warmup_a = torch::rand({128, 4096}).to(torch::kCUDA, 0);
-      torch::Tensor warmup_b = torch::rand({4096, 128}).to(torch::kCUDA, 0);
-      torch::mm(warmup_a, warmup_b);
-      LOG_DEBUG << "CUDA warmup completed";
-    } else {
-      LOG_DEBUG << "CUDA not available, skipping CUDA warmup";
-    }
-  } catch (const std::exception& e) {
-    LOG_WARN << "CUDA warmup failed: " << e.what() << ", continuing with CPU";
+  if (torch::cuda::is_available()) {
+    torch::Tensor warmup_a = torch::rand({128, 4096}).to(torch::kCUDA, 0);
+    torch::Tensor warmup_b = torch::rand({4096, 128}).to(torch::kCUDA, 0);
+    torch::mm(warmup_a, warmup_b);
+    LOG_DEBUG << "CUDA warmup completed";
+  } else {
+    LOG_DEBUG << "CUDA not available, skipping CUDA warmup";
   }
 }
 
@@ -179,8 +223,8 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
     packsize = ntohl(packsize);
     size_t datasize = packsize + sizeof(packsize);
 
-    LOG_DEBUG << "packsize: " << packsize << ", datasize: " << datasize
-              << ", readable: " << readable;
+    // LOG_DEBUG << "packsize: " << packsize << ", datasize: " << datasize
+    //           << ", readable: " << readable;
     if (readable < datasize) {
       // std::unique_ptr<unsigned char[]> data(new unsigned char[readable]);
       // unsigned char* raw_data = data.get();
@@ -293,6 +337,30 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
   LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
             << "us";
 
+  // Record bytes received (download request from server)
+  DEVICE_TRACKER.RecordBytesReceived(partition.dev_id, size);
+  
+  // Log download throughput after receiving request
+  double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition.dev_id);
+  double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
+  double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+  double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
+  
+  uint64_t start_us, end_us;
+  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us, end_us);
+  
+  LOG_INFO << "[HandleMatMulRequest] Device " << partition.dev_id 
+           << " - Received: " << size << " bytes"
+           << " [" << start_us << " -> " << end_us << " us]"
+           << ", Download TP: " << download_tp << " B/s"
+           << ", Last Packet TP: " << last_packet_tp << " B/s"
+           << ", Avg Packet TP: " << avg_packet_tp << " B/s"
+           << " | Server Total TP: " << server_tp << " B/s";
+  
+  // Log throughput to file
+  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
+                                     size, download_tp, start_us, end_us);
+
   // Process the partition
   HandleMatMul(conn, partition);
   LOG_DEBUG << "Processed partition: " << partition.DebugString();
@@ -393,19 +461,19 @@ void ProxyCliImpl::HandlePartition(const ConnectionUeventPtr& conn,
                        std::cref(partition)));
 }
 
-// MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size)
-// {
-//   auto start = std::chrono::high_resolution_clock::now();
-//   MatrixPartition partition;
-//   partition.Deserialize(payload, size, SerializationFormat::PROTOBUF);
-//   auto part_key = partition.GetPartitionKey();
-//   auto end = std::chrono::high_resolution_clock::now();
-//   auto duration =
-//       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-//   LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
-//             << "us";
-//   return partition;
-// }
+MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size)
+{
+  auto start = std::chrono::high_resolution_clock::now();
+  MatrixPartition partition;
+  partition.Deserialize(payload, size, SerializationFormat::PROTOBUF);
+  auto part_key = partition.GetPartitionKey();
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+  LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
+            << "us";
+  return partition;
+}
 
 void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
                                int64_t h_dim) {

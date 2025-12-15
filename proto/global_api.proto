@@ -55,6 +55,7 @@ message ComputeGemmData {
     required int64 dev_id = 6;
     required int64 oid = 7;
     required uint64 timestamp = 8;
+    required int64 gemm_id = 9;
 
     repeated Payload matrices = 10;
 };
