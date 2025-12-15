@@ -25,6 +25,11 @@ set(CMAKE_SKIP_RPATH ON)
 # find all files in the directory match with "test_*"
 file(GLOB TEST_SOURCES "test_*.cpp")
 
+# Define source file globs for compilation
+file(GLOB NETWORK_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../csrc/network/*.cc")
+file(GLOB BASE_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../csrc/base/*.cc")
+file(GLOB TIMER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../csrc/timer/*.cc")
+
 # # print CMAKE_ROOT_DIR, CMAKE_CURRENT_SOURCE_DIR
 # message(STATUS "CMAKE_ROOT_DIR: ${CMAKE_ROOT_DIR}")
 # message(STATUS "CMAKE_CURRENT_SOURCE_DIR: ${CMAKE_CURRENT_SOURCE_DIR}")
@@ -88,14 +93,14 @@ link_directories(
 
 message(STATUS "torch_python_LIBRARY: ${torch_python_LIBRARY}")
 
-add_executable(echo_server_test echo_server_test.cc ${NETWORK_SRC} ${BASE_SRC})
+add_executable(echo_server_test echo_server_test.cc ${NETWORK_SRC} ${BASE_SRC} ${TIMER_SRC})
 target_link_libraries(echo_server_test event uuid)
 set_target_properties(echo_server_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
 )
 add_test(NAME echo_server_test COMMAND echo_server_test)
 
-add_executable(echo_client_test echo_client_test.cc ${NETWORK_SRC} ${BASE_SRC})
+add_executable(echo_client_test echo_client_test.cc ${NETWORK_SRC} ${BASE_SRC} ${TIMER_SRC})
 target_link_libraries(echo_client_test event uuid)
 set_target_properties(echo_client_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests

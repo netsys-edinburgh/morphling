@@ -174,7 +174,7 @@ def wait_for_devices(
                     return connection_count
             else:
                 print("Backend does not support connection counting")
-                return 0
+                return 1
 
             time.sleep(2)
         except Exception as e:
