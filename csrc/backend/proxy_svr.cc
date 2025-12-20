@@ -181,12 +181,16 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                                   const void* payload, size_t size) {
   auto start = std::chrono::high_resolution_clock::now();
   
-  // Record RECEIVE start time (virtual time)
+  // Record RECEIVE/DOWNLOAD start time (virtual time)
   uint64_t vt_receive_start = VirtualClockNow();
 
   // Use standard Deserialize interface
   MatrixPartition partition;
   partition.Deserialize(payload, size);
+
+  // Log RECEIVE START after getting device_id from partition
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "START",
+                                     vt_receive_start, vt_receive_start);
 
   auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
@@ -216,9 +220,16 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
            << ", Avg Packet TP: " << avg_packet_tp << " B/s"
            << " | Server Total TP: " << server_tp << " B/s";
   
+  // Record RECEIVE end time (virtual time)
+  uint64_t vt_receive_end = VirtualClockNow();
+  
+  // Log virtual time event for RECEIVE
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "END",
+                                     vt_receive_start, vt_receive_end);
+  
   // Log throughput to file
-  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
-                                     size, download_tp, start_us, end_us);
+  // DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
+  //                                    size, download_tp, start_us, end_us);
 
   auto [o_ptr, o_size] = partition.mat[0];
   int64_t row_size = o_size / partition.h_dim / sizeof(float);
@@ -245,8 +256,7 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                    .count()
             << "us";
 
-  // Record RECEIVE end time (virtual time)
-  uint64_t vt_receive_end = VirtualClockNow();
+  // Record RECEIVE end time (virtual time) for RECEIVE phase
   DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "END",
                                      vt_receive_start, vt_receive_end);
 
@@ -273,6 +283,8 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
   task_queue_.push_back([this, conn, partition, client_addr]() {
     // Record SEND start time (virtual time)
     uint64_t vt_send_start = VirtualClockNow();
+    DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id, "SEND", "START",
+                                       vt_send_start, vt_send_start);
     
     // Use protobuf serialization instead of binary
     auto buffer = partition->Serialize();

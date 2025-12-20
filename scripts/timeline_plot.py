@@ -149,11 +149,33 @@ def extract_timeline_events(vtime_events, throughput_events, use_vtime=True):
                 'gemm_id': gemm_id,
             })
     else:
-        # Use real time (timestamp_us), but duration from virtual time
-        # This ensures bars have same width and time span as virtual time version
+        # Use real time (timestamp_us) for both start and duration
+        # This gives accurate chronological ordering based on real time
         seen_ops = {}
         MIN_DURATION = 10
+        start_times = defaultdict(dict)  # Store START event timestamps
+        vt_durations = defaultdict(dict)  # Store virtual time durations as fallback
         
+        # First pass: collect START event timestamps and virtual time durations
+        for evt in vtime_events:
+            device_id = evt['device_id']
+            phase = evt['phase']
+            gemm_id = evt['gemm_id']
+            event_type = evt['event']
+            
+            key = (device_id, gemm_id, phase)
+            
+            if event_type == 'START':
+                start_times[device_id][key] = evt['timestamp_us']
+            
+            # Store virtual time duration for all END events (to use as fallback)
+            if event_type == 'END':
+                vt_duration = evt['vt_end_us'] - evt['vt_start_us']
+                if device_id not in vt_durations:
+                    vt_durations[device_id] = {}
+                vt_durations[device_id][key] = vt_duration
+        
+        # Second pass: process END events with real timestamps
         for evt in vtime_events:
             device_id = evt['device_id']
             phase = evt['phase']
@@ -168,17 +190,25 @@ def extract_timeline_events(vtime_events, throughput_events, use_vtime=True):
             if key in seen_ops:
                 continue
             
-            # Use timestamp_us as start, but duration from virtual time
-            start = evt['timestamp_us']
-            vt_duration = evt['vt_end_us'] - evt['vt_start_us']
+            # Get start time from START event if available
+            if key in start_times.get(device_id, {}):
+                start = start_times[device_id][key]
+                end = evt['timestamp_us']
+                duration = end - start
+            else:
+                # For events without START (like SEND), use virtual time duration
+                # but position them at the END timestamp
+                start = evt['timestamp_us']
+                vt_duration = evt['vt_end_us'] - evt['vt_start_us']
+                duration = vt_duration
             
-            # Filter same as virtual time
-            if vt_duration < MIN_DURATION or vt_duration > 10000000:
+            # Filter by duration
+            if duration < MIN_DURATION or duration > 10000000:
                 continue
             
             timeline[device_id].append({
                 'start': start,
-                'duration': vt_duration,  # Use virtual time duration!
+                'duration': duration,
                 'phase': phase,
                 'gemm_id': gemm_id,
             })
@@ -210,14 +240,18 @@ def plot_gantt(timeline, devices, use_vtime=True, title="Gantt Chart", filename=
                 time_range=None, gemm_range=(0, 0)):
     """Plot gantt chart with events grouped by phase - one chart per device"""
     
+    # Define desired phase order (reversed for top-to-bottom display)
+    PHASE_ORDER = ['RECEIVE', 'UPLOAD', 'COMPUTE', 'DOWNLOAD', 'SEND']
+    
     for device_id in devices:
         if device_id not in timeline:
             continue
         
         print(f"  Creating gantt chart for device {device_id}...")
         
-        # Get unique phases for this device
-        phases = sorted(set(event['phase'] for event in timeline[device_id]))
+        # Get unique phases for this device, ordered according to PHASE_ORDER
+        available_phases = set(event['phase'] for event in timeline[device_id])
+        phases = [p for p in PHASE_ORDER if p in available_phases]
         phase_to_y = {phase: i for i, phase in enumerate(phases)}
         
         # Create figure
@@ -315,10 +349,11 @@ def plot_gantt(timeline, devices, use_vtime=True, title="Gantt Chart", filename=
         ax.grid(True, axis='x', alpha=0.5, linestyle='-', linewidth=0.7, color='#cccccc')
         ax.set_axisbelow(True)
         
-        # Add legend
+        # Add legend - order from SEND to RECEIVE
+        legend_order = ['SEND', 'DOWNLOAD', 'COMPUTE', 'UPLOAD', 'RECEIVE']
         legend_elements = [
             mpatches.Patch(facecolor=EVENT_COLORS.get(phase, '#999999'), label=phase)
-            for phase in phases
+            for phase in legend_order if phase in phases
         ]
         ax.legend(handles=legend_elements, loc='upper right', fontsize=11, 
                  framealpha=0.95, edgecolor='#333333', fancybox=True)
@@ -463,11 +498,11 @@ def plot_timeline(timeline, devices, use_vtime=True, title="Timeline", filename=
     
     # Create legend - only show the event types that are actually displayed
     legend_elements = [
-        mpatches.Patch(facecolor=EVENT_COLORS['COMPUTE'], label='COMPUTE'),
         mpatches.Patch(facecolor=EVENT_COLORS['SEND'], label='SEND'),
-        mpatches.Patch(facecolor=EVENT_COLORS['RECEIVE'], label='RECEIVE'),
         mpatches.Patch(facecolor=EVENT_COLORS['DOWNLOAD'], label='DOWNLOAD'),
+        mpatches.Patch(facecolor=EVENT_COLORS['COMPUTE'], label='COMPUTE'),
         mpatches.Patch(facecolor=EVENT_COLORS['UPLOAD'], label='UPLOAD'),
+        mpatches.Patch(facecolor=EVENT_COLORS['RECEIVE'], label='RECEIVE'),
     ]
     ax.legend(handles=legend_elements, loc='upper right', fontsize=13, framealpha=0.95, edgecolor='#333333', fancybox=True)
     
