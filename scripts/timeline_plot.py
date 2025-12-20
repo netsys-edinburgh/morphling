@@ -339,9 +339,12 @@ def plot_gantt(timeline, devices, use_vtime=True, title="Gantt Chart", filename=
         
         plt.tight_layout()
         
-        # Save gantt chart
-        base_filename = filename.replace('.png', '') if filename else f"gantt_device_{device_id}"
-        gantt_filename = f"{base_filename}_gantt.png"
+        # Save gantt chart - include device_id in filename
+        if filename:
+            base_filename = filename.replace('.png', '')
+            gantt_filename = f"{base_filename}_device{device_id}_gantt.png"
+        else:
+            gantt_filename = f"gantt_device_{device_id}.png"
         print(f"    Saving: {gantt_filename}")
         plt.savefig(gantt_filename, dpi=150, bbox_inches='tight')
         plt.close()
