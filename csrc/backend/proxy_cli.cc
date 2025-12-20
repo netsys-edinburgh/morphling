@@ -53,10 +53,18 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
     return;
   }
 
+  // Record UPLOAD start time (virtual time)
+  uint64_t vt_upload_start = VirtualClockNow();
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "UPLOAD", "START",
+                                     vt_upload_start, vt_upload_start);
+
   auto buffer = partition.Serialize();
   auto data = buffer->GetBuffer();
   auto size = buffer->GetSize();
   conn->SendData(data, size);
+
+  // Record UPLOAD end time (virtual time)
+  uint64_t vt_upload_end = VirtualClockNow();
 
   // Record bytes sent (upload response back to server)
   DEVICE_TRACKER.RecordBytesSent(partition.dev_id, size);
@@ -78,9 +86,13 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
            << ", Avg Packet TP: " << avg_packet_tp << " B/s"
            << " | Server Total TP: " << server_tp << " B/s";
 
+  // Log virtual time event for UPLOAD
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "UPLOAD", "END",
+                                     vt_upload_start, vt_upload_end);
+
   // Log throughput to file
-  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "UPLOAD",
-                                     size, upload_tp, start_us, end_us);
+  // DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "UPLOAD",
+  //                                    size, upload_tp, start_us, end_us);
 
   RECORD_SRV_COUNT(SRV_TOTAL_QUERY, 1);
   RECORD_SRV_COUNT(SRV_TOTAL_TRAFFIC, size);
@@ -337,8 +349,16 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
   LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
             << "us";
 
+  // Record DOWNLOAD start time (virtual time)
+  uint64_t vt_download_start = VirtualClockNow();
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "DOWNLOAD", "START",
+                                     vt_download_start, vt_download_start);
+
   // Record bytes received (download request from server)
   DEVICE_TRACKER.RecordBytesReceived(partition.dev_id, size);
+  
+  // Record DOWNLOAD end time (virtual time)
+  uint64_t vt_download_end = VirtualClockNow();
   
   // Log download throughput after receiving request
   double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition.dev_id);
@@ -357,9 +377,13 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
            << ", Avg Packet TP: " << avg_packet_tp << " B/s"
            << " | Server Total TP: " << server_tp << " B/s";
   
+  // Log virtual time event for DOWNLOAD
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "DOWNLOAD", "END",
+                                     vt_download_start, vt_download_end);
+  
   // Log throughput to file
-  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
-                                     size, download_tp, start_us, end_us);
+  // DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
+  //                                    size, download_tp, start_us, end_us);
 
   // Process the partition
   HandleMatMul(conn, partition);
