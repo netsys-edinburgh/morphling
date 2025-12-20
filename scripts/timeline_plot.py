@@ -206,6 +206,146 @@ def extract_timeline_events(vtime_events, throughput_events, use_vtime=True):
     
     return timeline
 
+def plot_gantt(timeline, devices, use_vtime=True, title="Gantt Chart", filename=None, 
+                time_range=None, gemm_range=(0, 0)):
+    """Plot gantt chart with events grouped by phase - one chart per device"""
+    
+    for device_id in devices:
+        if device_id not in timeline:
+            continue
+        
+        print(f"  Creating gantt chart for device {device_id}...")
+        
+        # Get unique phases for this device
+        phases = sorted(set(event['phase'] for event in timeline[device_id]))
+        phase_to_y = {phase: i for i, phase in enumerate(phases)}
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(20, 8))
+        
+        # Find time range if not specified
+        if time_range is None:
+            all_times = []
+            for event in timeline[device_id]:
+                all_times.append(event['start'])
+                all_times.append(event['start'] + event['duration'])
+            
+            if all_times:
+                actual_range = (min(all_times), max(all_times))
+                time_span = actual_range[1] - actual_range[0]
+                time_padding = time_span * 0.02
+                time_range_to_use = (max(0, actual_range[0] - time_padding), actual_range[1] + time_padding)
+            else:
+                time_range_to_use = (0, 1000)
+        else:
+            time_range_to_use = time_range
+        
+        start_time, end_time = time_range_to_use
+        time_span = end_time - start_time
+        
+        print(f"    Time range: {start_time:.0f} - {end_time:.0f} μs")
+        
+        # Plot events for this device
+        for event in timeline[device_id]:
+            # Filter by GEMM range
+            gemm_id = event.get('gemm_id', -1)
+            if gemm_id < gemm_range[0] or gemm_id > gemm_range[1]:
+                continue
+            
+            phase = event['phase']
+            y = phase_to_y[phase]
+            
+            event_start = event['start']
+            event_end = event['start'] + event['duration']
+            
+            # Skip events outside time range
+            if event_end < start_time or event_start > end_time:
+                continue
+            
+            # Clip event to time range
+            clipped_start = max(event_start, start_time)
+            clipped_end = min(event_end, end_time)
+            clipped_duration = clipped_end - clipped_start
+            
+            color = EVENT_COLORS.get(phase, '#999999')
+            
+            # Draw horizontal bar
+            ax.barh(y, clipped_duration, left=clipped_start, height=0.7, 
+                   color=color, edgecolor='black', linewidth=1.2,
+                   alpha=0.85)
+            
+            # Add GEMM ID label in the middle
+            label_x = clipped_start + clipped_duration/2
+            if clipped_duration > 50000:  # Only if wide enough
+                ax.text(label_x, y, f'G{gemm_id}', 
+                       ha='center', va='center', fontsize=9, 
+                       fontweight='bold', color='white', zorder=10)
+            
+            # Add duration label
+            if clipped_duration > 100000:
+                duration_text = f'{clipped_duration/1e3:.0f}k'
+                ax.text(label_x, y + 0.38, duration_text,
+                       ha='center', va='bottom', fontsize=8, 
+                       color='#333333', fontweight='bold')
+        
+        # Configure axes
+        ax.set_yticks(range(len(phases)))
+        ax.set_yticklabels(phases, fontsize=12, fontweight='bold')
+        ax.set_ylim(-0.5, len(phases) - 0.5)
+        
+        x_label = "Virtual Time (μs)" if use_vtime else "Real Time (μs)"
+        ax.set_xlabel(x_label, fontsize=13, fontweight='bold')
+        ax.set_ylabel("Event Phase", fontsize=13, fontweight='bold')
+        ax.set_title(f"Device {device_id} Gantt Chart (GEMM {gemm_range[0]}-{gemm_range[1]})", 
+                    fontsize=15, fontweight='bold', pad=20)
+        
+        # Set x-axis limits
+        time_padding = (end_time - start_time) * 0.02
+        ax.set_xlim(start_time - time_padding, end_time + time_padding)
+        
+        # Format x-axis
+        def time_formatter(x, p):
+            if x >= 1e6:
+                return f'{x/1e6:.2f}ms'
+            else:
+                return f'{x/1e3:.0f}k'
+        
+        ax.xaxis.set_major_formatter(FuncFormatter(time_formatter))
+        ax.locator_params(axis='x', nbins=18)
+        ax.grid(True, axis='x', alpha=0.5, linestyle='-', linewidth=0.7, color='#cccccc')
+        ax.set_axisbelow(True)
+        
+        # Add legend
+        legend_elements = [
+            mpatches.Patch(facecolor=EVENT_COLORS.get(phase, '#999999'), label=phase)
+            for phase in phases
+        ]
+        ax.legend(handles=legend_elements, loc='upper right', fontsize=11, 
+                 framealpha=0.95, edgecolor='#333333', fancybox=True)
+        
+        # Rotate x labels
+        plt.xticks(rotation=45, ha='right', fontsize=11)
+        
+        # Add time span info
+        if time_span >= 1e6:
+            info_text = f"Time Span: {time_span/1e6:.2f} ms"
+        else:
+            info_text = f"Time Span: {time_span/1e3:.0f} k"
+        
+        ax.text(0.98, 0.02, info_text, transform=ax.transAxes, 
+               fontsize=11, ha='right', va='bottom', fontweight='bold',
+               bbox=dict(boxstyle='round', facecolor='#ffffcc', alpha=0.95, 
+                        edgecolor='#333333', linewidth=1.5))
+        
+        plt.tight_layout()
+        
+        # Save gantt chart
+        base_filename = filename.replace('.png', '') if filename else f"gantt_device_{device_id}"
+        gantt_filename = f"{base_filename}_gantt.png"
+        print(f"    Saving: {gantt_filename}")
+        plt.savefig(gantt_filename, dpi=150, bbox_inches='tight')
+        plt.close()
+
 def plot_timeline(timeline, devices, use_vtime=True, title="Timeline", filename=None, 
                   time_range=None, gemm_range=(0, 0)):
     """Plot timeline with horizontal bars (横向时间线)"""
@@ -454,6 +594,19 @@ def main():
         gemm_range=gemm_range
     )
     
+    # Plot gantt chart for virtual time
+    print("\nPlotting virtual time gantt charts...")
+    gantt_vtime_file = f"{output_dir}/gantt_vtime_{log_name}_gemm{gemm_range[0]}-{gemm_range[1]}.png"
+    plot_gantt(
+        timeline_vtime,
+        devices,
+        use_vtime=True,
+        title=f"Virtual Time Gantt - {log_name} (GEMM {gemm_range[0]}-{gemm_range[1]})",
+        filename=gantt_vtime_file,
+        time_range=vtime_range,
+        gemm_range=gemm_range
+    )
+    
     # Plot real time
     print("Plotting real time timeline...")
     realtime_file = f"{output_dir}/timeline_realtime_{log_name}_gemm{gemm_range[0]}-{gemm_range[1]}.png"
@@ -467,10 +620,28 @@ def main():
         gemm_range=gemm_range
     )
     
+    # Plot gantt chart for real time
+    print("Plotting real time gantt charts...")
+    gantt_realtime_file = f"{output_dir}/gantt_realtime_{log_name}_gemm{gemm_range[0]}-{gemm_range[1]}.png"
+    plot_gantt(
+        timeline_realtime,
+        devices,
+        use_vtime=False,
+        title=f"Real Time Gantt - {log_name} (GEMM {gemm_range[0]}-{gemm_range[1]})",
+        filename=gantt_realtime_file,
+        time_range=realtime_range,
+        gemm_range=gemm_range
+    )
+    
     print("\n✓ Done!")
     print(f"Output files:")
-    print(f"  {vtime_file}")
-    print(f"  {realtime_file}")
+    print(f"  Timeline plots:")
+    print(f"    {vtime_file}")
+    print(f"    {realtime_file}")
+    print(f"  Gantt charts:")
+    for device in devices:
+        print(f"    gantt_vtime_{log_name}_gemm{gemm_range[0]}-{gemm_range[1]}_gantt_device_{device}.png")
+        print(f"    gantt_realtime_{log_name}_gemm{gemm_range[0]}-{gemm_range[1]}_gantt_device_{device}.png")
 
 if __name__ == '__main__':
     main()
