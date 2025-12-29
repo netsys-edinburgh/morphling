@@ -288,13 +288,26 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
     
     // Use protobuf serialization instead of binary
     auto buffer = partition->Serialize();
-    conn->SendData(buffer->GetBuffer(), buffer->GetSize());
+    auto size = buffer->GetSize();
+    conn->SendData(buffer->GetBuffer(), size);
     conn_inflight_[client_addr] += 1;
     
     // Record SEND end time (virtual time)
     uint64_t vt_send_end = VirtualClockNow();
     DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id, "SEND", "END",
                                        vt_send_start, vt_send_end);
+    
+    // 1. 记录发送的字节数（更新吞吐量统计）
+    DEVICE_TRACKER.RecordBytesSent(partition->dev_id, size);
+    
+    // 2. 获取吞吐量数据
+    double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition->dev_id);
+    uint64_t start_us, end_us;
+    DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition->dev_id, start_us, end_us);
+    
+    // 3. 写入日志文件
+    DEVICE_TRACKER.LogThroughputToFile(partition->dev_id, partition->gemm_id, "SEND",
+                                       size, last_packet_tp, start_us, end_us);
   });
 
   if (conn_inflight_[client_addr] >= ctx_.max_inflight) {
