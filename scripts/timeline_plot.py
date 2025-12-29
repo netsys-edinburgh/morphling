@@ -234,11 +234,24 @@ def extract_timeline_events(vtime_events, throughput_events, use_vtime=True):
     for device_id in timeline:
         timeline[device_id].sort(key=lambda x: x['start'])
     
-    return timeline
+    # Find minimum start time across all devices and events
+    min_start_time = float('inf')
+    for device_id in timeline:
+        for event in timeline[device_id]:
+            min_start_time = min(min_start_time, event['start'])
+    
+    if min_start_time == float('inf'):
+        min_start_time = 0
+    
+    return timeline, min_start_time
 
 def plot_gantt(timeline, devices, use_vtime=True, title="Gantt Chart", filename=None, 
-                time_range=None, gemm_range=(0, 0)):
-    """Plot gantt chart with events grouped by phase - one chart per device"""
+                time_range=None, gemm_range=(0, 0), offset_time=0):
+    """Plot gantt chart with events grouped by phase - one chart per device
+    
+    Args:
+        offset_time: Time offset to subtract from all timestamps (for starting at 0)
+    """
     
     # Define desired phase order (reversed for top-to-bottom display)
     PHASE_ORDER = ['RECEIVE', 'UPLOAD', 'COMPUTE', 'DOWNLOAD', 'SEND']
@@ -289,8 +302,9 @@ def plot_gantt(timeline, devices, use_vtime=True, title="Gantt Chart", filename=
             phase = event['phase']
             y = phase_to_y[phase]
             
-            event_start = event['start']
-            event_end = event['start'] + event['duration']
+            # Apply offset to normalize time to start from 0
+            event_start = event['start'] - offset_time
+            event_end = event_start + event['duration']
             
             # Skip events outside time range
             if event_end < start_time or event_start > end_time:
@@ -327,7 +341,7 @@ def plot_gantt(timeline, devices, use_vtime=True, title="Gantt Chart", filename=
         ax.set_yticklabels(phases, fontsize=12, fontweight='bold')
         ax.set_ylim(-0.5, len(phases) - 0.5)
         
-        x_label = "Virtual Time (μs)" if use_vtime else "Real Time (μs)"
+        x_label = "Virtual Time (ms)" if use_vtime else "Real Time (ms)"
         ax.set_xlabel(x_label, fontsize=13, fontweight='bold')
         ax.set_ylabel("Event Phase", fontsize=13, fontweight='bold')
         ax.set_title(f"Device {device_id} Gantt Chart (GEMM {gemm_range[0]}-{gemm_range[1]})", 
@@ -337,12 +351,9 @@ def plot_gantt(timeline, devices, use_vtime=True, title="Gantt Chart", filename=
         time_padding = (end_time - start_time) * 0.02
         ax.set_xlim(start_time - time_padding, end_time + time_padding)
         
-        # Format x-axis
+        # Format x-axis (convert to ms, 1 ms = 1000 us)
         def time_formatter(x, p):
-            if x >= 1e6:
-                return f'{x/1e6:.2f}ms'
-            else:
-                return f'{x/1e3:.0f}k'
+            return f'{x/1e3:.2f}ms'
         
         ax.xaxis.set_major_formatter(FuncFormatter(time_formatter))
         ax.locator_params(axis='x', nbins=18)
@@ -362,10 +373,7 @@ def plot_gantt(timeline, devices, use_vtime=True, title="Gantt Chart", filename=
         plt.xticks(rotation=45, ha='right', fontsize=11)
         
         # Add time span info
-        if time_span >= 1e6:
-            info_text = f"Time Span: {time_span/1e6:.2f} ms"
-        else:
-            info_text = f"Time Span: {time_span/1e3:.0f} k"
+        info_text = f"Time Span: {time_span/1e3:.2f} ms"
         
         ax.text(0.98, 0.02, info_text, transform=ax.transAxes, 
                fontsize=11, ha='right', va='bottom', fontweight='bold',
@@ -385,8 +393,12 @@ def plot_gantt(timeline, devices, use_vtime=True, title="Gantt Chart", filename=
         plt.close()
 
 def plot_timeline(timeline, devices, use_vtime=True, title="Timeline", filename=None, 
-                  time_range=None, gemm_range=(0, 0)):
-    """Plot timeline with horizontal bars (横向时间线)"""
+                  time_range=None, gemm_range=(0, 0), offset_time=0):
+    """Plot timeline with horizontal bars (横向时间线)
+    
+    Args:
+        offset_time: Time offset to subtract from all timestamps (for starting at 0)
+    """
     
     print(f"  Creating figure...")
     # 设置更宽的图形，时间在横向，更高的纵向空间以显示更粗的柱子
@@ -427,8 +439,9 @@ def plot_timeline(timeline, devices, use_vtime=True, title="Timeline", filename=
             if gemm_id < gemm_range[0] or gemm_id > gemm_range[1]:
                 continue
             
-            event_start = event['start']
-            event_end = event['start'] + event['duration']
+            # Apply offset to normalize time to start from 0
+            event_start = event['start'] - offset_time
+            event_end = event_start + event['duration']
             
             # Skip events outside time range
             if event_end < start_time or event_start > end_time:
@@ -454,13 +467,13 @@ def plot_timeline(timeline, devices, use_vtime=True, title="Timeline", filename=
                    fontweight='bold', color='white', zorder=10)
             
             # Add start time on the left
-            time_label_start = f'{clipped_start/1e3:.0f}k'
+            time_label_start = f'{clipped_start/1e3:.2f}ms'
             ax.text(clipped_start, y - 0.38, time_label_start,
                    ha='right', va='top', fontsize=9, 
                    color='#333333', fontweight='bold')
             
             # Add end time on the right  
-            time_label_end = f'{clipped_end/1e3:.0f}k'
+            time_label_end = f'{clipped_end/1e3:.2f}ms'
             ax.text(clipped_end, y - 0.38, time_label_end,
                    ha='left', va='top', fontsize=9,
                    color='#333333', fontweight='bold')
@@ -473,7 +486,7 @@ def plot_timeline(timeline, devices, use_vtime=True, title="Timeline", filename=
     ax.set_ylim(-0.5, len(devices) - 0.5)
     
     # Set x-axis with better formatting
-    x_label = "Virtual Time (μs)" if use_vtime else "Real Time (μs)"
+    x_label = "Virtual Time (ms)" if use_vtime else "Real Time (ms)"
     ax.set_xlabel(x_label, fontsize=14, fontweight='bold')
     ax.set_ylabel("Device", fontsize=14, fontweight='bold')
     ax.set_title(title, fontsize=17, fontweight='bold', pad=20)
@@ -482,12 +495,9 @@ def plot_timeline(timeline, devices, use_vtime=True, title="Timeline", filename=
     time_padding = (end_time - start_time) * 0.02
     ax.set_xlim(start_time - time_padding, end_time + time_padding)
     
-    # Format x-axis to show time more clearly - show more tick marks
+    # Format x-axis to show time more clearly - show more tick marks (convert to ms, 1 ms = 1000 us)
     def time_formatter(x, p):
-        if x >= 1e6:
-            return f'{x/1e6:.2f}ms'
-        else:
-            return f'{x/1e3:.0f}k'
+        return f'{x/1e3:.2f}ms'
     
     ax.xaxis.set_major_formatter(FuncFormatter(time_formatter))
     ax.locator_params(axis='x', nbins=18)  # More tick marks
@@ -511,10 +521,7 @@ def plot_timeline(timeline, devices, use_vtime=True, title="Timeline", filename=
     
     # Add time range info
     time_span = end_time - start_time
-    if time_span >= 1e6:
-        info_text = f"Time Span: {time_span/1e6:.2f} ms"
-    else:
-        info_text = f"Time Span: {time_span/1e3:.0f} k"
+    info_text = f"Time Span: {time_span/1e3:.2f} ms"
     
     ax.text(0.98, 0.02, info_text, transform=ax.transAxes, 
            fontsize=12, ha='right', va='bottom', fontweight='bold',
@@ -565,11 +572,14 @@ def main():
     
     # Extract timeline for virtual time
     print("\nExtracting virtual time timeline...")
-    timeline_vtime = extract_timeline_events(vtime_events, throughput_events, use_vtime=True)
+    timeline_vtime, min_start_vtime = extract_timeline_events(vtime_events, throughput_events, use_vtime=True)
     
     # Extract timeline for real time
     print("Extracting real time timeline...")
-    timeline_realtime = extract_timeline_events(vtime_events, throughput_events, use_vtime=False)
+    timeline_realtime, min_start_realtime = extract_timeline_events(vtime_events, throughput_events, use_vtime=False)
+    
+    print(f"  Virtual time starts at: {min_start_vtime:.0f} μs")
+    print(f"  Real time starts at: {min_start_realtime:.0f} μs")
     
     # Determine time range based on GEMM range if specified
     vtime_range = None
@@ -594,15 +604,17 @@ def main():
                 # Use event index if gemm_id not available
                 current_gemm = event.get('gemm_id', idx // 6)  # Roughly 6 events per GEMM
                 if start_gemm <= current_gemm <= end_gemm:
-                    min_vt = min(min_vt, event['start'])
-                    max_vt = max(max_vt, event['start'] + event['duration'])
+                    # Apply offset for normalized time
+                    min_vt = min(min_vt, event['start'] - min_start_vtime)
+                    max_vt = max(max_vt, event['start'] - min_start_vtime + event['duration'])
         
         if device_id in timeline_realtime:
             for idx, event in enumerate(timeline_realtime[device_id]):
                 current_gemm = event.get('gemm_id', idx // 6)
                 if start_gemm <= current_gemm <= end_gemm:
-                    min_rt = min(min_rt, event['start'])
-                    max_rt = max(max_rt, event['start'] + event['duration'])
+                    # Apply offset for normalized time starting at 0
+                    min_rt = min(min_rt, event['start'] - min_start_realtime)
+                    max_rt = max(max_rt, event['start'] - min_start_realtime + event['duration'])
     
     vtime_range = None
     realtime_range = None
@@ -611,13 +623,13 @@ def main():
     if min_vt != float('inf') and max_vt > 0 and max_vt < 100000000:  # Max 100 seconds
         vt_span = max(max_vt - min_vt, 100000)  # At least 100ms span
         vtime_range = (max(0, min_vt - vt_span * 0.05), max_vt + vt_span * 0.05)
-        print(f"  VTime range: {min_vt:.0f} - {max_vt:.0f} μs (span: {vt_span:.0f} μs)")
+        print(f"  VTime range: {min_vt/1e3:.2f} - {max_vt/1e3:.2f} ms (span: {vt_span/1e3:.2f} ms)")
     
     # Handle real time range
     if min_rt != float('inf') and max_rt > 0:
         rt_span = max(max_rt - min_rt, 100000)  # At least 100ms span
         realtime_range = (max(0, min_rt - rt_span * 0.05), max_rt + rt_span * 0.05)
-        print(f"  RTime range: {min_rt:.0f} - {max_rt:.0f} μs (span: {rt_span:.0f} μs)")
+        print(f"  RTime range: {min_rt/1e3:.2f} - {max_rt/1e3:.2f} ms (span: {rt_span/1e3:.2f} ms)")
     
     # Plot virtual time
     print("\nPlotting virtual time timeline...")
@@ -629,7 +641,8 @@ def main():
         title=f"Virtual Time Timeline - {log_name} (GEMM {gemm_range[0]}-{gemm_range[1]})",
         filename=vtime_file,
         time_range=vtime_range,
-        gemm_range=gemm_range
+        gemm_range=gemm_range,
+        offset_time=min_start_vtime
     )
     
     # Plot gantt chart for virtual time
@@ -642,33 +655,36 @@ def main():
         title=f"Virtual Time Gantt - {log_name} (GEMM {gemm_range[0]}-{gemm_range[1]})",
         filename=gantt_vtime_file,
         time_range=vtime_range,
-        gemm_range=gemm_range
+        gemm_range=gemm_range,
+        offset_time=min_start_vtime
     )
     
-    # Plot real time
+    # Plot real time - start from 0
     print("Plotting real time timeline...")
     realtime_file = f"{output_dir}/timeline_realtime_{log_name}_gemm{gemm_range[0]}-{gemm_range[1]}.png"
     plot_timeline(
         timeline_realtime,
         devices,
         use_vtime=False,
-        title=f"Real Time Timeline - {log_name} (GEMM {gemm_range[0]}-{gemm_range[1]})",
+        title=f"Real Time Timeline - {log_name} (GEMM {gemm_range[0]}-{gemm_range[1]}) [Normalized to 0]",
         filename=realtime_file,
         time_range=realtime_range,
-        gemm_range=gemm_range
+        gemm_range=gemm_range,
+        offset_time=min_start_realtime
     )
     
-    # Plot gantt chart for real time
+    # Plot gantt chart for real time - start from 0
     print("Plotting real time gantt charts...")
     gantt_realtime_file = f"{output_dir}/gantt_realtime_{log_name}_gemm{gemm_range[0]}-{gemm_range[1]}.png"
     plot_gantt(
         timeline_realtime,
         devices,
         use_vtime=False,
-        title=f"Real Time Gantt - {log_name} (GEMM {gemm_range[0]}-{gemm_range[1]})",
+        title=f"Real Time Gantt - {log_name} (GEMM {gemm_range[0]}-{gemm_range[1]}) [Normalized to 0]",
         filename=gantt_realtime_file,
         time_range=realtime_range,
-        gemm_range=gemm_range
+        gemm_range=gemm_range,
+        offset_time=min_start_realtime
     )
     
     print("\n✓ Done!")
