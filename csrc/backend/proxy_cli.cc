@@ -91,8 +91,8 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
                                      vt_upload_start, vt_upload_end);
 
   // Log throughput to file
-  // DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "UPLOAD",
-  //                                    size, upload_tp, start_us, end_us);
+  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "UPLOAD",
+                                     size, upload_tp, start_us, end_us);
 
   RECORD_SRV_COUNT(SRV_TOTAL_QUERY, 1);
   RECORD_SRV_COUNT(SRV_TOTAL_TRAFFIC, size);
@@ -382,8 +382,8 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
                                      vt_download_start, vt_download_end);
   
   // Log throughput to file
-  // DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
-  //                                    size, download_tp, start_us, end_us);
+  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
+                                     size, download_tp, start_us, end_us);
 
   // Process the partition
   HandleMatMul(conn, partition);
