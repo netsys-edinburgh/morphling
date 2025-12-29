@@ -286,11 +286,36 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
     DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id, "SEND", "START",
                                        vt_send_start, vt_send_start);
     
-    // Use protobuf serialization instead of binary
+    // 测量序列化耗时
+    auto t_serialize_start = std::chrono::high_resolution_clock::now();
     auto buffer = partition->Serialize();
+    auto t_serialize_end = std::chrono::high_resolution_clock::now();
+    auto serialize_us = std::chrono::duration_cast<std::chrono::microseconds>(t_serialize_end - t_serialize_start).count();
+    
+    // 测量 GetSize() 耗时
+    auto t_getsize_start = std::chrono::high_resolution_clock::now();
     auto size = buffer->GetSize();
+    auto t_getsize_end = std::chrono::high_resolution_clock::now();
+    auto getsize_us = std::chrono::duration_cast<std::chrono::microseconds>(t_getsize_end - t_getsize_start).count();
+    
+    // 测量 SendData() 耗时
+    auto t_send_start = std::chrono::high_resolution_clock::now();
     conn->SendData(buffer->GetBuffer(), size);
+    auto t_send_end = std::chrono::high_resolution_clock::now();
+    auto send_us = std::chrono::duration_cast<std::chrono::microseconds>(t_send_end - t_send_start).count();
+    
     conn_inflight_[client_addr] += 1;
+    
+    // 输出详细的时间统计
+    double actual_send_tp_bs = (send_us > 0) ? (size * 1000000.0 / send_us) : 0.0;
+    double actual_send_tp_gbs = actual_send_tp_bs / (1024.0 * 1024.0 * 1024.0);
+    LOG_INFO << "[SendInLoop-Timing] Device " << partition->dev_id 
+             << ", gemm_id=" << partition->gemm_id
+             << ", Size: " << size << " bytes"
+             << " | Serialize: " << serialize_us << " us"
+             << ", GetSize: " << getsize_us << " us"
+             << ", SendData: " << send_us << " us"
+             << ", Actual TP: " << actual_send_tp_gbs << " GB/s";
     
     // Record SEND end time (virtual time)
     uint64_t vt_send_end = VirtualClockNow();
