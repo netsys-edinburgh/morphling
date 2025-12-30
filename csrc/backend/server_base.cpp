@@ -53,8 +53,8 @@ void SerializationBuffer::Allocate(size_t size) {
   offset_ = 0;
   owns_buffer_ = true;
   
-  // LOG_DEBUG << "Allocated page-aligned buffer: size=" << size 
-  //           << ", alignment=4096 bytes";
+  LOG_DEBUG << "Allocated page-aligned buffer: size=" << size 
+            << ", alignment=4096 bytes";
 }
 
 void SerializationBuffer::WriteUInt32(uint32_t value, bool network_order) {
