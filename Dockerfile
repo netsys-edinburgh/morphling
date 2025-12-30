@@ -159,6 +159,7 @@ COPY . /app/
 
 # 构建和安装项目（使用系统 python）with BuildKit cache mounts
 # Cache mounts persist across builds: CMake deps in /app/build/_deps, ccache in /ccache
+# 编译优化标志：-O3 内存页对齐和固定优化
 RUN --mount=type=cache,target=/app/build/_deps \
     --mount=type=cache,target=/ccache \
     --mount=type=cache,target=/root/.cache/cmake \
@@ -169,8 +170,9 @@ RUN --mount=type=cache,target=/app/build/_deps \
     export MORPHLING_PYTHON_EXECUTABLE=/usr/bin/python3.10 && \
     export LDFLAGS="-L/usr/lib/x86_64-linux-gnu" && \
     export CPPFLAGS="-I/usr/include/python3.10" && \
-    export CMAKE_ARGS="-DPython3_EXECUTABLE=/usr/bin/python3.10 -DPython3_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so -DPython3_INCLUDE_DIR=/usr/include/python3.10 -DCMAKE_PREFIX_PATH=/usr -DFETCHCONTENT_BASE_DIR=/app/build/_deps -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache" && \
-    echo "=== 开始构建 (with cache mounts) ===" && \
+    export CMAKE_CXX_FLAGS="-O3 -march=native -mtune=native -funroll-loops -fno-asynchronous-unwind-tables" && \
+    export CMAKE_ARGS="-DPython3_EXECUTABLE=/usr/bin/python3.10 -DPython3_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so -DPython3_INCLUDE_DIR=/usr/include/python3.10 -DCMAKE_PREFIX_PATH=/usr -DFETCHCONTENT_BASE_DIR=/app/build/_deps -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_FLAGS=\"${CMAKE_CXX_FLAGS}\" -DCMAKE_BUILD_TYPE=Release" && \
+    echo "=== 开始构建 (with cache mounts 和编译优化) ===" && \
     uv pip install --system --no-build-isolation --no-cache --verbose . && \
     echo "=== Build complete ===" && \
     (ccache -s || echo "ccache stats not available")
@@ -188,3 +190,32 @@ EXPOSE 39000
 # 设置环境变量用于运行时
 ENV SPDLOG_LEVEL=debug
 ENV MORPHLING_HOME=/app
+
+# ============================================================================
+# Memory Optimization Configuration
+# ============================================================================
+# 注意：为了充分利用内存优化（页对齐 + mlock），需要特殊的运行时配置
+# 
+# 运行容器时使用以下命令来启用内存锁定能力：
+# 
+# Option 1: 使用 SYS_NICE 和 SYS_RESOURCE capabilities（更安全）
+#   docker run --cap-add=SYS_NICE --cap-add=SYS_RESOURCE \
+#              --ulimit memlock=unlimited \
+#              device-emulator:latest
+#
+# Option 2: 使用 IPC_LOCK capability（最小权限原则）
+#   docker run --cap-add=SYS_RESOURCE \
+#              --ulimit memlock=-1 \
+#              device-emulator:latest
+#
+# Option 3: 使用 privileged（最高权限，仅用于开发/测试）
+#   docker run --privileged device-emulator:latest
+#
+# 对于 docker-compose，添加以下配置：
+# services:
+#   device-emulator:
+#     build: .
+#     cap_add:
+#       - SYS_RESOURCE
+#     ulimits:
+#       memlock: -1  # unlimited
