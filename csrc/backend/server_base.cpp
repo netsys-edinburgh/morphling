@@ -71,7 +71,9 @@ void SerializationBuffer::WriteUInt64(uint64_t value) {
 }
 
 void SerializationBuffer::WriteInt64(int64_t value) {
-  memcpy(buffer_ + offset_, &value, sizeof(int64_t)); 
+  memcpy(buffer_ + offset_, &value, sizeof(int64_t));
+  offset_ += sizeof(int64_t);
+}
 
 void SerializationBuffer::WriteBytes(const void* data, size_t size) {
   if (size > 0 && data != nullptr) {
