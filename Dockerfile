@@ -159,7 +159,6 @@ COPY . /app/
 
 # 构建和安装项目（使用系统 python）with BuildKit cache mounts
 # Cache mounts persist across builds: CMake deps in /app/build/_deps, ccache in /ccache
-# 编译优化标志：-O3 内存页对齐和固定优化
 RUN --mount=type=cache,target=/app/build/_deps \
     --mount=type=cache,target=/ccache \
     --mount=type=cache,target=/root/.cache/cmake \
@@ -170,9 +169,8 @@ RUN --mount=type=cache,target=/app/build/_deps \
     export MORPHLING_PYTHON_EXECUTABLE=/usr/bin/python3.10 && \
     export LDFLAGS="-L/usr/lib/x86_64-linux-gnu" && \
     export CPPFLAGS="-I/usr/include/python3.10" && \
-    export CMAKE_CXX_FLAGS="-O3 -march=native -mtune=native -funroll-loops -fno-asynchronous-unwind-tables" && \
-    export CMAKE_ARGS="-DPython3_EXECUTABLE=/usr/bin/python3.10 -DPython3_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so -DPython3_INCLUDE_DIR=/usr/include/python3.10 -DCMAKE_PREFIX_PATH=/usr -DFETCHCONTENT_BASE_DIR=/app/build/_deps -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_FLAGS=\"${CMAKE_CXX_FLAGS}\" -DCMAKE_BUILD_TYPE=Release" && \
-    echo "=== 开始构建 (with cache mounts 和编译优化) ===" && \
+    export CMAKE_ARGS="-DPython3_EXECUTABLE=/usr/bin/python3.10 -DPython3_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so -DPython3_INCLUDE_DIR=/usr/include/python3.10 -DCMAKE_PREFIX_PATH=/usr -DFETCHCONTENT_BASE_DIR=/app/build/_deps -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_BUILD_TYPE=Release" && \
+    echo "=== 开始构建 (编译优化标志在 CMakeLists.txt 中配置) ===" && \
     uv pip install --system --no-build-isolation --no-cache --verbose . && \
     echo "=== Build complete ===" && \
     (ccache -s || echo "ccache stats not available")
