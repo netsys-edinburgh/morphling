@@ -1,6 +1,9 @@
 #include "proxy_svr.h"
 
 #include <chrono>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sched.h>
 
 #include "base/my_uuid.h"
 #include "common/generator.h"
@@ -25,12 +28,36 @@ using namespace uevent;
 namespace morphling {
 namespace backend {
 
+// ============================================================================
+// Thread Pinning Helper
+// ============================================================================
+
+void PinThreadToCore(int core_id) {
+  pid_t tid = syscall(SYS_gettid);
+  cpu_set_t cpuset;
+  
+  CPU_ZERO(&cpuset);
+  CPU_SET(core_id, &cpuset);
+  
+  int ret = syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
+  if (ret == 0) {
+    LOG_INFO << "Thread " << tid << " pinned to CPU core " << core_id;
+  } else {
+    LOG_WARN << "Failed to pin thread " << tid << " to core " << core_id 
+             << " (errno: " << errno << ")";
+  }
+}
+
 /*********************************ProxySvrHandle***********************************/
 
 ProxySvrHandle::ProxySvrHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
     : ctx_(ctx), loop_(loop) {
   SRV_STATS->Initialize();
   // Scheduling policy is now in ctx_.sched_policy
+  
+  // Pin the main server thread to CPU core 0 for better cache locality
+  // This reduces thread migration overhead and improves memory copy performance
+  PinThreadToCore(0);
 }
 
 void ProxySvrHandle::ThreadInit(uevent::UeventLoop* loop) {
