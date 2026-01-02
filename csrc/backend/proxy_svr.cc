@@ -22,6 +22,7 @@ using namespace uevent;
 
 #include <iostream>
 #include <set>
+#include <atomic>
 
 #include "base/logging.h"
 
@@ -31,6 +32,9 @@ namespace backend {
 // ============================================================================
 // Thread Pinning Helper
 // ============================================================================
+
+// Global atomic counter to assign each thread to a different CPU core
+static std::atomic<int> g_thread_core_counter(0);
 
 void PinThreadToCore(int core_id) {
   pid_t tid = syscall(SYS_gettid);
@@ -48,22 +52,36 @@ void PinThreadToCore(int core_id) {
   }
 }
 
+// Auto-assign thread to next available CPU core
+void PinThreadToNextAvailableCore() {
+  // Get current number of CPUs available
+  int num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+  if (num_cpus <= 0) {
+    LOG_WARN << "Failed to get number of CPUs, defaulting to 8";
+    num_cpus = 8;
+  }
+  
+  // Atomically increment counter and assign core
+  int core_id = g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) % num_cpus;
+  
+  PinThreadToCore(core_id);
+}
+
 /*********************************ProxySvrHandle***********************************/
 
 ProxySvrHandle::ProxySvrHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
     : ctx_(ctx), loop_(loop) {
   SRV_STATS->Initialize();
   // Scheduling policy is now in ctx_.sched_policy
-  
-  // Pin the main server thread to CPU core 0 for better cache locality
-  // This reduces thread migration overhead and improves memory copy performance
-  PinThreadToCore(0);
 }
 
 void ProxySvrHandle::ThreadInit(uevent::UeventLoop* loop) {
   auto* loop_handle = loop->GetLoopHandle();
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
-  // handle->RegisterService();
+  
+  // Pin this thread to the next available CPU core in round-robin fashion
+  // This is called in the worker thread context to ensure correct thread binding
+  PinThreadToNextAvailableCore();
 }
 
 void ProxySvrHandle::RequestWriteCb(const uevent::ConnectionUeventPtr& conn) {
