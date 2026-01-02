@@ -32,6 +32,14 @@ SerializationBuffer::~SerializationBuffer() {
 
 void SerializationBuffer::Allocate(size_t size) {
   if (owns_buffer_ && buffer_) {
+    //Unpin memory before freeing
+    if(buffer_!=nullptr){
+      int ret = munlock(buffer_, size_);
+      if (ret != 0) {
+        LOG_WARN << "munlock failed with error: " << ret;
+      }
+    }
+      
     free(buffer_);
   }
 
@@ -47,6 +55,15 @@ void SerializationBuffer::Allocate(size_t size) {
     offset_ = 0;
     owns_buffer_ = false;
     throw std::runtime_error("Failed to allocate page-aligned memory");
+  }
+
+  //Pin memory to prevent swapping
+  ret = mlock(buffer_, size);
+  if (ret != 0) {
+    LOG_WARN << "mlock failed: " << strerror(errno) << " (errno=" << errno << ")";
+    // Proceeding even if mlock fails
+  }else {
+    LOG_DEBUG << "Memory locked successfully, size: " << size<< " bytes";
   }
 
   size_ = size;
