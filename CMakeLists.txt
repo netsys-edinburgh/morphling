@@ -5,7 +5,21 @@ project(emulator)
 
 # Adapted from https://github.com/vllm-project/vllm/blob/a1242324c99ff8b1e29981006dfb504da198c7c3/CMakeLists.txt
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g3 -O0 -Wall")
+
+# ============================================================================
+# Compiler Optimization Flags
+# ============================================================================
+# Performance optimization flags for memory-intensive operations
+# These flags are applied to all targets in the project
+set(OPTIMIZATION_FLAGS "-O3 -march=native -mtune=native -funroll-loops -mavx -mavx2")
+
+# Apply optimization flags to C and CXX
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OPTIMIZATION_FLAGS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OPTIMIZATION_FLAGS} -g3 -Wall")
+
+# Additional Debug Info (without optimizations interference)
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g3 -O0 -Wall")
+
 add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0) # needed for torch backward compatibility
 
 # Set c++ 17
