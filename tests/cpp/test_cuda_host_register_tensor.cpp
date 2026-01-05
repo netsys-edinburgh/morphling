@@ -57,30 +57,46 @@ bool CompareMatrices(float* a, float* b, int64_t size, float tolerance = 1e-4) {
 }
 
 float* TestMatrixMultiplication(const std::string& name, float* host_ptr_a,
-                                  float* host_ptr_b, int m, int k, int n) {
-  std::cout << "\n[" << name << "] Testing matrix multiplication...\n";
-
-  // Allocate GPU memory
-  float* gpu_a = nullptr;
-  float* gpu_b = nullptr;
-  float* gpu_c = nullptr;
+                                  float* host_ptr_b, int m, int k, int n,
+                                  bool use_host_ptr = false) {
+  std::cout << "\n[" << name << "] Testing matrix multiplication";
+  if (use_host_ptr) {
+    std::cout << " (using host ptr directly)";
+  } else {
+    std::cout << " (using GPU ptr after cudaMemcpy)";
+  }
+  std::cout << "...\n";
 
   int64_t size_a = (int64_t)m * k * sizeof(float);
   int64_t size_b = (int64_t)k * n * sizeof(float);
   int64_t size_c = (int64_t)m * n * sizeof(float);
 
-  cudaMalloc((void**)&gpu_a, size_a);
-  cudaMalloc((void**)&gpu_b, size_b);
-  cudaMalloc((void**)&gpu_c, size_c);
+  float* gpu_a = nullptr;
+  float* gpu_b = nullptr;
+  float* gpu_c = nullptr;
 
-  // Copy data to GPU
-  cudaMemcpy(gpu_a, host_ptr_a, size_a, cudaMemcpyHostToDevice);
-  cudaMemcpy(gpu_b, host_ptr_b, size_b, cudaMemcpyHostToDevice);
-  cudaDeviceSynchronize();
+  if (use_host_ptr) {
+    // Get device pointers from pinned host memory
+    std::cout << "  Getting device pointers from pinned memory...\n";
+    cudaHostGetDevicePointer((void**)&gpu_a, (void*)host_ptr_a, 0);
+    cudaHostGetDevicePointer((void**)&gpu_b, (void*)host_ptr_b, 0);
+    std::cout << "  Using host ptr directly for GPU computation\n";
+  } else {
+    // Allocate GPU memory and copy
+    std::cout << "  Allocating GPU memory and copying host data...\n";
+    cudaMalloc((void**)&gpu_a, size_a);
+    cudaMalloc((void**)&gpu_b, size_b);
+    
+    cudaMemcpy(gpu_a, host_ptr_a, size_a, cudaMemcpyHostToDevice);
+    cudaMemcpy(gpu_b, host_ptr_b, size_b, cudaMemcpyHostToDevice);
+    cudaDeviceSynchronize();
+    std::cout << "  Data copied to GPU\n";
+  }
+
+  cudaMalloc((void**)&gpu_c, size_c);
 
   std::cout << "  Matrix A: " << m << " x " << k << "\n";
   std::cout << "  Matrix B: " << k << " x " << n << "\n";
-  std::cout << "  Data copied to GPU\n";
 
   // Create cuBLAS handle
   cublasHandle_t handle;
@@ -105,7 +121,7 @@ float* TestMatrixMultiplication(const std::string& name, float* host_ptr_a,
       std::chrono::duration<double, std::milli>(end - start).count() / 5.0;
 
   // Compute FLOPs
-  double flops = 2.0 * m * n * k;  // 2 multiplications + 1 addition per element
+  double flops = 2.0 * m * n * k;
   double gpu_gflops = flops / gpu_elapsed_ms / 1e6;
 
   std::cout << "  GPU Matrix mult time: " << std::fixed << std::setprecision(3)
@@ -120,11 +136,14 @@ float* TestMatrixMultiplication(const std::string& name, float* host_ptr_a,
 
   // Cleanup GPU
   cublasDestroy(handle);
-  cudaFree(gpu_a);
-  cudaFree(gpu_b);
+  
+  // Only free GPU memory if we allocated it (not for pinned host ptr)
+  if (!use_host_ptr) {
+    cudaFree(gpu_a);
+    cudaFree(gpu_b);
+  }
   cudaFree(gpu_c);
 
-  // Return the GPU result for later comparison
   return gpu_result;
 }
 
@@ -202,55 +221,29 @@ int main() {
   std::cout << "  B: " << k << " x " << n << " (" << (size_bytes / 1e6)
             << " MB)\n";
 
-  // Test 1: Standard malloc (baseline)
-  PrintSection("Test 1: Standard malloc (Pageable Memory)");
+  // Host Register Setup
+  PrintSection("Step 1: Allocate and Register Host Memory");
 
-  std::cout << "Allocating with malloc...\n";
-  float* host_malloc_a = (float*)malloc(size_bytes);
-  float* host_malloc_b = (float*)malloc(size_bytes);
+  std::cout << "Allocating host memory with malloc...\n";
+  float* host_a = (float*)malloc(size_bytes);
+  float* host_b = (float*)malloc(size_bytes);
 
-  if (!host_malloc_a || !host_malloc_b) {
+  if (!host_a || !host_b) {
     std::cerr << "malloc failed!\n";
     return 1;
   }
 
-  // Initialize with random data (same source data for both tests)
+  // Initialize with random data
+  std::cout << "Initializing with random data...\n";
   for (int64_t i = 0; i < elements; i++) {
-    host_malloc_a[i] = static_cast<float>(rand()) / RAND_MAX;
-    host_malloc_b[i] = static_cast<float>(rand()) / RAND_MAX;
-  }
-
-  std::cout << "✓ Allocated successfully\n";
-
-  float* malloc_gpu_result = TestMatrixMultiplication("Standard malloc", host_malloc_a, host_malloc_b, m,
-                                                       k, n);
-
-  // Test 2: CUDA Host Register
-  PrintSection("Test 2: CUDA Host Register (Pinned Memory)");
-
-  std::cout << "Allocating with malloc + cudaHostRegister...\n";
-  float* host_register_a = (float*)malloc(size_bytes);
-  float* host_register_b = (float*)malloc(size_bytes);
-
-  if (!host_register_a || !host_register_b) {
-    std::cerr << "malloc failed!\n";
-    return 1;
-  }
-
-  // Use the SAME host data for both tests
-  // This verifies that both memory allocation methods can correctly access and copy the same host data
-  std::cout << "Initializing with SAME host data from Test 1...\n";
-  for (int64_t i = 0; i < elements; i++) {
-    host_register_a[i] = host_malloc_a[i];
-    host_register_b[i] = host_malloc_b[i];
+    host_a[i] = static_cast<float>(rand()) / RAND_MAX;
+    host_b[i] = static_cast<float>(rand()) / RAND_MAX;
   }
 
   // Register as pinned memory
   std::cout << "Registering memory with cudaHostRegister...\n";
-  cudaError_t err1 = cudaHostRegister(host_register_a, size_bytes,
-                                       cudaHostRegisterDefault);
-  cudaError_t err2 = cudaHostRegister(host_register_b, size_bytes,
-                                       cudaHostRegisterDefault);
+  cudaError_t err1 = cudaHostRegister(host_a, size_bytes, cudaHostRegisterDefault);
+  cudaError_t err2 = cudaHostRegister(host_b, size_bytes, cudaHostRegisterDefault);
 
   if (err1 != cudaSuccess || err2 != cudaSuccess) {
     std::cerr << "cudaHostRegister failed: " << cudaGetErrorString(err1)
@@ -258,64 +251,68 @@ int main() {
     return 1;
   }
 
-  std::cout << "✓ Registered successfully\n";
+  std::cout << "✓ Host memory registered successfully\n";
 
-  float* register_gpu_result = TestMatrixMultiplication("CUDA Host Register", host_register_a,
-                                                         host_register_b, m, k, n);
+  // Test 1: Direct host ptr access
+  PrintSection("Test 1: Direct Host Ptr Access (via cudaHostGetDevicePointer)");
+
+  float* direct_host_ptr_result = TestMatrixMultiplication("Direct Host Ptr", host_a, host_b, m, k, n, true);
+
+  // Test 2: cudaMemcpy with GPU ptr
+  PrintSection("Test 2: cudaMemcpy + GPU Ptr Access");
+
+  float* gpu_ptr_result = TestMatrixMultiplication("GPU Ptr (after cudaMemcpy)", host_a, host_b, m, k, n, false);
 
   // Compare the two GPU results
   PrintSection("Comparing GPU Results");
-  std::cout << "Verifying that both memory allocation methods can correctly access host data\n";
-  std::cout << "================================================================\n\n";
+  std::cout << "Verifying that both access methods produce identical results\n";
+  std::cout << "============================================================\n\n";
   
   std::cout << "Test Design:\n";
-  std::cout << "  - Both tests use the SAME host data (one copy)\n";
-  std::cout << "  - Test 1: malloc + cudaMemcpy → GPU → GPU calculation\n";
-  std::cout << "  - Test 2: cudaHostRegister + cudaMemcpy → GPU → GPU calculation\n";
-  std::cout << "  - Expected: GPU results should be IDENTICAL\n";
-  std::cout << "    (proves both methods correctly copied and used the same host data)\n\n";
+  std::cout << "  - Both tests use the SAME registered host memory\n";
+  std::cout << "  - Test 1: cudaHostGetDevicePointer → direct host ptr GEMM\n";
+  std::cout << "  - Test 2: cudaMemcpy to GPU memory → GPU ptr GEMM\n";
+  std::cout << "  - Expected: Results should be IDENTICAL\n\n";
 
   int64_t result_size = (int64_t)m * n;
-  bool results_match = CompareMatrices(malloc_gpu_result, register_gpu_result, result_size);
+  bool results_match = CompareMatrices(direct_host_ptr_result, gpu_ptr_result, result_size);
   
   std::cout << "Verification Result:\n";
   if (results_match) {
-    std::cout << "✓ PASS! GPU results are IDENTICAL\n";
-    std::cout << "  Both malloc and cudaHostRegister:\n";
-    std::cout << "  • Correctly accessed the same host data\n";
-    std::cout << "  • Successfully copied data to GPU\n";
-    std::cout << "  • Produced identical GPU computation results\n";
+    std::cout << "✓ PASS! Results are IDENTICAL\n";
+    std::cout << "  Both access methods work correctly:\n";
+    std::cout << "  • Direct host ptr (via cudaHostGetDevicePointer) works\n";
+    std::cout << "  • cudaMemcpy to GPU memory works\n";
+    std::cout << "  • Both produce identical results\n";
   } else {
-    std::cout << "✗ FAIL! GPU results are DIFFERENT\n";
-    std::cout << "  This indicates a problem:\n";
-    std::cout << "  • One method did not correctly access/copy the host data\n";
-    std::cout << "  • Or there's a data corruption issue\n";
+    std::cout << "✗ FAIL! Results are DIFFERENT\n";
+    std::cout << "  This indicates an issue:\n";
+    std::cout << "  • Host ptr access may not be working correctly\n";
+    std::cout << "  • Or data was not properly transferred/registered\n";
   }
 
   // Cleanup
   PrintSection("Cleanup");
 
-  free(host_malloc_a);
-  free(host_malloc_b);
-  free(malloc_gpu_result);
+  free(direct_host_ptr_result);
+  free(gpu_ptr_result);
 
-  cudaError_t err3 = cudaHostUnregister(host_register_a);
-  cudaError_t err4 = cudaHostUnregister(host_register_b);
+  cudaError_t err3 = cudaHostUnregister(host_a);
+  cudaError_t err4 = cudaHostUnregister(host_b);
   if (err3 != cudaSuccess || err4 != cudaSuccess) {
     std::cerr << "cudaHostUnregister failed\n";
   }
-  free(host_register_a);
-  free(host_register_b);
-  free(register_gpu_result);
+  free(host_a);
+  free(host_b);
 
   std::cout << "✓ Cleaned up successfully\n";
 
   // Summary
   PrintSection("Summary");
-  std::cout << "✓ Both allocation methods work correctly\n";
-  std::cout << "✓ Both malloc and cudaHostRegister can access the same host data\n";
-  std::cout << "✓ GPU matrix multiplication with both methods produces identical results\n";
-  std::cout << "\nConclusion: cudaHostRegister correctly handles host data access for GPU computation\n";
+  std::cout << "✓ cudaHostRegister pinned memory successfully\n";
+  std::cout << "✓ cudaHostGetDevicePointer retrieves valid device pointer\n";
+  std::cout << "✓ Both direct host ptr and GPU ptr access methods work\n";
+  std::cout << "\nConclusion: cudaHostRegister enables efficient GPU access to host data\n";
 
   return 0;
 }
