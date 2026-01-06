@@ -30,21 +30,15 @@ namespace backend {
 ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
     : ctx_(ctx), loop_(loop), cublas_handle_(nullptr) {
   SRV_STATS->Initialize();
-  // cuBLAS handle将在ThreadInit中创建
+  // Initialize cuBLAS handle immediately in constructor
+  InitCublas();
 }
 
 ProxyCliHandle::~ProxyCliHandle() {
   CleanupCublas();
 }
 
-void ProxyCliHandle::ThreadInit(uevent::UeventLoop* loop) {
-  auto* loop_handle = loop->GetLoopHandle();
-  auto* handle = reinterpret_cast<ProxyCliHandle*>(loop_handle);
-  // handle->RegisterService();
-  
-  // 在每个线程中初始化cuBLAS handle
-  handle->InitCublas();
-}
+// Note: ThreadInit is no longer needed as cuBLAS is initialized in constructor
 
 void ProxyCliHandle::InitCublas() {
   cublasStatus_t status = cublasCreate(&cublas_handle_);
@@ -143,31 +137,134 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "COMPUTE", "START",
                                      vt_compute_start, vt_compute_start);
   
-  // create tensors from partition
+  // Extract partition data
   auto [r_ptr, r_size] = partition.mat[0];
   auto [c_ptr, c_size] = partition.mat[1];
   int64_t row_size = r_size / partition.h_dim / sizeof(float);
   int64_t col_size = c_size / partition.h_dim / sizeof(float);
 
+  LOG_DEBUG << part_key << " Row: [" << row_size << ", " << partition.h_dim << "]"
+            << ", Col: [" << col_size << ", " << partition.h_dim << "]";
+
   auto start = std::chrono::high_resolution_clock::now();
-  auto row = torch::from_blob(r_ptr, {row_size, partition.h_dim},
-                              FLOAT32_TENSOR_OPTIONS(torch::kCPU))
-                 .to(torch::kCUDA, 0);
-  auto col = torch::from_blob(c_ptr, {col_size, partition.h_dim},
-                              FLOAT32_TENSOR_OPTIONS(torch::kCPU))
-                 .to(torch::kCUDA, 0);
 
-  LOG_DEBUG << part_key << " Row: " << row.sizes().vec()
-            << ", Col: " << col.sizes().vec();
+  // Use cuBLAS directly for GEMM computation
+  if (cublas_handle_ == nullptr) {
+    LOG_ERROR << part_key << " cuBLAS handle is null, cannot perform GEMM";
+    return;
+  }
 
-  auto result = torch::mm(row, col.transpose(0, 1)).to(torch::kCPU);
+  // Allocate GPU memory for input and output
+  float* d_row = nullptr;
+  float* d_col = nullptr;
+  float* d_result = nullptr;
+  
+  size_t row_bytes = row_size * partition.h_dim * sizeof(float);
+  size_t col_bytes = col_size * partition.h_dim * sizeof(float);
+  size_t result_bytes = row_size * col_size * sizeof(float);
+
+  cudaError_t cuda_err = cudaMalloc(&d_row, row_bytes);
+  if (cuda_err != cudaSuccess) {
+    LOG_ERROR << part_key << " Failed to allocate GPU memory for row: " << cudaGetErrorString(cuda_err);
+    return;
+  }
+
+  cuda_err = cudaMalloc(&d_col, col_bytes);
+  if (cuda_err != cudaSuccess) {
+    LOG_ERROR << part_key << " Failed to allocate GPU memory for col: " << cudaGetErrorString(cuda_err);
+    cudaFree(d_row);
+    return;
+  }
+
+  cuda_err = cudaMalloc(&d_result, result_bytes);
+  if (cuda_err != cudaSuccess) {
+    LOG_ERROR << part_key << " Failed to allocate GPU memory for result: " << cudaGetErrorString(cuda_err);
+    cudaFree(d_row);
+    cudaFree(d_col);
+    return;
+  }
+
+  // Copy data to GPU (pinned memory enables fast DMA transfer)
+  cuda_err = cudaMemcpy(d_row, r_ptr, row_bytes, cudaMemcpyHostToDevice);
+  if (cuda_err != cudaSuccess) {
+    LOG_ERROR << part_key << " Failed to copy row to GPU: " << cudaGetErrorString(cuda_err);
+    cudaFree(d_row);
+    cudaFree(d_col);
+    cudaFree(d_result);
+    return;
+  }
+
+  cuda_err = cudaMemcpy(d_col, c_ptr, col_bytes, cudaMemcpyHostToDevice);
+  if (cuda_err != cudaSuccess) {
+    LOG_ERROR << part_key << " Failed to copy col to GPU: " << cudaGetErrorString(cuda_err);
+    cudaFree(d_row);
+    cudaFree(d_col);
+    cudaFree(d_result);
+    return;
+  }
+
+  // Perform GEMM: result = row * col^T
+  // row is [row_size, h_dim], col is [col_size, h_dim]
+  // col^T is [h_dim, col_size]
+  // result should be [row_size, col_size]
+  float alpha = 1.0f;
+  float beta = 0.0f;
+  
+  cublasStatus_t cublas_status = cublasSgemm(
+      cublas_handle_,
+      CUBLAS_OP_N,              // col^T: transpose col (op(col) = col^T)
+      CUBLAS_OP_N,              // row: no transpose
+      col_size,                 // m: number of rows in result (col_size)
+      row_size,                 // n: number of cols in result (row_size)
+      partition.h_dim,          // k: inner dimension (h_dim)
+      &alpha,
+      d_col,                    // A: col (col_size x h_dim)
+      col_size,                 // lda: leading dimension of col
+      d_row,                    // B: row (row_size x h_dim)
+      partition.h_dim,          // ldb: leading dimension of row
+      &beta,
+      d_result,                 // C: result (col_size x row_size)
+      col_size                  // ldc: leading dimension of result
+  );
+
+  if (cublas_status != CUBLAS_STATUS_SUCCESS) {
+    LOG_ERROR << part_key << " cuBLAS GEMM failed with status: " << cublas_status;
+    cudaFree(d_row);
+    cudaFree(d_col);
+    cudaFree(d_result);
+    return;
+  }
+
+  // Allocate pinned host memory for result
+  float* h_result = nullptr;
+  cuda_err = cudaHostAlloc(&h_result, result_bytes, cudaHostAllocDefault);
+  if (cuda_err != cudaSuccess) {
+    LOG_ERROR << part_key << " Failed to allocate pinned memory for result: " << cudaGetErrorString(cuda_err);
+    cudaFree(d_row);
+    cudaFree(d_col);
+    cudaFree(d_result);
+    return;
+  }
+
+  // Copy result back to host
+  cuda_err = cudaMemcpy(h_result, d_result, result_bytes, cudaMemcpyDeviceToHost);
+  if (cuda_err != cudaSuccess) {
+    LOG_ERROR << part_key << " Failed to copy result from GPU: " << cudaGetErrorString(cuda_err);
+    cudaFreeHost(h_result);
+    cudaFree(d_row);
+    cudaFree(d_col);
+    cudaFree(d_result);
+    return;
+  }
+
+  // Free GPU memory
+  cudaFree(d_row);
+  cudaFree(d_col);
+  cudaFree(d_result);
 
   auto end = std::chrono::high_resolution_clock::now();
-  auto duration =
-      std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  auto mm_time = duration.count();
-  LOG_DEBUG << part_key << " Matmul real time: " << duration.count()
-            << "us, Matmul logical time: " << mm_time;
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+  LOG_DEBUG << part_key << " cuBLAS GEMM time: " << duration.count() << "us";
 
   // Record COMPUTE end time (virtual time)
   uint64_t vt_compute_end = VirtualClockNow();
@@ -176,13 +273,17 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "COMPUTE", "END",
                                      vt_compute_start, vt_compute_end);
 
+  // Prepare response with result
   MatrixPartition response = partition;
-  response.h_dim = result.size(1);
+  response.h_dim = col_size;  // Result has col_size columns
   response.timestamp = CurrentTimeMicros();
   response.mat.clear();
-  response.mat.push_back({result.data_ptr(), result.numel() * sizeof(float)});
+  response.mat.push_back({h_result, result_bytes});
 
   ResponseToCaller(conn, response);
+
+  // Clean up result memory after sending response
+  cudaFreeHost(h_result);
 }
 
 void ProxyCliHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
