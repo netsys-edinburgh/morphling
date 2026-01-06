@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cublas_v2.h>
+
 #include "common/env_cfg.h"
 #include "common/lru.h"
 #include "common/pytorch_defs.h"
@@ -15,6 +17,7 @@ namespace backend {
 class ProxyCliHandle : public uevent::LoopHandle {
  public:
   ProxyCliHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop);
+  ~ProxyCliHandle();
 
   static void ThreadInit(uevent::UeventLoop* loop);
   static uevent::LoopHandle* CreateMyself(ProxyEnvCfg& ctx,
@@ -33,8 +36,13 @@ class ProxyCliHandle : public uevent::LoopHandle {
                        const MatrixPartition& partition);
 
  private:
+  // cuBLAS helper methods
+  void InitCublas();
+  void CleanupCublas();
+
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
+  cublasHandle_t cublas_handle_;
 };
 
 class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {

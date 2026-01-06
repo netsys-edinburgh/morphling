@@ -1,6 +1,7 @@
 #include "proxy_cli.h"
 
 #include <chrono>
+#include <cuda_runtime.h>
 
 #include "base/my_uuid.h"
 #include "common/generator.h"
@@ -27,14 +28,44 @@ namespace backend {
 /*********************************ProxyCliHandle************************************/
 
 ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
-    : ctx_(ctx), loop_(loop) {
+    : ctx_(ctx), loop_(loop), cublas_handle_(nullptr) {
   SRV_STATS->Initialize();
+  // cuBLAS handle将在ThreadInit中创建
+}
+
+ProxyCliHandle::~ProxyCliHandle() {
+  CleanupCublas();
 }
 
 void ProxyCliHandle::ThreadInit(uevent::UeventLoop* loop) {
   auto* loop_handle = loop->GetLoopHandle();
   auto* handle = reinterpret_cast<ProxyCliHandle*>(loop_handle);
   // handle->RegisterService();
+  
+  // 在每个线程中初始化cuBLAS handle
+  handle->InitCublas();
+}
+
+void ProxyCliHandle::InitCublas() {
+  cublasStatus_t status = cublasCreate(&cublas_handle_);
+  if (status != CUBLAS_STATUS_SUCCESS) {
+    LOG_ERROR << "Failed to create cuBLAS handle, status: " << status;
+    cublas_handle_ = nullptr;
+  } else {
+    LOG_DEBUG << "cuBLAS handle created successfully: " << (void*)cublas_handle_;
+  }
+}
+
+void ProxyCliHandle::CleanupCublas() {
+  if (cublas_handle_ != nullptr) {
+    cublasStatus_t status = cublasDestroy(cublas_handle_);
+    if (status != CUBLAS_STATUS_SUCCESS) {
+      LOG_ERROR << "Failed to destroy cuBLAS handle, status: " << status;
+    } else {
+      LOG_DEBUG << "cuBLAS handle destroyed successfully";
+    }
+    cublas_handle_ = nullptr;
+  }
 }
 
 // void ProxyCliHandle::RegisterService() {
@@ -526,15 +557,41 @@ void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
     return;
   }
 
-  LOG_DEBUG << "Allocating memory: size=" << size << " bytes";
-  void* cpy_ptr = malloc(size);
-
-  if (cpy_ptr == nullptr) {
-    LOG_ERROR << "CacheTensor: malloc failed for size=" << size;
+  LOG_DEBUG << "Allocating pinned host memory: size=" << size << " bytes";
+  void* cpy_ptr = nullptr;
+  cudaError_t cuda_err = cudaHostAlloc(&cpy_ptr, size, cudaHostAllocDefault);
+  if (cuda_err != cudaSuccess) {
+    // Print detailed CUDA error information
+    fprintf(stderr, "\n========================================\n");
+    fprintf(stderr, "cudaHostAlloc Error Details:\n");
+    fprintf(stderr, "----------------------------------------\n");
+    fprintf(stderr, "Error Code: %d\n", cuda_err);
+    fprintf(stderr, "Error String: %s\n", cudaGetErrorString(cuda_err));
+    fprintf(stderr, "Requested Size: %ld bytes (%.2f MiB)\n", size, size / (1024.0 * 1024.0));
+    fprintf(stderr, "h_dim: %ld\n", h_dim);
+    
+    // Get GPU memory info
+    size_t free_mem = 0, total_mem = 0;
+    cudaError_t mem_err = cudaMemGetInfo(&free_mem, &total_mem);
+    if (mem_err == cudaSuccess) {
+      fprintf(stderr, "GPU Memory Status:\n");
+      fprintf(stderr, "  Total: %.2f MiB\n", total_mem / (1024.0 * 1024.0));
+      fprintf(stderr, "  Free: %.2f MiB\n", free_mem / (1024.0 * 1024.0));
+      fprintf(stderr, "  Used: %.2f MiB\n", (total_mem - free_mem) / (1024.0 * 1024.0));
+    } else {
+      fprintf(stderr, "Failed to query GPU memory: %s\n", cudaGetErrorString(mem_err));
+    }
+    fprintf(stderr, "----------------------------------------\n");
+    fprintf(stderr, "Hint: Check with 'nvidia-smi' or 'nvtop' for GPU memory usage\n");
+    fprintf(stderr, "========================================\n\n");
+    fflush(stderr);
+    
+    LOG_ERROR << "CacheTensor: cudaHostAlloc failed with error code " << cuda_err 
+              << " (" << cudaGetErrorString(cuda_err) << ") for size " << size << " bytes";
     return;
   }
 
-  LOG_DEBUG << "malloc succeeded: cpy_ptr=" << cpy_ptr;
+  LOG_DEBUG << "cudaHostAlloc succeeded: cpy_ptr=" << cpy_ptr << " (pinned memory)";
 
   int64_t ld_size = size / h_dim / sizeof(float);
   LOG_DEBUG << "Calculated ld_size=" << ld_size << " (size=" << size
@@ -550,7 +607,7 @@ void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
   cached_tensors_.Put(
       key,
       torch::from_blob(
-          cpy_ptr, {ld_size, h_dim}, [](void* ptr) { free(ptr); },
+          cpy_ptr, {ld_size, h_dim}, [](void* ptr) { cudaFreeHost(ptr); },
           FLOAT32_TENSOR_OPTIONS(torch::kCPU)),
       size);
 
