@@ -30,8 +30,8 @@ namespace backend {
 ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
     : ctx_(ctx), loop_(loop), cublas_handle_(nullptr) {
   SRV_STATS->Initialize();
-  // Initialize cuBLAS handle immediately in constructor
-  InitCublas();
+  // cuBLAS handle will be initialized lazily on first use
+  LOG_DEBUG << "ProxyCliHandle initialized, cuBLAS will be initialized on first GEMM";
 }
 
 ProxyCliHandle::~ProxyCliHandle() {
@@ -147,6 +147,16 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
             << ", Col: [" << col_size << ", " << partition.h_dim << "]";
 
   auto start = std::chrono::high_resolution_clock::now();
+
+  // Lazy initialization: Create cuBLAS handle on first use
+  if (cublas_handle_ == nullptr) {
+    LOG_DEBUG << part_key << " Initializing cuBLAS handle on first GEMM";
+    InitCublas();
+    if (cublas_handle_ == nullptr) {
+      LOG_ERROR << part_key << " Failed to initialize cuBLAS handle";
+      return;
+    }
+  }
 
   // Use cuBLAS directly for GEMM computation
   if (cublas_handle_ == nullptr) {
@@ -324,15 +334,10 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
   DEVICE_TRACKER.InitSeparatePerfLog("./logs", "device", 0);
   LOG_INFO << "[ProxyCliImpl::Initialize] Performance logging initialized at ./logs/perf_device_0.log";
 
-  // CUDA context warmup and do random matmul (skip if no CUDA available)
-  if (torch::cuda::is_available()) {
-    torch::Tensor warmup_a = torch::rand({128, 4096}).to(torch::kCUDA, 0);
-    torch::Tensor warmup_b = torch::rand({4096, 128}).to(torch::kCUDA, 0);
-    torch::mm(warmup_a, warmup_b);
-    LOG_DEBUG << "CUDA warmup completed";
-  } else {
-    LOG_DEBUG << "CUDA not available, skipping CUDA warmup";
-  }
+  // CUDA context warmup (optional, can cause OOM if GPU memory is tight)
+  // Disabled to avoid unnecessary GPU memory allocation during initialization
+  // CUDA is already initialized when we call cudaMalloc in HandlePartition
+  LOG_DEBUG << "CUDA initialization will happen on first GEMM computation";
 }
 
 void ProxyCliImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -694,22 +699,27 @@ void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
 
   LOG_DEBUG << "cudaHostAlloc succeeded: cpy_ptr=" << cpy_ptr << " (pinned memory)";
 
-  int64_t ld_size = size / h_dim / sizeof(float);
-  LOG_DEBUG << "Calculated ld_size=" << ld_size << " (size=" << size
-            << " / h_dim=" << h_dim << " / sizeof(float)=" << sizeof(float)
-            << ")";
-
   LOG_DEBUG << "Copying data: from " << ptr << " to " << cpy_ptr
             << ", size=" << size << " bytes";
   std::memcpy(cpy_ptr, ptr, size);
 
   LOG_DEBUG << "memcpy completed successfully";
 
+  // Store pinned memory pointer and metadata directly (no torch::from_blob)
+  // Create a dummy tensor just to store the metadata, but don't trigger CUDA operations
+  int64_t ld_size = size / h_dim / sizeof(float);
+  
+  // Store in cache with a lambda that will cleanup pinned memory when evicted
   cached_tensors_.Put(
       key,
       torch::from_blob(
-          cpy_ptr, {ld_size, h_dim}, [](void* ptr) { cudaFreeHost(ptr); },
-          FLOAT32_TENSOR_OPTIONS(torch::kCPU)),
+          cpy_ptr, {ld_size, h_dim}, 
+          [](void* ptr) { cudaFreeHost(ptr); },  // Deleter called on eviction
+          at::TensorOptions()
+            .dtype(torch::kFloat32)
+            .device(torch::kCPU)
+            .layout(torch::kStrided)
+      ),
       size);
 
   LOG_INFO << "CacheTensor completed successfully";
