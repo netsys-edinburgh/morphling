@@ -1,11 +1,12 @@
 accelerate
 aio-pika
 clang-format
-cmake==3.28.4
-grpcio-tools==1.49.1
+cmake
+protobuf==3.13.0
 ninja
+transformers
 pre-commit
+pandas
 psutil
 redis
-torch==2.3.1
-transformers==4.37.2
+
