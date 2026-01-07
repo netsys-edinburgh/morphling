@@ -22,7 +22,9 @@ try:
     torch_available = True
     # The assert is not needed since Github CI does not use GPU server, install cuda library is sufficient
     # assert torch.cuda.is_available() == True
-    from torch.utils.cpp_extension import CUDA_HOME
+    from torch.utils.cpp_extension import CUDA_HOME, _TORCH_PATH, TORCH_LIB_PATH, EXEC_EXT
+
+    protoc_path = os.path.join(_TORCH_PATH, "bin", "protoc" + EXEC_EXT)
 
     print(f"torch version: {torch.__version__}")
 except Exception:
@@ -32,11 +34,8 @@ except Exception:
         "Please visit https://pytorch.org/ to see how to properly install torch on your system."
     )
 
-# import torch
-# from torch.utils.cpp_extension import CUDA_HOME
 
 ROOT_DIR = os.path.dirname(__file__)
-
 
 def check_nvcc_installed(cuda_home: str) -> None:
     """Check if nvcc (NVIDIA CUDA compiler) is installed."""
@@ -126,6 +125,7 @@ class cmake_build_ext(build_ext):
         )
 
         cmake_args = [
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
             "-DCMAKE_BUILD_TYPE={}".format(cfg),
             "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={}".format(outdir),
             "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={}".format(outdir),
@@ -238,17 +238,13 @@ class BuildPackageProtos(Command):
         pass
 
     def _build_package_proto(self, root: str, proto_file: str) -> None:
-        from grpc_tools import protoc
-
         command = [
-            "grpc_tools.protoc",
+            protoc_path,
             "-I",
             "./",
             f"--python_out={root}",
-            f"--grpc_python_out={root}",
         ] + [proto_file]
-        if protoc.main(command) != 0:
-            raise RuntimeError("error: {} failed".format(command))
+        subprocess.check_call(command)
 
     def run(self):
         self._build_package_proto(".", "morphling/proto/morphling.proto")
