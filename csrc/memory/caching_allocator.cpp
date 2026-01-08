@@ -222,7 +222,10 @@ void CachingAllocator::FreeCudaMemory(void* ptr) {
   cudaSetDevice(device_id_);
   cudaFree(ptr);
 }
-void CachingAllocator::FreePinMemory(void* ptr) { cudaFreeHost(ptr); }
+void CachingAllocator::FreePinMemory(void* ptr) {
+  cudaHostUnregister(ptr);
+  free(ptr);
+}
 void CachingAllocator::FreeShmMemory(void* ptr) {
   shmdt(ptr);
   auto shmid = shm_id_map_[ptr].id;
