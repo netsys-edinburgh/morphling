@@ -20,7 +20,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OPTIMIZATION_FLAGS} -g3 -Wall")
 # Additional Debug Info (without optimizations interference)
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g3 -O0 -Wall")
 
-add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0) # needed for torch backward compatibility
+# add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0) # needed for torch backward compatibility
 
 # Set c++ 17
 set(CMAKE_CXX_STANDARD 17)
@@ -52,78 +52,18 @@ message(STATUS "CMAKE_BINARY_DIR: ${CMAKE_BINARY_DIR}")
 
 set(BUILD_UNIT_TESTS OFF)
 set(BUILD_EXAMPLES OFF)
-
 set(BUILD_SHARED_LIBS ON)
 
+set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+#set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+add_subdirectory(external/protobuf/cmake)
+set(Protobuf_PROTOC_EXECUTABLE $<TARGET_FILE:protoc>)
+set(Protobuf_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/external/protobuf/src")
+set(Protobuf_LIBRARIES protobuf::libprotobuf)
+include(FindProtobuf)
 
-set(HIREDIS_HEADER $ENV{HOME}/hiredis)
-set(HIREDIS_LIB $ENV{HOME}/hiredis)
-set(TEST_HIREDIS_LIB $ENV{HOME}/hiredis)
-
-
-include_directories($ENV{HOME})
-# # BLT Support Flags
-# set(ENABLE_CUDA ON)
-# set(ENABLE_OPENMP ON)
-# set(ENABLE_MPI ON)
-# set(ENABLE_HIP OFF)
-
-# # Umpire Support Flags
-# set(UMPIRE_ENABLE_IPC_SHARED_MEMORY ON)
-# set(UMPIRE_ENABLE_ASAN ON)
-# set(UMPIRE_ENABLE_NUMA ON)
-
-include(FetchContent)
-set(FETCHCONTENT_QUIET OFF)
-
-# FetchContent_Declare(
-#   gflags
-#   GIT_REPOSITORY https://github.com/gflags/gflags.git
-#   GIT_TAG v2.2.2
-# )
-
-# FetchContent_Declare(
-# glog
-# GIT_REPOSITORY https://github.com/google/glog.git
-# GIT_TAG v0.6.0
-# )
-
-# FetchContent_Declare(
-#   rapidjson
-#   GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
-#   GIT_TAG v1.1.0
-# )
-
-# Use system-installed rabbitmq-c and mosquitto instead of fetching
-# FetchContent_Declare(
-#   rabbitmq
-#   GIT_REPOSITORY https://github.com/alanxz/rabbitmq-c.git
-#   GIT_TAG v0.14.0
-# )
-# FetchContent_Declare(
-#   mosquitto
-#   GIT_REPOSITORY https://github.com/eclipse-mosquitto/mosquitto.git
-#   GIT_TAG v2.0.20
-# )
-# FetchContent_MakeAvailable(rabbitmq mosquitto)
-# FetchContent_Declare(
-#   tcmalloc
-#   GIT_REPOSITORY https://github.com/google/tcmalloc.git
-# )
-# FetchContent_Declare(
-#   hiredis
-#   GIT_REPOSITORY https://github.com/redis/hiredis.git
-#   GIT_TAG v1.1.0
-# )
-# Use system-installed redis-plus-plus instead of fetching
-# FetchContent_Declare(
-#   redis
-#   GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
-#   GIT_TAG 1.3.13
-# )
-
-# Use system-installed protobuf
-find_package(Protobuf REQUIRED)
+add_subdirectory(external/rabbitmq-c)
+add_subdirectory(external/redis-plus-plus)
 
 if(DEFINED ENV{CONDA_PREFIX})
   set(CONDA_PREFIX_PATH $ENV{CONDA_PREFIX})
@@ -143,12 +83,6 @@ find_package(PythonInterp REQUIRED)
 string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\..*" _ ${PYTHON_VERSION_STRING})
 set(Python_VERSION ${CMAKE_MATCH_1}.${CMAKE_MATCH_2})
 message(STATUS "Python version: ${Python_VERSION}")
-
-# set(Python3_EXECUTABLE ${CONDA_PREFIX_PATH}/bin/python3)
-# set(Python_INCLUDE_DIRS ${CONDA_PREFIX_PATH}/include)
-# set(Python3_LIBRARIES ${CONDA_PREFIX_PATH}/lib)
-set(CONDA_INCLUDE_DIRS ${CONDA_PREFIX_PATH}/include)
-set(CONDA_LINK_DIRS ${CONDA_PREFIX_PATH}/lib)
 
 # Supported python versions.  These versions will be searched in order, the
 # first match will be selected.  These should be kept in sync with setup.py.
@@ -190,24 +124,30 @@ find_library(torch_python_LIBRARY torch_python PATHS
   "${TORCH_INSTALL_PREFIX}/lib")
 message(STATUS "torch_python_LIBRARY: ${torch_python_LIBRARY}")
 
-# Find the protoc executable
-# Use system protobuf
-set(_PROTOBUF_LIBPROTOBUF ${Protobuf_LIBRARIES})
-set(_PROTOBUF_PROTOC ${Protobuf_PROTOC_EXECUTABLE})
+# Find the protoc executable from Protobuf
+set(_PROTOBUF_PROTOC "${Protobuf_PROTOC_EXECUTABLE}")
 
 # Proto files
-get_filename_component(hw_proto "proto/morphling.proto" ABSOLUTE)
-get_filename_component(hw_proto_path "${hw_proto}" PATH)
+set(PROTO_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
+set(PROTO_FILES
+  "${PROTO_SRC_DIR}/morphling.proto"
+  "${PROTO_SRC_DIR}/global_api.proto"
+)
 
-get_filename_component(global_api_proto "proto/global_api.proto" ABSOLUTE)
-get_filename_component(global_api_proto_path "${global_api_proto}" PATH)
-
-# Generated sources
-set(hw_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/morphling.pb.cc")
-set(hw_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/morphling.pb.h")
-
-set(global_api_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/global_api.pb.cc")
-set(global_api_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/global_api.pb.h")
+protobuf_generate(
+  LANGUAGE cpp
+  OUT_VAR PROTO_SRCS
+  PROTOS ${PROTO_FILES}
+  PROTOC_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+  IMPORT_DIRS "${PROTO_SRC_DIR}"
+)
+protobuf_generate(
+  LANGUAGE python
+  OUT_VAR PROTO_PY
+  PROTOS ${PROTO_FILES}
+  PROTOC_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+  IMPORT_DIRS "${PROTO_SRC_DIR}"
+)
 
 message(STATUS "_PROTOBUF_PROTOC: ${_PROTOBUF_PROTOC}")
 
@@ -245,46 +185,16 @@ message(STATUS "Python3_LIBRARIES: ${Python3_LIBRARIES}")
 # endforeach()
 add_custom_target(
   generate_proto_files ALL
-  DEPENDS "${hw_proto_srcs}" "${hw_proto_hdrs}" "${global_api_proto_srcs}" "${global_api_proto_hdrs}"
-)
-
-add_custom_command(
-  OUTPUT "${hw_proto_srcs}" "${hw_proto_hdrs}"
-  COMMAND ${_PROTOBUF_PROTOC}
-  ARGS --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
-  --python_out "${CMAKE_CURRENT_BINARY_DIR}"
-  -I "${hw_proto_path}"
-  "${hw_proto}"
-  DEPENDS "${hw_proto}"
-  VERBATIM
-)
-
-add_custom_command(
-  OUTPUT "${global_api_proto_srcs}" "${global_api_proto_hdrs}"
-  COMMAND ${_PROTOBUF_PROTOC}
-  ARGS --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
-  --python_out "${CMAKE_CURRENT_BINARY_DIR}"
-  -I "${global_api_proto_path}"
-  -I "${hw_proto_path}"
-  "${global_api_proto}"
-  DEPENDS "${global_api_proto}" "${hw_proto}"
-  VERBATIM
+  DEPENDS ${PROTO_SRCS} ${PROTO_PY}
 )
 
 # Include generated *.pb.h files
 include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Python3_INCLUDE_DIRS}
-  ${CONDA_PREFIX_PATH}/include
   ${absl_SOURCE_DIR}
-  ${protobuf_SOURCE_DIR}/src
+  ${Protobuf_INCLUDE_DIRS}
   /usr/local/include
-)
-
-link_directories(
-  ${CONDA_PREFIX_PATH}/lib
-  $ENV{HOME}/hiredis
-  /usr/local/lib
 )
 
 file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
@@ -378,7 +288,7 @@ set(MORPHLING_EXT_SRC
   ${BASE_SRC}
   ${TIMER_SRC}
   ${INTERCEPT_SRC}
-  ${hw_proto_srcs}
+  ${PROTO_SRCS}
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
@@ -410,8 +320,7 @@ set(MORPHLING_MSG_SRC
   ${BASE_SRC}
   ${TIMER_SRC}
   ${COMMON_SRC}
-  ${hw_proto_srcs}
-  ${global_api_proto_srcs}
+  ${PROTO_SRCS}
   "csrc/scheduler/amqp_dispatcher.cpp"
   "csrc/scheduler/amqp_worker.cpp"
   "csrc/python/client_py.cpp"

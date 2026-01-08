@@ -165,51 +165,32 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   }
 
   // Allocate GPU memory for input and output
-  float* d_row = nullptr;
-  float* d_col = nullptr;
-  float* d_result = nullptr;
-  
   size_t row_bytes = row_size * partition.h_dim * sizeof(float);
   size_t col_bytes = col_size * partition.h_dim * sizeof(float);
   size_t result_bytes = row_size * col_size * sizeof(float);
 
-  cudaError_t cuda_err = cudaMalloc(&d_row, row_bytes);
+  float* d_row = (float*)r_ptr; // zero copy!
+  float* d_col = (float*)c_ptr; // zero copy!
+  float* d_result = nullptr;
+
+  cudaError_t cuda_err = cudaHostRegister(d_row, row_bytes, cudaHostRegisterDefault); // TODO: maybe read only
   if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to allocate GPU memory for row: " << cudaGetErrorString(cuda_err);
+    LOG_ERROR << part_key << " Failed to pin row: " << cudaGetErrorString(cuda_err);
     return;
   }
 
-  cuda_err = cudaMalloc(&d_col, col_bytes);
+  cuda_err = cudaHostRegister(d_col, col_bytes, cudaHostRegisterDefault); // TODO: maybe read only
   if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to allocate GPU memory for col: " << cudaGetErrorString(cuda_err);
-    cudaFree(d_row);
+    LOG_ERROR << part_key << " Failed to pin col: " << cudaGetErrorString(cuda_err);
+    cudaHostUnregister(d_row);
     return;
   }
 
-  cuda_err = cudaMalloc(&d_result, result_bytes);
+  cuda_err = cudaMallocManaged(&d_result, result_bytes, cudaMemAttachGlobal);
   if (cuda_err != cudaSuccess) {
     LOG_ERROR << part_key << " Failed to allocate GPU memory for result: " << cudaGetErrorString(cuda_err);
-    cudaFree(d_row);
-    cudaFree(d_col);
-    return;
-  }
-
-  // Copy data to GPU (pinned memory enables fast DMA transfer)
-  cuda_err = cudaMemcpy(d_row, r_ptr, row_bytes, cudaMemcpyHostToDevice);
-  if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to copy row to GPU: " << cudaGetErrorString(cuda_err);
-    cudaFree(d_row);
-    cudaFree(d_col);
-    cudaFree(d_result);
-    return;
-  }
-
-  cuda_err = cudaMemcpy(d_col, c_ptr, col_bytes, cudaMemcpyHostToDevice);
-  if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to copy col to GPU: " << cudaGetErrorString(cuda_err);
-    cudaFree(d_row);
-    cudaFree(d_col);
-    cudaFree(d_result);
+    cudaHostUnregister(d_row);
+    cudaHostUnregister(d_col);
     return;
   }
 
@@ -238,39 +219,18 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   );
 
   if (cublas_status != CUBLAS_STATUS_SUCCESS) {
-    LOG_ERROR << part_key << " cuBLAS GEMM failed with status: " << cublas_status;
-    cudaFree(d_row);
-    cudaFree(d_col);
+    LOG_ERROR << part_key << " cuBLAS GEMM failed with status: " << cublasGetStatusString(cublas_status);
+    cudaHostUnregister(d_row);
+    cudaHostUnregister(d_col);
     cudaFree(d_result);
     return;
   }
 
-  // Allocate pinned host memory for result
-  float* h_result = nullptr;
-  cuda_err = cudaHostAlloc(&h_result, result_bytes, cudaHostAllocDefault);
-  if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to allocate pinned memory for result: " << cudaGetErrorString(cuda_err);
-    cudaFree(d_row);
-    cudaFree(d_col);
-    cudaFree(d_result);
-    return;
-  }
-
-  // Copy result back to host
-  cuda_err = cudaMemcpy(h_result, d_result, result_bytes, cudaMemcpyDeviceToHost);
-  if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to copy result from GPU: " << cudaGetErrorString(cuda_err);
-    cudaFreeHost(h_result);
-    cudaFree(d_row);
-    cudaFree(d_col);
-    cudaFree(d_result);
-    return;
-  }
+  cudaDeviceSynchronize();
 
   // Free GPU memory
-  cudaFree(d_row);
-  cudaFree(d_col);
-  cudaFree(d_result);
+  cudaHostUnregister(d_row);
+  cudaHostUnregister(d_col);
 
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -288,12 +248,12 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   response.h_dim = col_size;  // Result has col_size columns
   response.timestamp = CurrentTimeMicros();
   response.mat.clear();
-  response.mat.push_back({h_result, result_bytes});
+  response.mat.push_back({d_result, result_bytes});
 
   ResponseToCaller(conn, response);
 
   // Clean up result memory after sending response
-  cudaFreeHost(h_result);
+  cudaFree(d_result);
 }
 
 void ProxyCliHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
