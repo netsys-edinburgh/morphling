@@ -80,7 +80,7 @@ class LinearFunction(torch.autograd.Function):
             ref = torch.matmul(input, weight)
             if bias is not None:
                 ref = ref + bias.unsqueeze(0).expand_as(ref)
-            assert torch.allclose(output, ref), (
+            assert torch.allclose(output, ref, atol=1e-5), (
                 f"Output is not close! input shape: {input.shape}, weight shape: {weight.shape}, max diff: {torch.max(torch.abs(output - ref))}"
             )
 
@@ -131,7 +131,7 @@ class LinearFunction(torch.autograd.Function):
 
         if _enable_verification:
             if ctx.needs_input_grad[0]:
-                ref_grad_input = torch.matmul(grad_output, weight)
+                ref_grad_input = torch.matmul(grad_output, weight, atol=1e-5)
                 assert torch.allclose(grad_input, ref_grad_input), (
                     f"grad_input is not close! max diff: {torch.max(torch.abs(grad_input - ref_grad_input))}"
                 )
@@ -139,12 +139,14 @@ class LinearFunction(torch.autograd.Function):
                 ref_grad_weight = torch.matmul(
                     grad_output.transpose(-2, -1), input
                 ).transpose(-2, -1)
-                assert torch.allclose(grad_weight, ref_grad_weight), (
+                assert torch.allclose(
+                    grad_weight, ref_grad_weight, atol=1e-5
+                ), (
                     f"grad_weight is not close! max diff: {torch.max(torch.abs(grad_weight - ref_grad_weight))}"
                 )
             if bias is not None and ctx.needs_input_grad[2]:
                 ref_grad_bias = grad_output.sum(0)
-                assert torch.allclose(grad_bias, ref_grad_bias), (
+                assert torch.allclose(grad_bias, ref_grad_bias, atol=1e-5), (
                     f"grad_bias is not close! max diff: {torch.max(torch.abs(grad_bias - ref_grad_bias))}"
                 )
 

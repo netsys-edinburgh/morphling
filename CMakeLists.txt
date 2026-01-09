@@ -373,6 +373,7 @@ set(MORPHLING_EXT_LIB
   uuid Threads::Threads fmt
   ${Protobuf_LIBRARIES}
   rabbitmq
+  CUDA::cublas
 )
 
 message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
