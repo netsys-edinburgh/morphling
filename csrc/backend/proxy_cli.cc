@@ -1,11 +1,15 @@
 #include "proxy_cli.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <limits>
+
 #include <cuda_runtime.h>
+#include <cublasXt.h>
 
 #include "base/my_uuid.h"
 #include "common/generator.h"
-#include "common/pytorch_defs.h"
 #include "common/stats.h"
 #include "device_tracker.h"
 #include "network/eventloop_libevent.h"
@@ -25,41 +29,99 @@ using namespace uevent;
 namespace morphling {
 namespace backend {
 
+namespace {
+
+bool LogCudaError(cudaError_t status, const char* context) {
+  if (status == cudaSuccess) {
+    return true;
+  }
+  LOG_ERROR << context << " failed: " << cudaGetErrorString(status);
+  return false;
+}
+
+bool LogCublasError(cublasStatus_t status, const char* context) {
+  if (status == CUBLAS_STATUS_SUCCESS) {
+    return true;
+  }
+  LOG_ERROR << context << " failed: " << cublasGetStatusString(status);
+  return false;
+}
+
+bool RunCublasXtGemm(const float* row_ptr, int64_t row_size,
+                     const float* col_ptr, int64_t col_size, int64_t h_dim,
+                     float* out_ptr) {
+  if (!row_ptr || !col_ptr || !out_ptr) {
+    LOG_ERROR << "RunCublasXtGemm: null input/output pointer";
+    return false;
+  }
+  if (row_size <= 0 || col_size <= 0 || h_dim <= 0) {
+    LOG_ERROR << "RunCublasXtGemm: invalid dims row=" << row_size
+              << ", col=" << col_size << ", h_dim=" << h_dim;
+    return false;
+  }
+  if (row_size > std::numeric_limits<int>::max() ||
+      col_size > std::numeric_limits<int>::max() ||
+      h_dim > std::numeric_limits<int>::max()) {
+    LOG_ERROR << "RunCublasXtGemm: dims exceed cublas int limits";
+    return false;
+  }
+
+  int device_count = 0;
+  if (!LogCudaError(cudaGetDeviceCount(&device_count),
+                    "cudaGetDeviceCount")) {
+    return false;
+  }
+  if (device_count <= 0) {
+    LOG_ERROR << "RunCublasXtGemm: no CUDA device available";
+    return false;
+  }
+
+  cublasXtHandle_t handle = nullptr;
+  if (!LogCublasError(cublasXtCreate(&handle), "cublasXtCreate")) {
+    return false;
+  }
+
+  int device_id = 0;
+  if (!LogCublasError(cublasXtDeviceSelect(handle, 1, &device_id),
+                      "cublasXtDeviceSelect")) {
+    cublasXtDestroy(handle);
+    return false;
+  }
+
+  float alpha = 1.0f;
+  float beta = 0.0f;
+
+  int m = static_cast<int>(col_size);
+  int n = static_cast<int>(row_size);
+  int k = static_cast<int>(h_dim);
+  int lda = k;
+  int ldb = k;
+  int ldc = m;
+
+  // Compute D = B * A^T in column-major, then interpret output as row-major C.
+  cublasStatus_t status = cublasXtSgemm(
+      handle, CUBLAS_OP_T, CUBLAS_OP_N, m, n, k, &alpha, col_ptr, lda, row_ptr,
+      ldb, &beta, out_ptr, ldc);
+  bool ok = LogCublasError(status, "cublasXtSgemm");
+  ok = ok && LogCudaError(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
+
+  cublasXtDestroy(handle);
+  return ok;
+}
+
+}  // namespace
+
 /*********************************ProxyCliHandle************************************/
 
 ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
-    : ctx_(ctx), loop_(loop), cublas_handle_(nullptr) {
+    : ctx_(ctx), loop_(loop) {
   SRV_STATS->Initialize();
-  // cuBLAS handle will be initialized lazily on first use
-  LOG_DEBUG << "ProxyCliHandle initialized, cuBLAS will be initialized on first GEMM";
 }
 
-ProxyCliHandle::~ProxyCliHandle() {
-  CleanupCublas();
-}
-
-// Note: ThreadInit is no longer needed as cuBLAS is initialized in constructor
-
-void ProxyCliHandle::InitCublas() {
-  cublasStatus_t status = cublasCreate(&cublas_handle_);
-  if (status != CUBLAS_STATUS_SUCCESS) {
-    LOG_ERROR << "Failed to create cuBLAS handle, status: " << status;
-    cublas_handle_ = nullptr;
-  } else {
-    LOG_DEBUG << "cuBLAS handle created successfully: " << (void*)cublas_handle_;
-  }
-}
-
-void ProxyCliHandle::CleanupCublas() {
-  if (cublas_handle_ != nullptr) {
-    cublasStatus_t status = cublasDestroy(cublas_handle_);
-    if (status != CUBLAS_STATUS_SUCCESS) {
-      LOG_ERROR << "Failed to destroy cuBLAS handle, status: " << status;
-    } else {
-      LOG_DEBUG << "cuBLAS handle destroyed successfully";
-    }
-    cublas_handle_ = nullptr;
-  }
+void ProxyCliHandle::ThreadInit(uevent::UeventLoop* loop) {
+  auto* loop_handle = loop->GetLoopHandle();
+  auto* handle = reinterpret_cast<ProxyCliHandle*>(loop_handle);
+  // handle->RegisterService();
 }
 
 // void ProxyCliHandle::RegisterService() {
@@ -137,104 +199,42 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "COMPUTE", "START",
                                      vt_compute_start, vt_compute_start);
   
-  // Extract partition data
+  // create tensors from partition
   auto [r_ptr, r_size] = partition.mat[0];
   auto [c_ptr, c_size] = partition.mat[1];
   int64_t row_size = r_size / partition.h_dim / sizeof(float);
   int64_t col_size = c_size / partition.h_dim / sizeof(float);
 
-  LOG_DEBUG << part_key << " Row: [" << row_size << ", " << partition.h_dim << "]"
-            << ", Col: [" << col_size << ", " << partition.h_dim << "]";
-
   auto start = std::chrono::high_resolution_clock::now();
+  auto* row_ptr = reinterpret_cast<const float*>(r_ptr);
+  auto* col_ptr = reinterpret_cast<const float*>(c_ptr);
 
-  // Lazy initialization: Create cuBLAS handle on first use
-  if (cublas_handle_ == nullptr) {
-    LOG_DEBUG << part_key << " Initializing cuBLAS handle on first GEMM";
-    InitCublas();
-    if (cublas_handle_ == nullptr) {
-      LOG_ERROR << part_key << " Failed to initialize cuBLAS handle";
-      return;
-    }
-  }
+  LOG_DEBUG << part_key << " Row: [" << row_size << ", " << partition.h_dim
+            << "], Col: [" << col_size << ", " << partition.h_dim << "]";
 
-  // Use cuBLAS directly for GEMM computation
-  if (cublas_handle_ == nullptr) {
-    LOG_ERROR << part_key << " cuBLAS handle is null, cannot perform GEMM";
+  size_t out_elems = static_cast<size_t>(row_size) *
+                     static_cast<size_t>(col_size);
+  int64_t out_bytes = static_cast<int64_t>(out_elems * sizeof(float));
+  float* out_ptr = nullptr;
+  if (!LogCudaError(cudaMallocManaged(&out_ptr, out_bytes),
+                    "cudaMallocManaged(output)")) {
     return;
   }
 
-  // Allocate GPU memory for input and output
-  size_t row_bytes = row_size * partition.h_dim * sizeof(float);
-  size_t col_bytes = col_size * partition.h_dim * sizeof(float);
-  size_t result_bytes = row_size * col_size * sizeof(float);
-
-  float* d_row = (float*)r_ptr; // zero copy!
-  float* d_col = (float*)c_ptr; // zero copy!
-  float* d_result = nullptr;
-
-  cudaError_t cuda_err = cudaHostRegister(d_row, row_bytes, cudaHostRegisterDefault); // TODO: maybe read only
-  if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to pin row: " << cudaGetErrorString(cuda_err);
+  bool ok =
+      RunCublasXtGemm(row_ptr, row_size, col_ptr, col_size, partition.h_dim,
+                      out_ptr);
+  if (!ok) {
+    cudaFree(out_ptr);
     return;
   }
-
-  cuda_err = cudaHostRegister(d_col, col_bytes, cudaHostRegisterDefault); // TODO: maybe read only
-  if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to pin col: " << cudaGetErrorString(cuda_err);
-    cudaHostUnregister(d_row);
-    return;
-  }
-
-  cuda_err = cudaMallocManaged(&d_result, result_bytes, cudaMemAttachGlobal);
-  if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to allocate GPU memory for result: " << cudaGetErrorString(cuda_err);
-    cudaHostUnregister(d_row);
-    cudaHostUnregister(d_col);
-    return;
-  }
-
-  // Perform GEMM: result = row * col^T
-  // row is [row_size, h_dim], col is [col_size, h_dim]
-  // col^T is [h_dim, col_size]
-  // result should be [row_size, col_size]
-  float alpha = 1.0f;
-  float beta = 0.0f;
-  
-  cublasStatus_t cublas_status = cublasSgemm(
-      cublas_handle_,
-      CUBLAS_OP_N,              // col^T: transpose col (op(col) = col^T)
-      CUBLAS_OP_N,              // row: no transpose
-      col_size,                 // m: number of rows in result (col_size)
-      row_size,                 // n: number of cols in result (row_size)
-      partition.h_dim,          // k: inner dimension (h_dim)
-      &alpha,
-      d_col,                    // A: col (col_size x h_dim)
-      col_size,                 // lda: leading dimension of col
-      d_row,                    // B: row (row_size x h_dim)
-      partition.h_dim,          // ldb: leading dimension of row
-      &beta,
-      d_result,                 // C: result (col_size x row_size)
-      col_size                  // ldc: leading dimension of result
-  );
-
-  if (cublas_status != CUBLAS_STATUS_SUCCESS) {
-    LOG_ERROR << part_key << " cuBLAS GEMM failed with status: " << cublasGetStatusString(cublas_status);
-    cudaHostUnregister(d_row);
-    cudaHostUnregister(d_col);
-    cudaFree(d_result);
-    return;
-  }
-
-  cudaDeviceSynchronize();
-
-  // Free GPU memory
-  cudaHostUnregister(d_row);
-  cudaHostUnregister(d_col);
 
   auto end = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG << part_key << " cuBLAS GEMM time: " << duration.count() << "us";
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+  auto mm_time = duration.count();
+  LOG_DEBUG << part_key << " Matmul real time: " << duration.count()
+            << "us, Matmul logical time: " << mm_time;
 
   // Record COMPUTE end time (virtual time)
   uint64_t vt_compute_end = VirtualClockNow();
@@ -243,17 +243,15 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "COMPUTE", "END",
                                      vt_compute_start, vt_compute_end);
 
-  // Prepare response with result
   MatrixPartition response = partition;
-  response.h_dim = col_size;  // Result has col_size columns
+  response.h_dim = col_size;
   response.timestamp = CurrentTimeMicros();
   response.mat.clear();
-  response.mat.push_back({d_result, result_bytes});
+  response.mat.push_back({out_ptr, out_bytes});
 
   ResponseToCaller(conn, response);
 
-  // Clean up result memory after sending response
-  cudaFree(d_result);
+  cudaFree(out_ptr);
 }
 
 void ProxyCliHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -269,7 +267,18 @@ void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 /********************************ProxyCliImpl****************************************/
 
 ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx)
-    : ctx_(ctx), connector_(nullptr), cached_tensors_(5ull * GB) {}
+    : ctx_(ctx),
+      connector_(nullptr),
+      cached_tensors_(GB / 16, [](const TensorKey&, const CachedTensor& t) {
+        if (t.data) {
+          LOG_DEBUG << "Evicting cached tensor, freeing memory: " << t.data;
+#ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
+          cudaFree(t.data);
+#else
+          free(t.data);
+#endif
+        }
+      }) {}
 
 void ProxyCliImpl::Initialize(UeventLoop* loop) {
   UsockAddress addr(ctx_.listen_ip, ctx_.listen_port);
@@ -294,10 +303,49 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
   DEVICE_TRACKER.InitSeparatePerfLog("./logs", "device", 0);
   LOG_INFO << "[ProxyCliImpl::Initialize] Performance logging initialized at ./logs/perf_device_0.log";
 
-  // CUDA context warmup (optional, can cause OOM if GPU memory is tight)
-  // Disabled to avoid unnecessary GPU memory allocation during initialization
-  // CUDA is already initialized when we call cudaMalloc in HandlePartition
-  LOG_DEBUG << "CUDA initialization will happen on first GEMM computation";
+#if 0
+  // CUDA context warmup and do a small GEMM (skip if no CUDA available)
+  int device_count = 0;
+  if (cudaGetDeviceCount(&device_count) == cudaSuccess && device_count > 0) {
+    int64_t warmup_rows = 128;
+    int64_t warmup_cols = 128;
+    int64_t warmup_k = 128;
+    size_t a_bytes =
+        static_cast<size_t>(warmup_rows * warmup_k) * sizeof(float);
+    size_t b_bytes =
+        static_cast<size_t>(warmup_cols * warmup_k) * sizeof(float);
+    size_t c_bytes =
+        static_cast<size_t>(warmup_rows * warmup_cols) * sizeof(float);
+    float* warmup_a = nullptr;
+    float* warmup_b = nullptr;
+    float* warmup_c = nullptr;
+    if (LogCudaError(cudaMallocManaged(&warmup_a, a_bytes),
+                     "cudaMallocManaged(warmup_a)") &&
+        LogCudaError(cudaMallocManaged(&warmup_b, b_bytes),
+                     "cudaMallocManaged(warmup_b)") &&
+        LogCudaError(cudaMallocManaged(&warmup_c, c_bytes),
+                     "cudaMallocManaged(warmup_c)")) {
+      std::fill_n(warmup_a, warmup_rows * warmup_k, 1.0f);
+      std::fill_n(warmup_b, warmup_cols * warmup_k, 1.0f);
+      RunCublasXtGemm(warmup_a, warmup_rows, warmup_b, warmup_cols, warmup_k,
+                      warmup_c);
+      LOG_DEBUG << "CUDA warmup completed";
+    } else {
+      LOG_DEBUG << "CUDA warmup skipped due to allocation failure";
+    }
+    if (warmup_a) {
+      cudaFree(warmup_a);
+    }
+    if (warmup_b) {
+      cudaFree(warmup_b);
+    }
+    if (warmup_c) {
+      cudaFree(warmup_c);
+    }
+  } else {
+    LOG_DEBUG << "CUDA not available, skipping CUDA warmup";
+  }
+#endif
 }
 
 void ProxyCliImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -623,64 +671,40 @@ void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
     return;
   }
 
-  LOG_DEBUG << "Allocating pinned host memory: size=" << size << " bytes";
+  LOG_DEBUG << "Allocating managed memory: size=" << size << " bytes";
   void* cpy_ptr = nullptr;
-  cudaError_t cuda_err = cudaHostAlloc(&cpy_ptr, size, cudaHostAllocDefault);
-  if (cuda_err != cudaSuccess) {
-    // Print detailed CUDA error information
-    fprintf(stderr, "\n========================================\n");
-    fprintf(stderr, "cudaHostAlloc Error Details:\n");
-    fprintf(stderr, "----------------------------------------\n");
-    fprintf(stderr, "Error Code: %d\n", cuda_err);
-    fprintf(stderr, "Error String: %s\n", cudaGetErrorString(cuda_err));
-    fprintf(stderr, "Requested Size: %ld bytes (%.2f MiB)\n", size, size / (1024.0 * 1024.0));
-    fprintf(stderr, "h_dim: %ld\n", h_dim);
-    
-    // Get GPU memory info
-    size_t free_mem = 0, total_mem = 0;
-    cudaError_t mem_err = cudaMemGetInfo(&free_mem, &total_mem);
-    if (mem_err == cudaSuccess) {
-      fprintf(stderr, "GPU Memory Status:\n");
-      fprintf(stderr, "  Total: %.2f MiB\n", total_mem / (1024.0 * 1024.0));
-      fprintf(stderr, "  Free: %.2f MiB\n", free_mem / (1024.0 * 1024.0));
-      fprintf(stderr, "  Used: %.2f MiB\n", (total_mem - free_mem) / (1024.0 * 1024.0));
-    } else {
-      fprintf(stderr, "Failed to query GPU memory: %s\n", cudaGetErrorString(mem_err));
-    }
-    fprintf(stderr, "----------------------------------------\n");
-    fprintf(stderr, "Hint: Check with 'nvidia-smi' or 'nvtop' for GPU memory usage\n");
-    fprintf(stderr, "========================================\n\n");
-    fflush(stderr);
-    
-    LOG_ERROR << "CacheTensor: cudaHostAlloc failed with error code " << cuda_err 
-              << " (" << cudaGetErrorString(cuda_err) << ") for size " << size << " bytes";
+#ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
+  if (!LogCudaError(cudaMallocManaged(&cpy_ptr, size),
+                    "CacheTensor cudaMallocManaged")) {
     return;
   }
+  LOG_DEBUG << "cudaMallocManaged succeeded: cpy_ptr=" << cpy_ptr;
+#else
+  cpy_ptr = malloc(size);
+  if (cpy_ptr == nullptr) {
+    LOG_ERROR << "CacheTensor: malloc failed for size=" << size;
+    return;
+  }
+#endif
 
-  LOG_DEBUG << "cudaHostAlloc succeeded: cpy_ptr=" << cpy_ptr << " (pinned memory)";
+  int64_t ld_size = size / h_dim / sizeof(float);
+  LOG_DEBUG << "Calculated ld_size=" << ld_size << " (size=" << size
+            << " / h_dim=" << h_dim << " / sizeof(float)=" << sizeof(float)
+            << ")";
 
   LOG_DEBUG << "Copying data: from " << ptr << " to " << cpy_ptr
             << ", size=" << size << " bytes";
+#ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
+  cudaMemcpy(cpy_ptr, ptr, size, cudaMemcpyDefault);
+#else
   std::memcpy(cpy_ptr, ptr, size);
+#endif
 
   LOG_DEBUG << "memcpy completed successfully";
 
-  // Store pinned memory pointer and metadata directly (no torch::from_blob)
-  // Create a dummy tensor just to store the metadata, but don't trigger CUDA operations
-  int64_t ld_size = size / h_dim / sizeof(float);
-  
-  // Store in cache with a lambda that will cleanup pinned memory when evicted
-  cached_tensors_.Put(
-      key,
-      torch::from_blob(
-          cpy_ptr, {ld_size, h_dim}, 
-          [](void* ptr) { cudaFreeHost(ptr); },  // Deleter called on eviction
-          at::TensorOptions()
-            .dtype(torch::kFloat32)
-            .device(torch::kCPU)
-            .layout(torch::kStrided)
-      ),
-      size);
+  cached_tensors_.Put(key,
+                      CachedTensor{cpy_ptr, ld_size, h_dim, size},
+                      size);
 
   LOG_INFO << "CacheTensor completed successfully";
 }
@@ -694,14 +718,14 @@ void ProxyCliImpl::FillPartition(MatrixPartition& partition) {
   auto c_cached = cached_tensors_.Exist(tensor_key_col);
   if (r_size == 0 && r_cached) {
     auto cached_tensor = cached_tensors_.Get(tensor_key_row);
-    partition.mat[0] = {cached_tensor.data_ptr(),
-                        cached_tensor.numel() * sizeof(float)};
+    partition.mat[0] = {cached_tensor.data,
+                        static_cast<int64_t>(cached_tensor.bytes)};
   }
 
   if (c_size == 0 && c_cached) {
     auto cached_tensor = cached_tensors_.Get(tensor_key_col);
-    partition.mat[1] = {cached_tensor.data_ptr(),
-                        cached_tensor.numel() * sizeof(float)};
+    partition.mat[1] = {cached_tensor.data,
+                        static_cast<int64_t>(cached_tensor.bytes)};
   }
 }
 
