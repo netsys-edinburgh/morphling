@@ -28,9 +28,9 @@ void PartitionTracker::AddPartition(int64_t device_id,
   partition_map_[partition_key] = info;
   partition_to_device_[partition_key] = device_id;
 
-  LOG_DEBUG << "[PartitionTracker] Added partition " << partition_key
+  LOG_DEBUG << "[PartitionTracker::AddPartition] Added partition " << partition_key
             << " (oid=" << oid << ") to device " << device_id
-            << " with ownership";
+            << ", partition->dev_id=" << partition->dev_id;
 }
 
 void PartitionTracker::RemovePartition(int64_t device_id,
@@ -67,7 +67,7 @@ void PartitionTracker::RemovePartitionByKey(const std::string& partition_key) {
   // Find device that has this partition
   auto rev_it = partition_to_device_.find(partition_key);
   if (rev_it == partition_to_device_.end()) {
-    LOG_WARN << "[PartitionTracker] Partition " << partition_key
+    LOG_WARN << "[PartitionTracker::RemovePartitionByKey] Partition " << partition_key
              << " not found in any device";
     return;
   }
@@ -93,11 +93,13 @@ void PartitionTracker::RemovePartitionByKey(const std::string& partition_key) {
 
     if (part_it != parts.end()) {
       parts.erase(part_it);
-      LOG_DEBUG << "[PartitionTracker] Removed partition " << partition_key
+      LOG_DEBUG << "[PartitionTracker::RemovePartitionByKey] Removed partition " << partition_key
                 << " from device " << device_id << " (by key lookup)";
 
       if (parts.empty()) {
         device_partitions_.erase(it);
+        LOG_DEBUG << "[PartitionTracker::RemovePartitionByKey] Device " << device_id
+                  << " has no more partitions, removed from map";
       }
     }
   }
@@ -247,6 +249,35 @@ std::vector<PartitionInfoPtr> PartitionTracker::GetIdlePartitions() const {
   return idle_partitions;
 }
 
+PartitionTracker::DeviceOidStats PartitionTracker::GetDeviceOidStats(
+    int64_t device_id, int64_t oid) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  DeviceOidStats stats;
+  auto it = device_partitions_.find(device_id);
+  if (it == device_partitions_.end()) {
+    return stats;
+  }
+
+  for (const auto& part : it->second) {
+    if (part->oid == oid) {
+      switch (part->state) {
+        case PartitionState::IDLE:
+          stats.idle_count++;
+          break;
+        case PartitionState::RUNNING:
+          stats.running_count++;
+          break;
+        case PartitionState::FINISHED:
+          stats.finished_count++;
+          break;
+      }
+      stats.partition_keys.push_back(part->key);
+    }
+  }
+  return stats;
+}
+
 void PartitionTracker::RedistributeFailedDevicePartitions(
     int64_t failed_device_id, PartitionSchedulingPolicyPtr policy) {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -381,7 +412,7 @@ std::string PartitionTracker::DebugString() const {
   oss << "  Devices with partitions: " << device_partitions_.size() << "\n";
 
   // Count by state
-  size_t idle = 0, running = 0, failed = 0, finished = 0;
+  size_t idle = 0, running = 0, finished = 0;
   for (const auto& part : partitions_set_) {
     switch (part->state) {
       case PartitionState::IDLE:
