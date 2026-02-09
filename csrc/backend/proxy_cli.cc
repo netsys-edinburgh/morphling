@@ -11,6 +11,7 @@
 #include "network/eventloop_libevent.h"
 #include "network/ueventloop_thread_pool.h"
 #include "proto_base.h"
+#include "utils/cuda_utils.h"
 #include "utils/logging.h"
 
 using namespace std;
@@ -30,8 +31,7 @@ namespace backend {
 ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
     : ctx_(ctx), loop_(loop), cublas_handle_(nullptr) {
   SRV_STATS->Initialize();
-  // cuBLAS handle will be initialized lazily on first use
-  LOG_DEBUG << "ProxyCliHandle initialized, cuBLAS will be initialized on first GEMM";
+  cublasCreate(&cublas_handle_);
 }
 
 ProxyCliHandle::~ProxyCliHandle() {
@@ -93,17 +93,20 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
 
   // Record bytes sent (upload response back to server)
   DEVICE_TRACKER.RecordBytesSent(partition.dev_id, size);
-  
+
   // Log upload throughput after sending response
   double upload_tp = DEVICE_TRACKER.GetUploadThroughput(partition.dev_id);
-  double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
-  double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+  double last_packet_tp =
+      DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
+  double avg_packet_tp =
+      DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
   double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
-  
+
   uint64_t start_us, end_us;
-  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us, end_us);
-  
-  LOG_INFO << "[ResponseToCaller] Device " << partition.dev_id 
+  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us,
+                                              end_us);
+
+  LOG_INFO << "[ResponseToCaller] Device " << partition.dev_id
            << " - Sent: " << size << " bytes"
            << " [" << start_us << " -> " << end_us << " us]"
            << ", Upload TP: " << upload_tp << " B/s"
@@ -116,121 +119,73 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
                                      vt_upload_start, vt_upload_end);
 
   // Log throughput to file
-  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "UPLOAD",
-                                     size, upload_tp, start_us, end_us);
+  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id,
+                                     "UPLOAD", size, upload_tp, start_us,
+                                     end_us);
 
   RECORD_SRV_COUNT(SRV_TOTAL_QUERY, 1);
   RECORD_SRV_COUNT(SRV_TOTAL_TRAFFIC, size);
 
-  LOG_DEBUG << "Response sent to " << client_addr
-            << ", size: " << size;
+  LOG_DEBUG << "Response sent to " << client_addr << ", size: " << size;
 }
 
 void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
                                      const MatrixPartition& partition) {
   auto part_key = partition.GetPartitionKey();
-  
+
   // Record COMPUTE start time (virtual time)
   uint64_t vt_compute_start = VirtualClockNow();
-  LOG_INFO << "[HandlePartition] Logging COMPUTE START for device " << partition.dev_id 
-           << ", gemm_id=" << partition.gemm_id << ", vt_start=" << vt_compute_start;
-  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "COMPUTE", "START",
-                                     vt_compute_start, vt_compute_start);
-  
-  // Extract partition data
+  LOG_INFO << "[HandlePartition] Logging COMPUTE START for device "
+           << partition.dev_id << ", gemm_id=" << partition.gemm_id
+           << ", vt_start=" << vt_compute_start;
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                     "COMPUTE", "START", vt_compute_start,
+                                     vt_compute_start);
+
+  // create tensors from partition
   auto [r_ptr, r_size] = partition.mat[0];
   auto [c_ptr, c_size] = partition.mat[1];
   int64_t row_size = r_size / partition.h_dim / sizeof(float);
   int64_t col_size = c_size / partition.h_dim / sizeof(float);
 
-  LOG_DEBUG << part_key << " Row: [" << row_size << ", " << partition.h_dim << "]"
-            << ", Col: [" << col_size << ", " << partition.h_dim << "]";
+  cudaHostRegister(r_ptr, r_size, cudaHostRegisterDefault);
+  cudaHostRegister(c_ptr, c_size, cudaHostRegisterDefault);
+
+  size_t result_size = r_size * c_size * sizeof(float);
+  auto* result_ptr = aligned_alloc(4096, result_size);
+  cudaHostRegister(result_ptr, result_size, cudaHostRegisterDefault);
 
   auto start = std::chrono::high_resolution_clock::now();
+  // auto row = torch::from_blob(r_ptr, {row_size, partition.h_dim},
+  //                             FLOAT32_TENSOR_OPTIONS(torch::kCPU))
+  //                .to(torch::kCUDA, 0);
+  // auto col = torch::from_blob(c_ptr, {col_size, partition.h_dim},
+  //                             FLOAT32_TENSOR_OPTIONS(torch::kCPU))
+  //                .to(torch::kCUDA, 0);
 
-  // Lazy initialization: Create cuBLAS handle on first use
-  if (cublas_handle_ == nullptr) {
-    LOG_DEBUG << part_key << " Initializing cuBLAS handle on first GEMM";
-    InitCublas();
-    if (cublas_handle_ == nullptr) {
-      LOG_ERROR << part_key << " Failed to initialize cuBLAS handle";
-      return;
-    }
-  }
+  // LOG_DEBUG << part_key << " Row: " << row.sizes().vec()
+  //           << ", Col: " << col.sizes().vec();
 
-  // Use cuBLAS directly for GEMM computation
-  if (cublas_handle_ == nullptr) {
-    LOG_ERROR << part_key << " cuBLAS handle is null, cannot perform GEMM";
-    return;
-  }
-
-  // Allocate GPU memory for input and output
-  size_t row_bytes = row_size * partition.h_dim * sizeof(float);
-  size_t col_bytes = col_size * partition.h_dim * sizeof(float);
-  size_t result_bytes = row_size * col_size * sizeof(float);
-
-  float* d_row = (float*)r_ptr; // zero copy!
-  float* d_col = (float*)c_ptr; // zero copy!
-  float* d_result = nullptr;
-
-  cudaError_t cuda_err = cudaHostRegister(d_row, row_bytes, cudaHostRegisterDefault); // TODO: maybe read only
-  if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to pin row: " << cudaGetErrorString(cuda_err);
-    return;
-  }
-
-  cuda_err = cudaHostRegister(d_col, col_bytes, cudaHostRegisterDefault); // TODO: maybe read only
-  if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to pin col: " << cudaGetErrorString(cuda_err);
-    cudaHostUnregister(d_row);
-    return;
-  }
-
-  cuda_err = cudaMallocManaged(&d_result, result_bytes, cudaMemAttachGlobal);
-  if (cuda_err != cudaSuccess) {
-    LOG_ERROR << part_key << " Failed to allocate GPU memory for result: " << cudaGetErrorString(cuda_err);
-    cudaHostUnregister(d_row);
-    cudaHostUnregister(d_col);
-    return;
-  }
-
-  // Perform GEMM: result = row * col^T
-  // row is [row_size, h_dim], col is [col_size, h_dim]
-  // col^T is [h_dim, col_size]
-  // result should be [row_size, col_size]
   float alpha = 1.0f;
   float beta = 0.0f;
-  
-  cublasStatus_t cublas_status = cublasSgemm(
-      cublas_handle_,
-      CUBLAS_OP_N,              // col^T: transpose col (op(col) = col^T)
-      CUBLAS_OP_N,              // row: no transpose
-      col_size,                 // m: number of rows in result (col_size)
-      row_size,                 // n: number of cols in result (row_size)
-      partition.h_dim,          // k: inner dimension (h_dim)
-      &alpha,
-      d_col,                    // A: col (col_size x h_dim)
-      col_size,                 // lda: leading dimension of col
-      d_row,                    // B: row (row_size x h_dim)
-      partition.h_dim,          // ldb: leading dimension of row
-      &beta,
-      d_result,                 // C: result (col_size x row_size)
-      col_size                  // ldc: leading dimension of result
-  );
 
-  if (cublas_status != CUBLAS_STATUS_SUCCESS) {
-    LOG_ERROR << part_key << " cuBLAS GEMM failed with status: " << cublasGetStatusString(cublas_status);
-    cudaHostUnregister(d_row);
-    cudaHostUnregister(d_col);
-    cudaFree(d_result);
-    return;
-  }
-
-  cudaDeviceSynchronize();
-
-  // Free GPU memory
-  cudaHostUnregister(d_row);
-  cudaHostUnregister(d_col);
+  // auto result = torch::mm(row, col.transpose(0, 1)).to(torch::kCPU);
+  cublasStatus_t cublas_status =
+      cublasSgemm(cublas_handle_,
+                  CUBLAS_OP_N,      // col^T: transpose col (op(col) = col^T)
+                  CUBLAS_OP_N,      // row: no transpose
+                  c_size,           // m: number of rows in result (col_size)
+                  r_size,           // n: number of cols in result (row_size)
+                  partition.h_dim,  // k: inner dimension (h_dim)
+                  &alpha,
+                  (const float*)c_ptr,  // A: col (col_size x h_dim)
+                  c_size,               // lda: leading dimension of col
+                  (const float*)r_ptr,  // B: row (row_size x h_dim)
+                  partition.h_dim,      // ldb: leading dimension of row
+                  &beta,
+                  (float*)result_ptr,  // C: result (col_size x row_size)
+                  c_size               // ldc: leading dimension of result
+      );
 
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -238,22 +193,30 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
 
   // Record COMPUTE end time (virtual time)
   uint64_t vt_compute_end = VirtualClockNow();
-  LOG_INFO << "[HandlePartition] Logging COMPUTE END for device " << partition.dev_id 
-           << ", gemm_id=" << partition.gemm_id << ", vt_start=" << vt_compute_start << ", vt_end=" << vt_compute_end;
-  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "COMPUTE", "END",
-                                     vt_compute_start, vt_compute_end);
+  LOG_INFO << "[HandlePartition] Logging COMPUTE END for device "
+           << partition.dev_id << ", gemm_id=" << partition.gemm_id
+           << ", vt_start=" << vt_compute_start
+           << ", vt_end=" << vt_compute_end;
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                     "COMPUTE", "END", vt_compute_start,
+                                     vt_compute_end);
 
   // Prepare response with result
   MatrixPartition response = partition;
-  response.h_dim = col_size;  // Result has col_size columns
+  // response.h_dim = result.size(1);
+  response.h_dim = c_size;
   response.timestamp = CurrentTimeMicros();
   response.mat.clear();
-  response.mat.push_back({d_result, result_bytes});
+  // response.mat.push_back({result.data_ptr(), result.numel() *
+  // sizeof(float)});
+  response.mat.push_back({result_ptr, result_size});
 
   ResponseToCaller(conn, response);
 
-  // Clean up result memory after sending response
-  cudaFree(d_result);
+  cudaHostUnregister(r_ptr);
+  cudaHostUnregister(c_ptr);
+  cudaHostUnregister(result_ptr);
+  free(result_ptr);
 }
 
 void ProxyCliHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -290,9 +253,11 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
   LOG_INFO << "[ProxyCliImpl::Initialize] Virtual clock initialized";
 
   // Initialize performance logging (client side)
-  // Client processes requests from all devices, so we use device ID 0 for client-side processing
+  // Client processes requests from all devices, so we use device ID 0 for
+  // client-side processing
   DEVICE_TRACKER.InitSeparatePerfLog("./logs", "device", 0);
-  LOG_INFO << "[ProxyCliImpl::Initialize] Performance logging initialized at ./logs/perf_device_0.log";
+  LOG_INFO << "[ProxyCliImpl::Initialize] Performance logging initialized at "
+              "./logs/perf_device_0.log";
 
   // CUDA context warmup (optional, can cause OOM if GPU memory is tight)
   // Disabled to avoid unnecessary GPU memory allocation during initialization
@@ -453,34 +418,31 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
 
   // Record bytes received (download request from server)
   DEVICE_TRACKER.RecordBytesReceived(partition.dev_id, size);
-  
-  // Record DOWNLOAD end time (virtual time)
-  uint64_t vt_download_end = VirtualClockNow();
-  
+
   // Log download throughput after receiving request
   double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition.dev_id);
-  double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
-  double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+  double last_packet_tp =
+      DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
+  double avg_packet_tp =
+      DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
   double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
-  
+
   uint64_t start_us, end_us;
-  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us, end_us);
-  
-  LOG_INFO << "[HandleMatMulRequest] Device " << partition.dev_id 
+  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us,
+                                              end_us);
+
+  LOG_INFO << "[HandleMatMulRequest] Device " << partition.dev_id
            << " - Received: " << size << " bytes"
            << " [" << start_us << " -> " << end_us << " us]"
            << ", Download TP: " << download_tp << " B/s"
            << ", Last Packet TP: " << last_packet_tp << " B/s"
            << ", Avg Packet TP: " << avg_packet_tp << " B/s"
            << " | Server Total TP: " << server_tp << " B/s";
-  
-  // Log virtual time event for DOWNLOAD
-  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "DOWNLOAD", "END",
-                                     vt_download_start, vt_download_end);
-  
+
   // Log throughput to file
-  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
-                                     size, download_tp, start_us, end_us);
+  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id,
+                                     "DOWNLOAD", size, download_tp, start_us,
+                                     end_us);
 
   // Process the partition
   HandleMatMul(conn, partition);
@@ -582,8 +544,7 @@ void ProxyCliImpl::HandlePartition(const ConnectionUeventPtr& conn,
                        std::cref(partition)));
 }
 
-MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size)
-{
+MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size) {
   auto start = std::chrono::high_resolution_clock::now();
   MatrixPartition partition;
   partition.Deserialize(payload, size, SerializationFormat::PROTOBUF);
