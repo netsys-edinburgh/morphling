@@ -41,14 +41,14 @@ batch_num=0
 for i in $(seq 0 $((NUM_DEVICES - 1))); do
     DEVICE_ID=$i
     current_batch=$((i / BATCH_SIZE))
-    
+
     # Print batch info at the start of each batch
     if [ $((i % BATCH_SIZE)) -eq 0 ]; then
         echo "[$(date '+%H:%M:%S')] Launching batch $((current_batch + 1)) (devices $DEVICE_ID to $((i + BATCH_SIZE - 1)))..."
     fi
-    
+
     echo "[$(date '+%H:%M:%S')] Launching device $DEVICE_ID..."
-    
+
     morphling_device \
       --id "$DEVICE_ID" \
       --flops 1T \
@@ -60,10 +60,10 @@ for i in $(seq 0 $((NUM_DEVICES - 1))); do
       --backend proxy \
       --cfg config/proxy/cli.ini \
       --proxy_host 127.0.0.1:39000 &
-    
+
     # Save the PID
     pids+=($!)
-    
+
     # Wait before launching the next batch (not after individual devices)
     if [ $((((i + 1) % BATCH_SIZE))) -eq 0 ] && [ $((i + 1)) -lt $NUM_DEVICES ]; then
         echo "Batch complete. Waiting ${INTERVAL}s before launching next batch..."

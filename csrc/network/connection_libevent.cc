@@ -91,6 +91,26 @@ int ConnectionLibevent::SendData(const void* data, size_t data_len) {
   return bev_wrapper_->SendData(data, data_len);
 }
 
+int ConnectionLibevent::SendDataZeroCopy(const void* data, size_t data_len,
+                                         void (*cleanup_cb)(const void*, size_t,
+                                                            void*),
+                                         void* cleanup_arg) {
+  if (bev_wrapper_ == NULL) {
+    LOG_WARN << "the connection has been closed";
+    return -1;
+  }
+  return bev_wrapper_->SendDataZeroCopy(data, data_len, cleanup_cb,
+                                        cleanup_arg);
+}
+
+unsigned char* ConnectionLibevent::PullupData(size_t len) {
+  if (bev_wrapper_ == NULL) {
+    LOG_WARN << "the connection has been closed";
+    return nullptr;
+  }
+  return bev_wrapper_->PullupData(len);
+}
+
 int ConnectionLibevent::ReceiveData(void* data, size_t data_len) {
   if (bev_wrapper_ == NULL) {
     LOG_WARN << "the connection has been closed";

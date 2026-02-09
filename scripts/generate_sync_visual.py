@@ -8,9 +8,10 @@ EARLIEST vs LATEST 可视化对比
 import sys
 from pathlib import Path
 
+
 def create_visual_comparison():
     """生成可视化对比"""
-    
+
     visual = """
 ╔════════════════════════════════════════════════════════════════════════════════════════════════╗
 ║                    EARLIEST vs LATEST 虚拟时间同步策略对比（可视化）                           ║
@@ -19,15 +20,15 @@ def create_visual_comparison():
 【原始状态 - GEMM 0】
 
   设备虚拟时间轴:
-  
+
   Device 2 (最快):  [■□□□□□□□□□□□□□□□□□□□□□□□□□□□□□] 2,215,361 us
-  
+
   Device 1:         [■■■■■■■■■■■■■■■■□□□□□□□□□□□□□□] 2,298,721 us
                                        ↑ 比 Device 2 慢 83,360 us
-  
+
   Device 0 (最慢):  [■■■■■■■■■■■■■■■■■■■■■■■□□□□□□] 2,326,719 us
                                                     ↑ 比 Device 2 慢 111,358 us
-  
+
   ┌─ Spread (不同步程度) = 111,358 us ─┐
 
 
@@ -35,19 +36,19 @@ def create_visual_comparison():
 
   变换逻辑:
     Baseline = min(2215361, 2298721, 2326719) = 2,215,361 us
-    
+
     Device 0 的偏移 = 2215361 - 2326719 = -111,358 us  (拖慢)
     Device 1 的偏移 = 2215361 - 2298721 = -83,360 us   (拖慢)
     Device 2 的偏移 = 2215361 - 2215361 = 0 us         (基准)
-  
+
   同步后的虚拟时间轴:
-  
+
   Device 2:  [■□□□□□□□□□□□□□□□□□□□□□□□□□□□□□] 2,215,361 us  ← Baseline
-  
+
   Device 1:  [■□□□□□□□□□□□□□□□□□□□□□□□□□□□□□] 2,215,361 us  ✓ 对齐！
-  
+
   Device 0:  [■□□□□□□□□□□□□□□□□□□□□□□□□□□□□□] 2,215,361 us  ✓ 对齐！
-  
+
   ┌─ Spread (同步程度) = 0 us ─┐
   └─ 所有设备虚拟时间完全相同 ─┘
 
@@ -56,21 +57,21 @@ def create_visual_comparison():
 
   变换逻辑:
     Baseline = max(2215361, 2298721, 2326719) = 2,326,719 us
-    
+
     Device 0 的偏移 = 2326719 - 2326719 = 0 us         (基准)
     Device 1 的偏移 = 2326719 - 2298721 = +27,998 us   (加快)
     Device 2 的偏移 = 2326719 - 2215361 = +111,358 us  (加快)
-  
+
   同步后的虚拟时间轴:
-  
+
   Device 0:  [■■■■■■■■■■■■■■■■■■■■■■■□□□□□□] 2,326,719 us  ← Baseline
-  
+
   Device 1:  [■■■■■■■■■■■■■■■■□□□□□□□□□□□□□□] 2,326,719 us  ✓ 对齐！
                                        ↑ 向前推 27,998 us
-  
+
   Device 2:  [■□□□□□□□□□□□□□□□□□□□□□□□□□□□□□] 2,326,719 us  ✓ 对齐！
                                                     ↑ 向前推 111,358 us
-  
+
   ┌─ Spread (同步程度) = 0 us ─┐
   └─ 所有设备虚拟时间完全相同 ─┘
 
@@ -83,7 +84,7 @@ def create_visual_comparison():
   Device 1:  2,215,361 us      2,326,719 us    +111,358 us
   Device 2:  2,215,361 us      2,326,719 us    +111,358 us
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  
+
   关键观察:
   ├─ 两个策略同步后，虚拟时间都完全对齐 ✓
   ├─ 区别只在绝对值（位移 111,358 us）
@@ -125,24 +126,24 @@ def create_visual_comparison():
 【深入理解：偏移的含义】
 
 EARLIEST 中的负偏移:
-  
+
   Device 0 的偏移 = -111,358 us
-  
+
   含义：Device 0 比基准(Device 2)快 111,358 us
-  
+
   动作：把 Device 0 的虚拟时间"拖慢" -111,358 us
-  
+
   结果：所有设备虚拟时间相同，可以公平比较
 
 
 LATEST 中的正偏移:
-  
+
   Device 2 的偏移 = +111,358 us
-  
+
   含义：Device 2 比基准(Device 0)慢 111,358 us
-  
+
   动作：把 Device 2 的虚拟时间"加快" +111,358 us
-  
+
   结果：所有设备虚拟时间相同，但基准改变了
 
 
@@ -194,16 +195,18 @@ LATEST 的应用场景:
 """
     return visual
 
+
 def main():
     visual = create_visual_comparison()
     print(visual)
-    
+
     # 保存到文件
     output_file = "SYNC_STRATEGY_VISUAL.txt"
-    with open(output_file, 'w', encoding='utf-8') as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write(visual)
-    
+
     print(f"\n已保存到: {output_file}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
