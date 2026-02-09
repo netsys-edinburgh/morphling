@@ -1,9 +1,10 @@
 #include "proxy_svr.h"
 
-#include <chrono>
-#include <unistd.h>
-#include <sys/syscall.h>
 #include <sched.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#include <chrono>
 
 #include "base/my_uuid.h"
 #include "common/generator.h"
@@ -20,9 +21,9 @@ using namespace std;
 using namespace std::placeholders;
 using namespace uevent;
 
+#include <atomic>
 #include <iostream>
 #include <set>
-#include <atomic>
 
 #include "base/logging.h"
 
@@ -39,15 +40,15 @@ static std::atomic<int> g_thread_core_counter(0);
 void PinThreadToCore(int core_id) {
   pid_t tid = syscall(SYS_gettid);
   cpu_set_t cpuset;
-  
+
   CPU_ZERO(&cpuset);
   CPU_SET(core_id, &cpuset);
-  
+
   int ret = syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
   if (ret == 0) {
     LOG_INFO << "Thread " << tid << " pinned to CPU core " << core_id;
   } else {
-    LOG_WARN << "Failed to pin thread " << tid << " to core " << core_id 
+    LOG_WARN << "Failed to pin thread " << tid << " to core " << core_id
              << " (errno: " << errno << ")";
   }
 }
@@ -60,10 +61,11 @@ void PinThreadToNextAvailableCore() {
     LOG_WARN << "Failed to get number of CPUs, defaulting to 8";
     num_cpus = 8;
   }
-  
+
   // Atomically increment counter and assign core
-  int core_id = g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) % num_cpus;
-  
+  int core_id =
+      g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) % num_cpus;
+
   PinThreadToCore(core_id);
 }
 
@@ -78,9 +80,10 @@ ProxySvrHandle::ProxySvrHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
 void ProxySvrHandle::ThreadInit(uevent::UeventLoop* loop) {
   auto* loop_handle = loop->GetLoopHandle();
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
-  
+
   // Pin this thread to the next available CPU core in round-robin fashion
-  // This is called in the worker thread context to ensure correct thread binding
+  // This is called in the worker thread context to ensure correct thread
+  // binding
   PinThreadToNextAvailableCore();
 }
 
@@ -130,22 +133,22 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
       return;
     }
 
-    std::unique_ptr<char[]> data(new char[datasize]);
-    char* raw_data = data.get();
-    ret = conn->ReceiveData(raw_data, datasize);
-    if (ret < 0) {
-      LOG_ERROR << "ReceiveData raw_data err";
+    // Zero-copy receive: get contiguous pointer into evbuffer
+    unsigned char* raw_data = conn->PullupData(datasize);
+    if (raw_data == nullptr) {
+      LOG_ERROR << "PullupData failed for size " << datasize;
       return;
     }
 
+    // Decode and dispatch message (processes data in-place)
+    DecodeAndDispatch(conn, raw_data, datasize);
+
+    // Drain after processing is complete
     ret = conn->DrainData(datasize);
     if (ret < 0) {
       LOG_ERROR << "DrainData err";
       return;
     }
-
-    // Decode and dispatch message
-    DecodeAndDispatch(conn, raw_data, datasize);
   }
 }
 
@@ -225,7 +228,7 @@ void ProxySvrHandle::HandleRegisterResponse(const ConnectionUeventPtr& conn,
 void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                                   const void* payload, size_t size) {
   auto start = std::chrono::high_resolution_clock::now();
-  
+
   // Record RECEIVE/DOWNLOAD start time (virtual time)
   uint64_t vt_receive_start = VirtualClockNow();
 
@@ -234,8 +237,9 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
   partition.Deserialize(payload, size);
 
   // Log RECEIVE START after getting device_id from partition
-  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "START",
-                                     vt_receive_start, vt_receive_start);
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                     "RECEIVE", "START", vt_receive_start,
+                                     vt_receive_start);
 
   auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
@@ -247,33 +251,38 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
 
   // Record bytes received (download request from device)
   DEVICE_TRACKER.RecordBytesReceived(partition.dev_id, size);
-  
+
   // Log download throughput after receiving response
   double download_tp = DEVICE_TRACKER.GetDownloadThroughput(partition.dev_id);
-  double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
-  double avg_packet_tp = DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
+  double last_packet_tp =
+      DEVICE_TRACKER.GetLastPacketThroughput(partition.dev_id);
+  double avg_packet_tp =
+      DEVICE_TRACKER.GetAveragePacketThroughput(partition.dev_id);
   double server_tp = DEVICE_TRACKER.GetServerAggregatedThroughput();
-  
+
   uint64_t start_us, end_us;
-  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us, end_us);
-  
-  LOG_INFO << "[HandleMatMul] Device " << partition.dev_id 
+  DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us,
+                                              end_us);
+
+  LOG_INFO << "[HandleMatMul] Device " << partition.dev_id
            << " - Received: " << size << " bytes"
            << " [" << start_us << " -> " << end_us << " us]"
            << ", Download TP: " << download_tp << " B/s"
            << ", Last Packet TP: " << last_packet_tp << " B/s"
            << ", Avg Packet TP: " << avg_packet_tp << " B/s"
            << " | Server Total TP: " << server_tp << " B/s";
-  
+
   // Record RECEIVE end time (virtual time)
   uint64_t vt_receive_end = VirtualClockNow();
-  
+
   // Log virtual time event for RECEIVE
-  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "END",
-                                     vt_receive_start, vt_receive_end);
-  
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                     "RECEIVE", "END", vt_receive_start,
+                                     vt_receive_end);
+
   // Log throughput to file
-  // DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
+  // DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id,
+  // "DOWNLOAD",
   //                                    size, download_tp, start_us, end_us);
 
   auto [o_ptr, o_size] = partition.mat[0];
@@ -302,8 +311,9 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
             << "us";
 
   // Record RECEIVE end time (virtual time) for RECEIVE phase
-  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "END",
-                                     vt_receive_start, vt_receive_end);
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                     "RECEIVE", "END", vt_receive_start,
+                                     vt_receive_end);
 
   // Mark partition as FINISHED and remove from tracker
   PARTITION_TRACKER.MarkPartitionFinished(part_key);
@@ -312,6 +322,20 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
 
   reinterpret_cast<ProxySvrImpl*>(ctx_.instance)
       ->IncRspCbCount(partition.oid, 1);
+}
+
+// Helper for zero-copy send cleanup: releases ScatterGatherBuffer and
+// MatrixPartition when libevent is done sending a segment.
+struct ZeroCopySendContext {
+  ScatterGatherBufferPtr sg_buffer;
+  MatrixPartitionPtr partition;
+};
+
+static void ZeroCopySendCleanup(const void* /*data*/, size_t /*len*/,
+                                void* arg) {
+  // shared_ptr ref count decrements; when last segment cleanup fires, the
+  // ZeroCopySendContext (and thus sg_buffer + partition) are freed.
+  delete static_cast<std::shared_ptr<ZeroCopySendContext>*>(arg);
 }
 
 void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
@@ -324,56 +348,71 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
   }
 
   string client_addr = conn->GetPeerAddress().ToString();
-  
+
   task_queue_.push_back([this, conn, partition, client_addr]() {
     // Record SEND start time (virtual time)
     uint64_t vt_send_start = VirtualClockNow();
-    DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id, "SEND", "START",
-                                       vt_send_start, vt_send_start);
-    
-    // 测量序列化耗时
+    DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id,
+                                       "SEND", "START", vt_send_start,
+                                       vt_send_start);
+
+    // Zero-copy scatter-gather serialization (avoids tensor memcpy)
     auto t_serialize_start = std::chrono::high_resolution_clock::now();
-    auto buffer = partition->Serialize();
+    auto sg_buffer = partition->SerializeZeroCopy();
     auto t_serialize_end = std::chrono::high_resolution_clock::now();
-    auto serialize_us = std::chrono::duration_cast<std::chrono::microseconds>(t_serialize_end - t_serialize_start).count();
-    
-    // 测量 GetSize() 耗时
-    auto t_getsize_start = std::chrono::high_resolution_clock::now();
-    auto size = buffer->GetSize();
-    auto t_getsize_end = std::chrono::high_resolution_clock::now();
-    auto getsize_us = std::chrono::duration_cast<std::chrono::microseconds>(t_getsize_end - t_getsize_start).count();
-    
-    // 测量 SendData() 耗时
+    auto serialize_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                            t_serialize_end - t_serialize_start)
+                            .count();
+
+    size_t size = sg_buffer->GetTotalSize();
+
+    // Create shared context to keep scatter-gather buffer and partition alive
+    // until all segments are sent
+    auto ctx = std::make_shared<ZeroCopySendContext>();
+    ctx->sg_buffer = sg_buffer;
+    ctx->partition = partition;
+
+    // Zero-copy send each segment
     auto t_send_start = std::chrono::high_resolution_clock::now();
-    conn->SendData(buffer->GetBuffer(), size);
+    for (const auto& segment : sg_buffer->GetSegments()) {
+      // Each cleanup callback holds a shared_ptr copy of the context
+      auto* ref = new std::shared_ptr<ZeroCopySendContext>(ctx);
+      conn->SendDataZeroCopy(segment.data, segment.size, ZeroCopySendCleanup,
+                             ref);
+    }
     auto t_send_end = std::chrono::high_resolution_clock::now();
-    auto send_us = std::chrono::duration_cast<std::chrono::microseconds>(t_send_end - t_send_start).count();
-    
+    auto send_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                       t_send_end - t_send_start)
+                       .count();
+
     conn_inflight_[client_addr] += 1;
-    
-    // 输出详细的时间统计
-    double actual_send_tp_bs = (send_us > 0) ? (size * 1000000.0 / send_us) : 0.0;
+
+    double actual_send_tp_bs =
+        (send_us > 0) ? (size * 1000000.0 / send_us) : 0.0;
     double actual_send_tp_gbs = actual_send_tp_bs / (1024.0 * 1024.0 * 1024.0);
-    LOG_INFO << "[SendInLoop-Timing] Device " << partition->dev_id 
-             << ", gemm_id=" << partition->gemm_id
-             << ", Size: " << size << " bytes"
-             << " | Serialize: " << serialize_us << " us"
-             << ", GetSize: " << getsize_us << " us"
-             << ", SendData: " << send_us << " us"
+    LOG_INFO << "[SendInLoop-Timing] Device " << partition->dev_id
+             << ", gemm_id=" << partition->gemm_id << ", Size: " << size
+             << " bytes"
+             << " | Serialize(ZC): " << serialize_us << " us"
+             << ", SendData(ZC): " << send_us << " us"
              << ", Actual TP: " << actual_send_tp_gbs << " GB/s";
-    
+
     // Record SEND end time (virtual time)
     uint64_t vt_send_end = VirtualClockNow();
-    DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id, "SEND", "END",
-                                       vt_send_start, vt_send_end);
-  
+    DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id,
+                                       "SEND", "END", vt_send_start,
+                                       vt_send_end);
+
     DEVICE_TRACKER.RecordBytesSent(partition->dev_id, size);
 
-    double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition->dev_id);
+    double last_packet_tp =
+        DEVICE_TRACKER.GetLastPacketThroughput(partition->dev_id);
     uint64_t start_us, end_us;
-    DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition->dev_id, start_us, end_us);
-    DEVICE_TRACKER.LogThroughputToFile(partition->dev_id, partition->gemm_id, "SEND",
-                                       size, last_packet_tp, start_us, end_us);
+    DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition->dev_id, start_us,
+                                                end_us);
+    DEVICE_TRACKER.LogThroughputToFile(partition->dev_id, partition->gemm_id,
+                                       "SEND", size, last_packet_tp, start_us,
+                                       end_us);
   });
 
   if (conn_inflight_[client_addr] >= ctx_.max_inflight) {
@@ -454,7 +493,8 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
 
   // Initialize performance logging (server side)
   DEVICE_TRACKER.InitSeparatePerfLog("./logs", "server");
-  LOG_INFO << "[ProxySvrImpl::Initialize] Performance logging initialized at ./logs/perf_server.log";
+  LOG_INFO << "[ProxySvrImpl::Initialize] Performance logging initialized at "
+              "./logs/perf_server.log";
 
   loop_ = loop;
 
@@ -648,7 +688,8 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
            << " IDLE partitions in "
            << std::chrono::duration_cast<std::chrono::microseconds>(end - start)
                   .count()
-           << "us. Partitions will be sent by SendIdlePartitions timer. gemm_id_count="
+           << "us. Partitions will be sent by SendIdlePartitions timer. "
+              "gemm_id_count="
            << gemm_id_count_;
   mm_count_++;
   gemm_id_count_++;  // increment global gemm_id for next operation
@@ -816,7 +857,7 @@ void ProxySvrHandle::SendIdlePartitions() {
   for (const auto& part_info : idle_partitions) {
     // Update partition's dev_id to match the assigned device
     part_info->partition->dev_id = part_info->owner_device_id;
-    
+
     LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
               << " (oid=" << part_info->oid << ") to device "
               << part_info->owner_device_id;

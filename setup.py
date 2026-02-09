@@ -22,7 +22,12 @@ try:
     torch_available = True
     # The assert is not needed since Github CI does not use GPU server, install cuda library is sufficient
     # assert torch.cuda.is_available() == True
-    from torch.utils.cpp_extension import CUDA_HOME, _TORCH_PATH, TORCH_LIB_PATH, EXEC_EXT
+    from torch.utils.cpp_extension import (
+        _TORCH_PATH,
+        CUDA_HOME,
+        EXEC_EXT,
+        TORCH_LIB_PATH,
+    )
 
     protoc_path = os.path.join(_TORCH_PATH, "bin", "protoc" + EXEC_EXT)
 
@@ -36,6 +41,7 @@ except Exception:
 
 
 ROOT_DIR = os.path.dirname(__file__)
+
 
 def check_nvcc_installed(cuda_home: str) -> None:
     """Check if nvcc (NVIDIA CUDA compiler) is installed."""

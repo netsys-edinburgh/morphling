@@ -2,6 +2,9 @@
 
 #include <cublas_v2.h>
 
+#include <deque>
+#include <mutex>
+
 #include "common/env_cfg.h"
 #include "common/lru.h"
 #include "common/pytorch_defs.h"
@@ -10,6 +13,70 @@
 #include "network/uevent.h"
 #include "network/ueventloop_thread.h"
 #include "server_base.h"
+
+// ============================================================================
+// CudaPinnedMemoryPool: Pool of cudaHostAlloc'd buffers for GEMM results
+// ============================================================================
+
+class CudaPinnedMemoryPool {
+ public:
+  explicit CudaPinnedMemoryPool(size_t max_buffers_per_bucket = 16)
+      : max_per_bucket_(max_buffers_per_bucket) {}
+
+  ~CudaPinnedMemoryPool() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [bucket_size, free_list] : free_lists_) {
+      for (auto* ptr : free_list) {
+        cudaFreeHost(ptr);
+      }
+    }
+  }
+
+  // Acquire a pinned buffer of at least `size` bytes
+  // Returns {pointer, actual_bucket_size}
+  std::pair<void*, size_t> Acquire(size_t size) {
+    size_t bucket = BucketSize(size);
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& free_list = free_lists_[bucket];
+    if (!free_list.empty()) {
+      void* ptr = free_list.back();
+      free_list.pop_back();
+      return {ptr, bucket};
+    }
+    // Allocate new pinned buffer
+    void* ptr = nullptr;
+    cudaError_t err = cudaHostAlloc(&ptr, bucket, cudaHostAllocDefault);
+    if (err != cudaSuccess || !ptr) {
+      throw std::runtime_error("CudaPinnedMemoryPool: cudaHostAlloc failed");
+    }
+    return {ptr, bucket};
+  }
+
+  // Release a buffer back to the pool
+  void Release(void* ptr, size_t bucket_size) {
+    if (!ptr) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& free_list = free_lists_[bucket_size];
+    if (free_list.size() < max_per_bucket_) {
+      free_list.push_back(ptr);
+    } else {
+      cudaFreeHost(ptr);
+    }
+  }
+
+ private:
+  static size_t BucketSize(size_t size) {
+    static constexpr size_t MIN_BUCKET = 4096;
+    if (size <= MIN_BUCKET) return MIN_BUCKET;
+    size_t bucket = MIN_BUCKET;
+    while (bucket < size) bucket <<= 1;
+    return bucket;
+  }
+
+  size_t max_per_bucket_;
+  std::mutex mutex_;
+  std::unordered_map<size_t, std::deque<void*>> free_lists_;
+};
 
 namespace morphling {
 namespace backend {
@@ -31,7 +98,9 @@ class ProxyCliHandle : public uevent::LoopHandle {
   void ConnectionClosedCb(const uevent::ConnectionUeventPtr& conn);
 
   void ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
-                        const MatrixPartition& partition);
+                        const MatrixPartition& partition,
+                        void* deferred_cuda_ptr = nullptr,
+                        size_t deferred_cuda_bucket = 0);
   void HandlePartition(const uevent::ConnectionUeventPtr& conn,
                        const MatrixPartition& partition);
 
@@ -43,6 +112,7 @@ class ProxyCliHandle : public uevent::LoopHandle {
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
   cublasHandle_t cublas_handle_;
+  CudaPinnedMemoryPool cuda_pool_;
 };
 
 class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
