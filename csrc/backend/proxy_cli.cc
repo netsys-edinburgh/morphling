@@ -1,6 +1,7 @@
 #include "proxy_cli.h"
 
 #include <chrono>
+#include <cuda_runtime.h>
 
 #include "base/my_uuid.h"
 #include "common/generator.h"
@@ -28,15 +29,37 @@ namespace backend {
 /*********************************ProxyCliHandle************************************/
 
 ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
-    : ctx_(ctx), loop_(loop) {
+    : ctx_(ctx), loop_(loop), cublas_handle_(nullptr) {
   SRV_STATS->Initialize();
   cublasCreate(&cublas_handle_);
 }
 
-void ProxyCliHandle::ThreadInit(uevent::UeventLoop* loop) {
-  auto* loop_handle = loop->GetLoopHandle();
-  auto* handle = reinterpret_cast<ProxyCliHandle*>(loop_handle);
-  // handle->RegisterService();
+ProxyCliHandle::~ProxyCliHandle() {
+  CleanupCublas();
+}
+
+// Note: ThreadInit is no longer needed as cuBLAS is initialized in constructor
+
+void ProxyCliHandle::InitCublas() {
+  cublasStatus_t status = cublasCreate(&cublas_handle_);
+  if (status != CUBLAS_STATUS_SUCCESS) {
+    LOG_ERROR << "Failed to create cuBLAS handle, status: " << status;
+    cublas_handle_ = nullptr;
+  } else {
+    LOG_DEBUG << "cuBLAS handle created successfully: " << (void*)cublas_handle_;
+  }
+}
+
+void ProxyCliHandle::CleanupCublas() {
+  if (cublas_handle_ != nullptr) {
+    cublasStatus_t status = cublasDestroy(cublas_handle_);
+    if (status != CUBLAS_STATUS_SUCCESS) {
+      LOG_ERROR << "Failed to destroy cuBLAS handle, status: " << status;
+    } else {
+      LOG_DEBUG << "cuBLAS handle destroyed successfully";
+    }
+    cublas_handle_ = nullptr;
+  }
 }
 
 // void ProxyCliHandle::RegisterService() {
@@ -55,10 +78,18 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
     return;
   }
 
+  // Record UPLOAD start time (virtual time)
+  uint64_t vt_upload_start = VirtualClockNow();
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "UPLOAD", "START",
+                                     vt_upload_start, vt_upload_start);
+
   auto buffer = partition.Serialize();
   auto data = buffer->GetBuffer();
   auto size = buffer->GetSize();
   conn->SendData(data, size);
+
+  // Record UPLOAD end time (virtual time)
+  uint64_t vt_upload_end = VirtualClockNow();
 
   // Record bytes sent (upload response back to server)
   DEVICE_TRACKER.RecordBytesSent(partition.dev_id, size);
@@ -82,6 +113,10 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
            << ", Last Packet TP: " << last_packet_tp << " B/s"
            << ", Avg Packet TP: " << avg_packet_tp << " B/s"
            << " | Server Total TP: " << server_tp << " B/s";
+
+  // Log virtual time event for UPLOAD
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "UPLOAD", "END",
+                                     vt_upload_start, vt_upload_end);
 
   // Log throughput to file
   DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id,
@@ -153,11 +188,8 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
       );
 
   auto end = std::chrono::high_resolution_clock::now();
-  auto duration =
-      std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  auto mm_time = duration.count();
-  LOG_DEBUG << part_key << " Matmul real time: " << duration.count()
-            << "us, Matmul logical time: " << mm_time;
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+  LOG_DEBUG << part_key << " cuBLAS GEMM time: " << duration.count() << "us";
 
   // Record COMPUTE end time (virtual time)
   uint64_t vt_compute_end = VirtualClockNow();
@@ -169,6 +201,7 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
                                      "COMPUTE", "END", vt_compute_start,
                                      vt_compute_end);
 
+  // Prepare response with result
   MatrixPartition response = partition;
   // response.h_dim = result.size(1);
   response.h_dim = c_size;
@@ -226,15 +259,10 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
   LOG_INFO << "[ProxyCliImpl::Initialize] Performance logging initialized at "
               "./logs/perf_device_0.log";
 
-  // CUDA context warmup and do random matmul (skip if no CUDA available)
-  if (torch::cuda::is_available()) {
-    torch::Tensor warmup_a = torch::rand({128, 4096}).to(torch::kCUDA, 0);
-    torch::Tensor warmup_b = torch::rand({4096, 128}).to(torch::kCUDA, 0);
-    torch::mm(warmup_a, warmup_b);
-    LOG_DEBUG << "CUDA warmup completed";
-  } else {
-    LOG_DEBUG << "CUDA not available, skipping CUDA warmup";
-  }
+  // CUDA context warmup (optional, can cause OOM if GPU memory is tight)
+  // Disabled to avoid unnecessary GPU memory allocation during initialization
+  // CUDA is already initialized when we call cudaMalloc in HandlePartition
+  LOG_DEBUG << "CUDA initialization will happen on first GEMM computation";
 }
 
 void ProxyCliImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -382,6 +410,11 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
   LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
             << "us";
+
+  // Record DOWNLOAD start time (virtual time)
+  uint64_t vt_download_start = VirtualClockNow();
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "DOWNLOAD", "START",
+                                     vt_download_start, vt_download_start);
 
   // Record bytes received (download request from server)
   DEVICE_TRACKER.RecordBytesReceived(partition.dev_id, size);
@@ -551,20 +584,41 @@ void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
     return;
   }
 
-  LOG_DEBUG << "Allocating memory: size=" << size << " bytes";
-  void* cpy_ptr = malloc(size);
-
-  if (cpy_ptr == nullptr) {
-    LOG_ERROR << "CacheTensor: malloc failed for size=" << size;
+  LOG_DEBUG << "Allocating pinned host memory: size=" << size << " bytes";
+  void* cpy_ptr = nullptr;
+  cudaError_t cuda_err = cudaHostAlloc(&cpy_ptr, size, cudaHostAllocDefault);
+  if (cuda_err != cudaSuccess) {
+    // Print detailed CUDA error information
+    fprintf(stderr, "\n========================================\n");
+    fprintf(stderr, "cudaHostAlloc Error Details:\n");
+    fprintf(stderr, "----------------------------------------\n");
+    fprintf(stderr, "Error Code: %d\n", cuda_err);
+    fprintf(stderr, "Error String: %s\n", cudaGetErrorString(cuda_err));
+    fprintf(stderr, "Requested Size: %ld bytes (%.2f MiB)\n", size, size / (1024.0 * 1024.0));
+    fprintf(stderr, "h_dim: %ld\n", h_dim);
+    
+    // Get GPU memory info
+    size_t free_mem = 0, total_mem = 0;
+    cudaError_t mem_err = cudaMemGetInfo(&free_mem, &total_mem);
+    if (mem_err == cudaSuccess) {
+      fprintf(stderr, "GPU Memory Status:\n");
+      fprintf(stderr, "  Total: %.2f MiB\n", total_mem / (1024.0 * 1024.0));
+      fprintf(stderr, "  Free: %.2f MiB\n", free_mem / (1024.0 * 1024.0));
+      fprintf(stderr, "  Used: %.2f MiB\n", (total_mem - free_mem) / (1024.0 * 1024.0));
+    } else {
+      fprintf(stderr, "Failed to query GPU memory: %s\n", cudaGetErrorString(mem_err));
+    }
+    fprintf(stderr, "----------------------------------------\n");
+    fprintf(stderr, "Hint: Check with 'nvidia-smi' or 'nvtop' for GPU memory usage\n");
+    fprintf(stderr, "========================================\n\n");
+    fflush(stderr);
+    
+    LOG_ERROR << "CacheTensor: cudaHostAlloc failed with error code " << cuda_err 
+              << " (" << cudaGetErrorString(cuda_err) << ") for size " << size << " bytes";
     return;
   }
 
-  LOG_DEBUG << "malloc succeeded: cpy_ptr=" << cpy_ptr;
-
-  int64_t ld_size = size / h_dim / sizeof(float);
-  LOG_DEBUG << "Calculated ld_size=" << ld_size << " (size=" << size
-            << " / h_dim=" << h_dim << " / sizeof(float)=" << sizeof(float)
-            << ")";
+  LOG_DEBUG << "cudaHostAlloc succeeded: cpy_ptr=" << cpy_ptr << " (pinned memory)";
 
   LOG_DEBUG << "Copying data: from " << ptr << " to " << cpy_ptr
             << ", size=" << size << " bytes";
@@ -572,11 +626,21 @@ void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
 
   LOG_DEBUG << "memcpy completed successfully";
 
+  // Store pinned memory pointer and metadata directly (no torch::from_blob)
+  // Create a dummy tensor just to store the metadata, but don't trigger CUDA operations
+  int64_t ld_size = size / h_dim / sizeof(float);
+  
+  // Store in cache with a lambda that will cleanup pinned memory when evicted
   cached_tensors_.Put(
       key,
       torch::from_blob(
-          cpy_ptr, {ld_size, h_dim}, [](void* ptr) { free(ptr); },
-          FLOAT32_TENSOR_OPTIONS(torch::kCPU)),
+          cpy_ptr, {ld_size, h_dim}, 
+          [](void* ptr) { cudaFreeHost(ptr); },  // Deleter called on eviction
+          at::TensorOptions()
+            .dtype(torch::kFloat32)
+            .device(torch::kCPU)
+            .layout(torch::kStrided)
+      ),
       size);
 
   LOG_INFO << "CacheTensor completed successfully";

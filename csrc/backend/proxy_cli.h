@@ -17,6 +17,7 @@ namespace backend {
 class ProxyCliHandle : public uevent::LoopHandle {
  public:
   ProxyCliHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop);
+  ~ProxyCliHandle();
 
   static void ThreadInit(uevent::UeventLoop* loop);
   static uevent::LoopHandle* CreateMyself(ProxyEnvCfg& ctx,
@@ -35,6 +36,10 @@ class ProxyCliHandle : public uevent::LoopHandle {
                        const MatrixPartition& partition);
 
  private:
+  // cuBLAS helper methods
+  void InitCublas();
+  void CleanupCublas();
+
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
   cublasHandle_t cublas_handle_;

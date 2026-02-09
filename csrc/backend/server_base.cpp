@@ -1,6 +1,9 @@
 #include "server_base.h"
 
 #include <arpa/inet.h>
+#include <cerrno>
+#include <chrono>
+#include <cstring>
 #include <sys/mman.h>
 
 #include "common/generator.h"
@@ -29,12 +32,46 @@ SerializationBuffer::~SerializationBuffer() {
 
 void SerializationBuffer::Allocate(size_t size) {
   if (owns_buffer_ && buffer_) {
+    //Unpin memory before freeing
+    if(buffer_!=nullptr){
+      int ret = munlock(buffer_, size_);
+      if (ret != 0) {
+        LOG_WARN << "munlock failed with error: " << ret;
+      }
+    }
+      
     free(buffer_);
   }
-  buffer_ = (uint8_t*)malloc(size);
+
+  // Allocate page-aligned memory using posix_memalign
+  // Align to 4KB (4096 bytes) for optimal TLB performance
+  const size_t PAGE_SIZE = 4096;
+  int ret = posix_memalign((void**)&buffer_, PAGE_SIZE, size);
+  
+  if (ret != 0) {
+    LOG_ERROR << "posix_memalign failed with error: " << ret;
+    buffer_ = nullptr;
+    size_ = 0;
+    offset_ = 0;
+    owns_buffer_ = false;
+    throw std::runtime_error("Failed to allocate page-aligned memory");
+  }
+
+  //Pin memory to prevent swapping
+  ret = mlock(buffer_, size);
+  if (ret != 0) {
+    LOG_WARN << "mlock failed: " << strerror(errno) << " (errno=" << errno << ")";
+    // Proceeding even if mlock fails
+  }else {
+    LOG_DEBUG << "Memory locked successfully, size: " << size<< " bytes";
+  }
+
   size_ = size;
   offset_ = 0;
   owns_buffer_ = true;
+  
+  LOG_DEBUG << "Allocated page-aligned buffer: size=" << size 
+            << ", alignment=4096 bytes";
 }
 
 void SerializationBuffer::WriteUInt32(uint32_t value, bool network_order) {
@@ -57,7 +94,17 @@ void SerializationBuffer::WriteInt64(int64_t value) {
 
 void SerializationBuffer::WriteBytes(const void* data, size_t size) {
   if (size > 0 && data != nullptr) {
+    // Use memcpy with optimization hints for large copies
+    // For large buffers, memcpy should use SIMD instructions
+    // Compiler will optimize this based on -O3 and -march=native flags
     memcpy(buffer_ + offset_, data, size);
+    
+    // Optional: Force memory to be loaded into cache for large copies
+    // This helps with subsequent operations on the copied data
+    // if (size > 1024 * 1024) {  // > 1 MB
+    //   // Clflush hint to cache (compiler may optimize this away)
+    //   // In practice, memcpy already does optimal caching
+    // }
   }
   offset_ += size;
 }
@@ -436,7 +483,11 @@ void MatrixPartition::ReadMatricesData(SerializationBuffer& buffer,
 }
 
 SerializationBufferPtr MatrixPartition::SerializeProto() const {
-  // Create UMessage with ComputeGemmData
+  auto start_total = std::chrono::high_resolution_clock::now();
+  
+  // ========== Stage 1: Create and populate protobuf message ==========
+  auto start_stage1 = std::chrono::high_resolution_clock::now();
+  
   morphling::UMessage umsg;
   CreateMessageHeader(umsg, morphling::global_api::COMPUTE_GEMM_DATA);
 
@@ -459,8 +510,14 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
     mat_payload->set_offset(0);
     mat_payload->set_size(std::get<1>(m));
   }
+  
+  auto end_stage1 = std::chrono::high_resolution_clock::now();
+  auto duration_stage1 = std::chrono::duration_cast<std::chrono::microseconds>(end_stage1 - start_stage1).count();
+  LOG_DEBUG << "[Stage 1] Create protobuf message: " << duration_stage1 << " us";
 
-  // Serialize using common layout
+  // ========== Stage 2: Serialize protobuf and calculate sizes ==========
+  auto start_stage2 = std::chrono::high_resolution_clock::now();
+  
   std::string proto_str = umsg.SerializeAsString();
   uint32_t proto_size = proto_str.size();
 
@@ -472,25 +529,64 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
   uint32_t payload_size =
       sizeof(proto_size) + sizeof(tensor_size) + proto_size + tensor_size;
   uint64_t total_size = sizeof(payload_size) + payload_size;
+  
+  auto end_stage2 = std::chrono::high_resolution_clock::now();
+  auto duration_stage2 = std::chrono::duration_cast<std::chrono::microseconds>(end_stage2 - start_stage2).count();
+  LOG_DEBUG << "[Stage 2] Serialize protobuf and calculate sizes: " << duration_stage2 << " us (proto_size=" << proto_size << ", tensor_size=" << tensor_size << ")";
 
+  // ========== Stage 3: Allocate buffer ==========
+  auto start_stage3 = std::chrono::high_resolution_clock::now();
+  
   SerializationBufferPtr buffer = std::make_shared<SerializationBuffer>();
   buffer->Allocate(total_size);
+  
+  auto end_stage3 = std::chrono::high_resolution_clock::now();
+  auto duration_stage3 = std::chrono::duration_cast<std::chrono::microseconds>(end_stage3 - start_stage3).count();
+  LOG_DEBUG << "[Stage 3] Allocate buffer: " << duration_stage3 << " us (total_size=" << total_size << ")";
 
+  // ========== Stage 4: Write data to buffer ==========
+  auto start_stage4 = std::chrono::high_resolution_clock::now();
+  
+  // Write headers
+  auto t_header_start = std::chrono::high_resolution_clock::now();
   buffer->WriteUInt32(payload_size, true);  // network byte order
   buffer->WriteUInt32(proto_size, false);
   buffer->WriteUInt64(tensor_size);
+  auto t_header_end = std::chrono::high_resolution_clock::now();
+  auto header_time = std::chrono::duration_cast<std::chrono::microseconds>(t_header_end - t_header_start).count();
+  
+  // Write proto data
+  auto t_proto_start = std::chrono::high_resolution_clock::now();
   buffer->WriteBytes(proto_str.data(), proto_size);
+  auto t_proto_end = std::chrono::high_resolution_clock::now();
+  auto proto_copy_time = std::chrono::duration_cast<std::chrono::microseconds>(t_proto_end - t_proto_start).count();
+  double proto_throughput = proto_size > 0 ? (proto_size / static_cast<double>(proto_copy_time) * 1e6 / 1e9) : 0;  // GB/s
 
   // Write tensor data
+  auto t_tensor_start = std::chrono::high_resolution_clock::now();
+  uint64_t total_tensor_copied = 0;
   for (const auto& m : mat) {
     if (std::get<1>(m) > 0 && std::get<0>(m) != nullptr) {
       buffer->WriteBytes(std::get<0>(m), std::get<1>(m));
+      total_tensor_copied += std::get<1>(m);
     }
   }
-
-  LOG_DEBUG << "SerializeProto completed: total_size=" << total_size
-            << ", payload_size=" << payload_size
-            << ", proto_size=" << proto_size << ", tensor_size=" << tensor_size;
+  auto t_tensor_end = std::chrono::high_resolution_clock::now();
+  auto tensor_copy_time = std::chrono::duration_cast<std::chrono::microseconds>(t_tensor_end - t_tensor_start).count();
+  double tensor_throughput = total_tensor_copied > 0 ? (total_tensor_copied / static_cast<double>(tensor_copy_time) * 1e6 / 1e9) : 0;  // GB/s
+  
+  auto end_stage4 = std::chrono::high_resolution_clock::now();
+  auto duration_stage4 = std::chrono::duration_cast<std::chrono::microseconds>(end_stage4 - start_stage4).count();
+  
+  LOG_DEBUG << "[Stage 4.1] Write headers: " << header_time << " us";
+  LOG_DEBUG << "[Stage 4.2] Write proto data: " << proto_copy_time << " us (" << proto_size << " bytes, TP: " << proto_throughput << " MB/s)";
+  LOG_DEBUG << "[Stage 4.3] Write tensor data: " << tensor_copy_time << " us (" << total_tensor_copied << " bytes, TP: " << tensor_throughput << " MB/s)";
+  LOG_DEBUG << "[Stage 4] Write data to buffer: " << duration_stage4 << " us";
+  
+  auto end_total = std::chrono::high_resolution_clock::now();
+  auto duration_total = std::chrono::duration_cast<std::chrono::microseconds>(end_total - start_total).count();
+  double total_throughput = total_size > 0 ? (total_size / static_cast<double>(duration_total) * 1e6 / 1e9) : 0;  // GB/s
+  LOG_DEBUG << "[SerializeProto] Total time: " << duration_total << " us (Stage1=" << duration_stage1 << ", Stage2=" << duration_stage2 << ", Stage3=" << duration_stage3 << ", Stage4=" << duration_stage4 << ") | Overall TP: " << total_throughput << " GB/s";
 
   return buffer;
 }

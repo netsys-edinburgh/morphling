@@ -1,6 +1,9 @@
 #include "proxy_svr.h"
 
 #include <chrono>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sched.h>
 
 #include "base/my_uuid.h"
 #include "common/generator.h"
@@ -19,11 +22,50 @@ using namespace uevent;
 
 #include <iostream>
 #include <set>
+#include <atomic>
 
 #include "base/logging.h"
 
 namespace morphling {
 namespace backend {
+
+// ============================================================================
+// Thread Pinning Helper
+// ============================================================================
+
+// Global atomic counter to assign each thread to a different CPU core
+static std::atomic<int> g_thread_core_counter(0);
+
+void PinThreadToCore(int core_id) {
+  pid_t tid = syscall(SYS_gettid);
+  cpu_set_t cpuset;
+  
+  CPU_ZERO(&cpuset);
+  CPU_SET(core_id, &cpuset);
+  
+  int ret = syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
+  if (ret == 0) {
+    LOG_INFO << "Thread " << tid << " pinned to CPU core " << core_id;
+  } else {
+    LOG_WARN << "Failed to pin thread " << tid << " to core " << core_id 
+             << " (errno: " << errno << ")";
+  }
+}
+
+// Auto-assign thread to next available CPU core
+void PinThreadToNextAvailableCore() {
+  // Get current number of CPUs available
+  int num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+  if (num_cpus <= 0) {
+    LOG_WARN << "Failed to get number of CPUs, defaulting to 8";
+    num_cpus = 8;
+  }
+  
+  // Atomically increment counter and assign core
+  int core_id = g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) % num_cpus;
+  
+  PinThreadToCore(core_id);
+}
 
 /*********************************ProxySvrHandle***********************************/
 
@@ -36,7 +78,10 @@ ProxySvrHandle::ProxySvrHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
 void ProxySvrHandle::ThreadInit(uevent::UeventLoop* loop) {
   auto* loop_handle = loop->GetLoopHandle();
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
-  // handle->RegisterService();
+  
+  // Pin this thread to the next available CPU core in round-robin fashion
+  // This is called in the worker thread context to ensure correct thread binding
+  PinThreadToNextAvailableCore();
 }
 
 void ProxySvrHandle::RequestWriteCb(const uevent::ConnectionUeventPtr& conn) {
@@ -181,12 +226,16 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                                   const void* payload, size_t size) {
   auto start = std::chrono::high_resolution_clock::now();
   
-  // Record RECEIVE start time (virtual time)
+  // Record RECEIVE/DOWNLOAD start time (virtual time)
   uint64_t vt_receive_start = VirtualClockNow();
 
   // Use standard Deserialize interface
   MatrixPartition partition;
   partition.Deserialize(payload, size);
+
+  // Log RECEIVE START after getting device_id from partition
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "START",
+                                     vt_receive_start, vt_receive_start);
 
   auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
@@ -216,9 +265,16 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
            << ", Avg Packet TP: " << avg_packet_tp << " B/s"
            << " | Server Total TP: " << server_tp << " B/s";
   
+  // Record RECEIVE end time (virtual time)
+  uint64_t vt_receive_end = VirtualClockNow();
+  
+  // Log virtual time event for RECEIVE
+  DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "END",
+                                     vt_receive_start, vt_receive_end);
+  
   // Log throughput to file
-  DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
-                                     size, download_tp, start_us, end_us);
+  // DEVICE_TRACKER.LogThroughputToFile(partition.dev_id, partition.gemm_id, "DOWNLOAD",
+  //                                    size, download_tp, start_us, end_us);
 
   auto [o_ptr, o_size] = partition.mat[0];
   int64_t row_size = o_size / partition.h_dim / sizeof(float);
@@ -245,8 +301,7 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                    .count()
             << "us";
 
-  // Record RECEIVE end time (virtual time)
-  uint64_t vt_receive_end = VirtualClockNow();
+  // Record RECEIVE end time (virtual time) for RECEIVE phase
   DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id, "RECEIVE", "END",
                                      vt_receive_start, vt_receive_end);
 
@@ -273,16 +328,52 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
   task_queue_.push_back([this, conn, partition, client_addr]() {
     // Record SEND start time (virtual time)
     uint64_t vt_send_start = VirtualClockNow();
+    DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id, "SEND", "START",
+                                       vt_send_start, vt_send_start);
     
-    // Use protobuf serialization instead of binary
+    // 测量序列化耗时
+    auto t_serialize_start = std::chrono::high_resolution_clock::now();
     auto buffer = partition->Serialize();
-    conn->SendData(buffer->GetBuffer(), buffer->GetSize());
+    auto t_serialize_end = std::chrono::high_resolution_clock::now();
+    auto serialize_us = std::chrono::duration_cast<std::chrono::microseconds>(t_serialize_end - t_serialize_start).count();
+    
+    // 测量 GetSize() 耗时
+    auto t_getsize_start = std::chrono::high_resolution_clock::now();
+    auto size = buffer->GetSize();
+    auto t_getsize_end = std::chrono::high_resolution_clock::now();
+    auto getsize_us = std::chrono::duration_cast<std::chrono::microseconds>(t_getsize_end - t_getsize_start).count();
+    
+    // 测量 SendData() 耗时
+    auto t_send_start = std::chrono::high_resolution_clock::now();
+    conn->SendData(buffer->GetBuffer(), size);
+    auto t_send_end = std::chrono::high_resolution_clock::now();
+    auto send_us = std::chrono::duration_cast<std::chrono::microseconds>(t_send_end - t_send_start).count();
+    
     conn_inflight_[client_addr] += 1;
+    
+    // 输出详细的时间统计
+    double actual_send_tp_bs = (send_us > 0) ? (size * 1000000.0 / send_us) : 0.0;
+    double actual_send_tp_gbs = actual_send_tp_bs / (1024.0 * 1024.0 * 1024.0);
+    LOG_INFO << "[SendInLoop-Timing] Device " << partition->dev_id 
+             << ", gemm_id=" << partition->gemm_id
+             << ", Size: " << size << " bytes"
+             << " | Serialize: " << serialize_us << " us"
+             << ", GetSize: " << getsize_us << " us"
+             << ", SendData: " << send_us << " us"
+             << ", Actual TP: " << actual_send_tp_gbs << " GB/s";
     
     // Record SEND end time (virtual time)
     uint64_t vt_send_end = VirtualClockNow();
     DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id, "SEND", "END",
                                        vt_send_start, vt_send_end);
+  
+    DEVICE_TRACKER.RecordBytesSent(partition->dev_id, size);
+
+    double last_packet_tp = DEVICE_TRACKER.GetLastPacketThroughput(partition->dev_id);
+    uint64_t start_us, end_us;
+    DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition->dev_id, start_us, end_us);
+    DEVICE_TRACKER.LogThroughputToFile(partition->dev_id, partition->gemm_id, "SEND",
+                                       size, last_packet_tp, start_us, end_us);
   });
 
   if (conn_inflight_[client_addr] >= ctx_.max_inflight) {
