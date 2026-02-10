@@ -192,12 +192,34 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   int64_t row_size = r_size / partition.h_dim / sizeof(float);
   int64_t col_size = c_size / partition.h_dim / sizeof(float);
 
+  if (row_size <= 0 || col_size <= 0 || partition.h_dim <= 0) {
+    LOG_ERROR << "[HandlePartition] Invalid dimensions: row_size=" << row_size
+              << ", col_size=" << col_size << ", h_dim=" << partition.h_dim;
+    return;
+  }
+
   // Input buffers come from CacheTensor (already cudaHostAlloc'd via cache)
   // No need to cudaHostRegister - they're already pinned
 
   // Result buffer from CUDA pinned memory pool (avoids cudaHostAlloc per call)
-  size_t result_size = r_size * c_size * sizeof(float);
-  auto [result_ptr, result_bucket] = cuda_pool_.Acquire(result_size);
+  size_t result_size = 0;
+  if (__builtin_mul_overflow(static_cast<size_t>(row_size),
+                             static_cast<size_t>(col_size), &result_size) ||
+      __builtin_mul_overflow(result_size, sizeof(float), &result_size)) {
+    LOG_ERROR << "[HandlePartition] Result size overflow: row_size=" << row_size
+              << ", col_size=" << col_size;
+    return;
+  }
+
+  void* result_ptr = nullptr;
+  size_t result_bucket = 0;
+  try {
+    std::tie(result_ptr, result_bucket) = cuda_pool_.Acquire(result_size);
+  } catch (const std::exception& ex) {
+    LOG_ERROR << "[HandlePartition] Failed to acquire CUDA pinned memory: "
+              << ex.what() << ", size=" << result_size;
+    return;
+  }
 
   auto start = std::chrono::high_resolution_clock::now();
 
@@ -208,23 +230,30 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
       cublasSgemm(cublas_handle_,
                   CUBLAS_OP_N,      // col^T: transpose col (op(col) = col^T)
                   CUBLAS_OP_N,      // row: no transpose
-                  c_size,           // m: number of rows in result (col_size)
-                  r_size,           // n: number of cols in result (row_size)
+                  col_size,         // m: number of rows in result
+                  row_size,         // n: number of cols in result
                   partition.h_dim,  // k: inner dimension (h_dim)
                   &alpha,
                   (const float*)c_ptr,  // A: col (col_size x h_dim)
-                  c_size,               // lda: leading dimension of col
+                  col_size,             // lda: leading dimension of col
                   (const float*)r_ptr,  // B: row (row_size x h_dim)
                   partition.h_dim,      // ldb: leading dimension of row
                   &beta,
                   (float*)result_ptr,  // C: result (col_size x row_size)
-                  c_size               // ldc: leading dimension of result
+                  col_size             // ldc: leading dimension of result
       );
 
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
   LOG_DEBUG << part_key << " cuBLAS GEMM time: " << duration.count() << "us";
+
+  if (cublas_status != CUBLAS_STATUS_SUCCESS) {
+    LOG_ERROR << "[HandlePartition] cuBLAS GEMM failed, status="
+              << cublas_status;
+    cuda_pool_.Release(result_ptr, result_bucket);
+    return;
+  }
 
   // Record COMPUTE end time (virtual time)
   uint64_t vt_compute_end = VirtualClockNow();
@@ -238,7 +267,7 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
 
   // Prepare response with result
   MatrixPartition response = partition;
-  response.h_dim = c_size;
+  response.h_dim = col_size;
   response.timestamp = CurrentTimeMicros();
   response.mat.clear();
   response.mat.push_back({result_ptr, result_size});
