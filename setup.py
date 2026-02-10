@@ -4,6 +4,7 @@
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 from distutils.command.build import build as _build
@@ -161,6 +162,14 @@ class cmake_build_ext(build_ext):
             cmake_args.append("-DBUILD_TESTS=ON")
         else:
             cmake_args.append("-DBUILD_TESTS=OFF")
+
+        ccache = shutil.which("ccache")
+        if ccache:
+            cmake_args += [
+                f"-DCMAKE_C_COMPILER_LAUNCHER={ccache}",
+                f"-DCMAKE_CXX_COMPILER_LAUNCHER={ccache}",
+                f"-DCMAKE_CUDA_COMPILER_LAUNCHER={ccache}",
+            ]
 
         subprocess.check_call(
             ["cmake", ext.cmake_lists_dir, *build_tool, *cmake_args],

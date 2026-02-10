@@ -27,7 +27,37 @@ set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(googletest googlebenchmark)
 
+# ==========================================================================
+# CUDA / cuBLAS tests
+# ==========================================================================
+option(ENABLE_CUDA_TESTS "Build CUDA/cuBLAS tests" ON)
+if(ENABLE_CUDA_TESTS)
+  find_package(CUDAToolkit QUIET)
+  if(CUDAToolkit_FOUND)
+    add_executable(test_cublas_hostalloc_direct
+      test_cublas_hostalloc_direct.cpp
+    )
+    target_link_libraries(test_cublas_hostalloc_direct
+      CUDA::cudart
+      CUDA::cublas
+    )
+
+    add_executable(test_cublas_hostregister_posix
+      test_cublas_hostregister_posix.cpp
+    )
+    target_link_libraries(test_cublas_hostregister_posix
+      CUDA::cudart
+      CUDA::cublas
+    )
+  else()
+    message(WARNING "CUDAToolkit not found; CUDA tests will be skipped.")
+  endif()
+endif()
+
 # ============================================================================
-# Zerocopy test suite
+# Zerocopy test suite (optional)
 # ============================================================================
-add_subdirectory(zerocopy)
+option(ENABLE_ZEROCOPY_TESTS "Build zerocopy tests" OFF)
+if(ENABLE_ZEROCOPY_TESTS)
+  add_subdirectory(zerocopy)
+endif()

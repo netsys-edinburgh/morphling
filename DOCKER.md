@@ -186,22 +186,31 @@ docker-compose down -v
 docker rmi device-emulator:latest
 ```
 
-## 生产环境部署
+## ccache Build Caching
 
-### 安全考虑
-1. 使用专用的网络
-2. 配置防火墙规则
-3. 使用环境变量管理敏感配置
-4. 定期备份数据卷
+The Docker build uses [ccache](https://ccache.dev/) to cache C++/CUDA compilation results across rebuilds. This requires **BuildKit** (enabled by default in Docker 23+, or set `DOCKER_BUILDKIT=1`).
 
-### 性能优化
-1. 使用SSD存储
-2. 配置适当的内存和CPU限制
-3. 监控资源使用情况
-4. 根据负载调整设备数量
+### How it works
 
-### 监控和日志
-1. 集成日志聚合系统
-2. 设置健康检查和报警
-3. 监控GPU和CPU使用率
-4. 定期检查容器状态
+- `setup.py` detects ccache on `$PATH` and passes `-DCMAKE_<LANG>_COMPILER_LAUNCHER=ccache` to CMake.
+- The Dockerfile uses `--mount=type=cache,target=/ccache` so the ccache directory persists across Docker layer rebuilds.
+- The cache is capped at 5 GB (`ccache -M 5G`).
+
+### Build behavior
+
+- **First build (cold cache):** normal build time — ccache is populated.
+- **Subsequent builds:** ccache hits on unchanged translation units, significantly faster C++ compilation even when `COPY . /app/` invalidates the layer.
+
+### Check cache stats
+
+```bash
+docker run --rm device-emulator:latest ccache -s
+```
+
+### Run docker
+
+```bash
+docker run --rm -it --gpus=all --ulimit memlock=-1:-1 --cap-add IPC_LOCK device-emulator bash
+```
+
+After a second build you should see cache hits > 0.

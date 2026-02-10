@@ -1,5 +1,5 @@
 # DeviceEmulator Dockerfile
-FROM pytorch/pytorch:2.9.1-cuda12.8-cudnn9-devel
+FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
 
 RUN apt-get update && apt-get upgrade -y
 
@@ -52,9 +52,18 @@ RUN pip install --no-cache -r /app/requirements.txt
 # Copy the rest of the project files
 COPY . /app/
 
-# 构建和安装项目（使用系统 python）with BuildKit cache mounts
-# Cache mounts persist across builds: CMake deps in /app/build/_deps, ccache in /ccache
-RUN pip install --no-build-isolation --verbose ./
+# ccache: persist compiler cache across Docker builds (requires BuildKit)
+ENV CCACHE_DIR=/ccache
+RUN ccache -M 5G
+
+# 构建和安装项目（使用系统 python）with BuildKit cache mount for ccache
+RUN --mount=type=cache,target=/ccache \
+    pip install --no-build-isolation --verbose ./
+
+# Build standalone C++ tests (CUDA/cuBLAS)
+RUN --mount=type=cache,target=/ccache \
+    cmake -S tests/cpp -B tests/cpp/build -DENABLE_ZEROCOPY_TESTS=OFF && \
+    cmake --build tests/cpp/build -j
 
 # 创建必要的目录
 RUN mkdir -p /app/logs /app/data /app/config
