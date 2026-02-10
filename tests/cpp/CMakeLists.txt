@@ -1,24 +1,33 @@
 cmake_minimum_required(VERSION 3.22)
-project(CUDAHostRegisterTest)
+project(DeviceEmulatorTests)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find CUDA
-find_package(CUDA REQUIRED)
-include_directories(${CUDA_INCLUDE_DIRS})
+# ============================================================================
+# Google Test & Google Benchmark via FetchContent
+# ============================================================================
+include(FetchContent)
 
-# Create executable
-add_executable(test_cuda_host_register_tensor test_cuda_host_register_tensor.cpp)
-
-# Link libraries - only CUDA, no Torch needed
-target_link_libraries(test_cuda_host_register_tensor
-    PUBLIC
-        ${CUDA_LIBRARIES}
-        cublas
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG        v1.14.0
 )
 
-target_include_directories(test_cuda_host_register_tensor
-    PRIVATE
-        ${CUDA_INCLUDE_DIRS}
+FetchContent_Declare(
+  googlebenchmark
+  GIT_REPOSITORY https://github.com/google/benchmark.git
+  GIT_TAG        v1.8.3
 )
+
+# Prevent benchmark from building its own tests
+set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(googletest googlebenchmark)
+
+# ============================================================================
+# Zerocopy test suite
+# ============================================================================
+add_subdirectory(zerocopy)

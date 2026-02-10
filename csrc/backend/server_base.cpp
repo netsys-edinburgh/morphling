@@ -35,12 +35,14 @@ SerializationBuffer::SerializationBuffer(SerializationBuffer&& other) noexcept
       size_(other.size_),
       offset_(other.offset_),
       owns_buffer_(other.owns_buffer_),
-      pool_bucket_size_(other.pool_bucket_size_) {
+      pool_bucket_size_(other.pool_bucket_size_),
+      pool_(other.pool_) {
   other.buffer_ = nullptr;
   other.size_ = 0;
   other.offset_ = 0;
   other.owns_buffer_ = false;
   other.pool_bucket_size_ = 0;
+  other.pool_ = nullptr;
 }
 
 SerializationBuffer& SerializationBuffer::operator=(
@@ -52,11 +54,13 @@ SerializationBuffer& SerializationBuffer::operator=(
     offset_ = other.offset_;
     owns_buffer_ = other.owns_buffer_;
     pool_bucket_size_ = other.pool_bucket_size_;
+    pool_ = other.pool_;
     other.buffer_ = nullptr;
     other.size_ = 0;
     other.offset_ = 0;
     other.owns_buffer_ = false;
     other.pool_bucket_size_ = 0;
+    other.pool_ = nullptr;
   }
   return *this;
 }
@@ -66,8 +70,12 @@ SerializationBuffer::~SerializationBuffer() { FreeBuffer(); }
 void SerializationBuffer::FreeBuffer() {
   if (owns_buffer_ && buffer_) {
     if (pool_bucket_size_ > 0) {
-      // Return to pool
-      AlignedBufferPool::instance().Release(buffer_, pool_bucket_size_);
+      // Return to injected pool or singleton
+      if (pool_) {
+        pool_->Release(buffer_, pool_bucket_size_);
+      } else {
+        AlignedBufferPool::instance().Release(buffer_, pool_bucket_size_);
+      }
     } else {
       free(buffer_);
     }
@@ -87,6 +95,18 @@ void SerializationBuffer::Allocate(size_t size) {
   offset_ = 0;
   owns_buffer_ = true;
   pool_bucket_size_ = bucket;
+}
+
+void SerializationBuffer::Allocate(size_t size, AlignedBufferPool& pool) {
+  FreeBuffer();
+
+  auto [ptr, bucket] = pool.Acquire(size);
+  buffer_ = ptr;
+  size_ = size;
+  offset_ = 0;
+  owns_buffer_ = true;
+  pool_bucket_size_ = bucket;
+  pool_ = &pool;
 }
 
 void SerializationBuffer::WriteUInt32(uint32_t value, bool network_order) {
@@ -959,23 +979,28 @@ std::string MatrixPartition::DebugString() const {
 
 ScatterGatherBuffer::~ScatterGatherBuffer() {
   for (auto& [ptr, bucket] : owned_pool_entries_) {
-    AlignedBufferPool::instance().Release(ptr, bucket);
+    pool_->Release(ptr, bucket);
   }
 }
 
 ScatterGatherBuffer::ScatterGatherBuffer(ScatterGatherBuffer&& other) noexcept
     : segments_(std::move(other.segments_)),
-      owned_pool_entries_(std::move(other.owned_pool_entries_)) {}
+      owned_pool_entries_(std::move(other.owned_pool_entries_)),
+      pool_(other.pool_) {
+  other.pool_ = &AlignedBufferPool::instance();
+}
 
 ScatterGatherBuffer& ScatterGatherBuffer::operator=(
     ScatterGatherBuffer&& other) noexcept {
   if (this != &other) {
     // Free current owned entries
     for (auto& [ptr, bucket] : owned_pool_entries_) {
-      AlignedBufferPool::instance().Release(ptr, bucket);
+      pool_->Release(ptr, bucket);
     }
     segments_ = std::move(other.segments_);
     owned_pool_entries_ = std::move(other.owned_pool_entries_);
+    pool_ = other.pool_;
+    other.pool_ = &AlignedBufferPool::instance();
   }
   return *this;
 }
