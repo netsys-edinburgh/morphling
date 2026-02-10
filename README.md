@@ -1,41 +1,38 @@
 # DeviceEmulator
 
+DeviceEmulator (Morphling) is a device and network emulator for distributed
+inference workflows. It provides a Python runtime, C++ backend, and scripts to
+run virtual or physical device configurations.
+
 ## Installation
 
 ```bash
-# use conda env or virtualenv
+# Use conda or virtualenv
 pip install -e .
+
+# If using conda, some Torch dependencies may require libxslt
+conda install -c conda-forge libxslt
+
+# If you have CUDA installed, make it discoverable for Torch
+export CUDA_HOME=/usr/local/cuda
+
+# If Torch import/build errors occur, try rebuilding without isolation
+pip install --no-build-isolation .
 ```
 
-## Usage
+## Quick Start
 
 ```bash
 morphling_cmd save --model "facebook/opt-125m" --output <path to model checkpoint>
 morphling_emulator --ckpt_path <path to model checkpoint>
-SPDLOG_LEVEL=<level> MORPHLING_SERVER_ADDRESS=localhost:50051 MORPHLING_PIN_SIZE=10000000000  python tests/python/test_loaded_lib.py
 ```
 
-# DeviceEmulator
+## Usage
 
-## Installation
-
-```bash
-# Use conda env or virtualenv
-pip install -e .
-
-# If using conda, install libxslt (required by some torch dependencies on certain systems)
-conda install -c conda-forge libxslt
-
-# If you have CUDA available and want to ensure Torch can detect it:
-export CUDA_HOME=/usr/local/cuda
-
-# If you run into Torch import errors or build issues, try building without isolation:
-pip install --no-build-isolation .
-```
-
-## Virtual Device Usage
+### Virtual Device Usage
 
 ```bash
+# Start Redis (stop existing container if needed)
 if [ "$(docker ps -q -f name=redis)" ]; then
     docker stop redis
 fi
@@ -43,10 +40,17 @@ fi
 docker run -dit --rm --name redis -p 6379:6379 redis
 sleep 5
 
-cd /scripts
-SPDLOG_LEVEL=debug python run_devices.py     --num_devices 4     --model_name facebook/opt-125m     --backend proxy     --seq_length 128     --batch_size 1 --cfg ../config/proxy/svr.ini
+cd scripts
+SPDLOG_LEVEL=debug python run_devices.py \
+    --num_devices 4 \
+    --model_name facebook/opt-125m \
+    --backend proxy \
+    --seq_length 128 \
+    --batch_size 1 \
+    --cfg ../config/proxy/svr.ini
 ```
-## Physical Device Usage
+
+### Physical Device Usage
 
 ```bash
 #!/usr/bin/env bash
@@ -78,25 +82,23 @@ docker run -dit --rm --name redis -p 6379:6379 redis
 sleep 5
 
 # 4) Generate device config
-cd /home/eren/Emulator/DeviceEmulator/morphling/entrypoint
+cd morphling/entrypoint
 SPDLOG_LEVEL=debug python generate_device_config.py --num_devices 1 --device_type physical
-cp device_config.json /home/eren/Emulator/DeviceEmulator/scripts/
+cp device_config.json ../../scripts/
 
 # 5) Run Morphling devices in the background
-echo "Starting devices..."
-cd /home/eren/Emulator/DeviceEmulator/scripts
+cd ../../scripts
 SPDLOG_LEVEL=debug python run_devices.py \
     --num_devices 1 \
     --model_name facebook/opt-125m \
     --backend proxy \
     --seq_length 128 \
     --batch_size 1 \
-    --cfg /home/eren/Emulator/DeviceEmulator/config/proxy/svr.ini \
-    &  # <-- run in background
+    --cfg ../config/proxy/svr.ini \
+    &
 
 # 6) Start Nginx container (morphling-proxy) with the correct mounts for stream
-echo "Starting Nginx container (morphling-proxy)..."
-cd /home/eren/Emulator/DeviceEmulator
+cd ..
 docker run -d \
     --name morphling-proxy \
     -p 443:443 \
@@ -108,12 +110,11 @@ echo "All done. Now test from local with: nc -vz <server_ip> 443"
 
 # Keep script alive so the background job isn't killed
 wait
-
-
 ```
-## Trouble Shooting
 
-Version Mismatch or Missing Libraries
+## Troubleshooting
+
+### Version mismatch or missing libraries
 If you encounter errors like:
 
 ```bash
@@ -121,17 +122,20 @@ undefined symbol: sk_pop_free_ex (e.g., OpenSSL/gRPC mismatch)
 ImportError: librttr_core.so.*: cannot open shared object file (missing RTTR)
 ImportError: libmosquitto.so.*: cannot open shared object file (missing Mosquitto)
 ```
-these typically mean libraries were built in a different environment than the one used at runtime, or the dynamic linker can’t find them.
 
-Steps to Fix:
+These typically mean libraries were built in a different environment than the
+one used at runtime, or the dynamic linker cannot find them.
 
-Reinstall / Rebuild Without Isolation
-Rebuild within the current environment to match installed libraries:
+Fix steps:
 
 ```bash
+# Rebuild within the current environment to match installed libraries
 pip install --no-build-isolation --force-reinstall -e .
 ```
-Set LD_LIBRARY_PATH if certain libraries (e.g., RTTR, Mosquitto) are in a non-standard location:
+
+Set `LD_LIBRARY_PATH` if certain libraries (e.g., RTTR, Mosquitto) are in a
+non-standard location:
+
 ```bash
 # Example for RTTR
 export LD_LIBRARY_PATH="/path/to/rttr/install/lib:$LD_LIBRARY_PATH"
@@ -139,3 +143,12 @@ export LD_LIBRARY_PATH="/path/to/rttr/install/lib:$LD_LIBRARY_PATH"
 # Example for local build artifacts (e.g., C++ .so files)
 export LD_LIBRARY_PATH="/path/to/emulator/build/lib.linux-x86_64-cpython-310/morphling:$LD_LIBRARY_PATH"
 ```
+
+## Further Documentation
+
+- `DEV_README.md`
+- `DOCKER.md`
+- `GEMM_ID_ISSUES.md`
+- `EARLIEST_vs_LATEST.md`
+- `tests/cpp/README.md`
+- `tests/cpp/zerocopy/README.md`

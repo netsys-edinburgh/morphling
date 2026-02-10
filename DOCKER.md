@@ -1,205 +1,227 @@
-# DeviceEmulator Docker 部署指南
+# DeviceEmulator Docker Deployment
 
-本文档描述如何使用Docker部署DeviceEmulator项目。
+This document describes how to deploy DeviceEmulator using Docker.
 
-## 前置要求
+## Requirements
 
-### 基本要求
+### Base requirements
+
 - Docker 20.10+
 - Docker Compose 2.0+
-- 至少8GB内存
-- 至少10GB磁盘空间
+- At least 8 GB RAM
+- At least 10 GB disk space
 
-### GPU支持（可选）
-如果需要GPU支持，还需要：
-- NVIDIA GPU（计算能力7.0+）
-- NVIDIA Docker支持
-- nvidia-docker2 或 Docker with nvidia-container-toolkit
+### GPU support (optional)
 
-## 快速开始
+If you need GPU support:
 
-### 1. 一键启动（推荐）
+- NVIDIA GPU (compute capability 7.0+)
+- NVIDIA Docker support
+- `nvidia-docker2` or Docker with `nvidia-container-toolkit`
+
+## Quick Start
+
+### 1. One-command launch (recommended)
+
 ```bash
 chmod +x quick-start.sh
 ./quick-start.sh
 ```
 
-### 2. 手动启动
+### 2. Manual launch
 
-#### 构建镜像
+Build the image:
+
 ```bash
 DOCKER_BUILDKIT=1 docker build -t device-emulator:latest .
 ```
 
-#### 启动服务（GPU模式）
+Start services (GPU mode):
+
 ```bash
 docker-compose up -d
 ```
 
-#### 启动服务（CPU模式）
+Start services (CPU mode):
+
 ```bash
 docker-compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
 ```
 
-## 使用方法
+## Usage
 
-### 进入容器
+### Enter the container
+
 ```bash
 docker-compose exec device-emulator bash
 ```
 
-### 运行设备模拟器
-```bash
-# 在容器内运行
-morphling_emulator --num_devices 4 --model_name facebook/opt-125m --backend proxy --seq_length 128 --batch_size 1
+### Run the emulator
 
-# 或者直接从外部运行
+```bash
+# Inside the container
+morphling_emulator \
+  --num_devices 4 \
+  --model_name facebook/opt-125m \
+  --backend proxy \
+  --seq_length 128 \
+  --batch_size 1
+
+# From the host
 docker-compose exec device-emulator morphling_emulator --num_devices 4 --model_name facebook/opt-125m
 ```
 
-### 生成设备配置
+### Generate a device config
+
 ```bash
 docker-compose exec device-emulator morphling_device_config --num_devices 4 --device_type virtual
 ```
 
-### 查看日志
+### View logs
+
 ```bash
-# 查看所有服务日志
+# All services
 docker-compose logs
 
-# 查看特定服务日志
+# Specific services
 docker-compose logs device-emulator
 docker-compose logs redis
 
-# 实时跟踪日志
+# Follow logs
 docker-compose logs -f device-emulator
 ```
 
-## 服务说明
+## Services
 
-### 服务列表
-- **redis**: Redis数据库服务（端口6379）
-- **device-emulator**: 主要的DeviceEmulator服务
-- **nginx-proxy**: 可选的Nginx代理服务（使用profile启动）
+### Service list
 
-### 端口映射
-- `6379`: Redis服务
-- `8080`: DeviceEmulator HTTP服务
-- `443`: DeviceEmulator HTTPS服务
+- `redis`: Redis (port 6379)
+- `device-emulator`: main DeviceEmulator service
+- `nginx-proxy`: optional Nginx proxy (use the profile to start)
 
-### 数据卷
-- `./logs`: 日志文件
-- `./data`: 数据文件
-- `./config`: 配置文件
-- `redis_data`: Redis持久化数据
+### Port mappings
 
-## 高级配置
+- `6379`: Redis
+- `8080`: DeviceEmulator HTTP
+- `443`: DeviceEmulator HTTPS
 
-### 环境变量
-可以通过修改`docker-compose.yml`中的environment部分来配置：
+### Volumes
+
+- `./logs`: log output
+- `./data`: data files
+- `./config`: configuration
+- `redis_data`: Redis persistence
+
+## Advanced Configuration
+
+### Environment variables
+
+Edit `docker-compose.yml` and set:
 
 ```yaml
 environment:
-  - SPDLOG_LEVEL=debug          # 日志级别
-  - CUDA_VISIBLE_DEVICES=0      # 可见GPU设备
-  - MORPHLING_HOME=/app         # 应用根目录
+  - SPDLOG_LEVEL=debug
+  - CUDA_VISIBLE_DEVICES=0
+  - MORPHLING_HOME=/app
 ```
 
-### GPU配置
-如果有多个GPU，可以指定使用的GPU：
+### GPU selection
+
 ```yaml
 environment:
-  - CUDA_VISIBLE_DEVICES=0,1   # 使用GPU 0和1
+  - CUDA_VISIBLE_DEVICES=0,1
 ```
 
-### 启动Nginx代理
+### Start the Nginx proxy
+
 ```bash
 docker-compose --profile proxy up -d
 ```
 
-## 故障排除
+## Troubleshooting
 
-### 常见问题
+### CUDA errors
 
-#### 1. CUDA相关错误
 ```bash
-# 检查NVIDIA Docker支持
+# Check NVIDIA Docker support
 docker run --rm --gpus all nvidia/cuda:11.8-base-ubuntu22.04 nvidia-smi
 
-# 如果不支持GPU，使用CPU模式
+# If GPU is not available, use CPU mode
 docker-compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
 ```
 
-#### 2. 内存不足
+### Out of memory
+
 ```bash
-# 增加Docker内存限制，或者减少设备数量
+# Reduce device count
 docker-compose exec device-emulator morphling_emulator --num_devices 2
 ```
 
-#### 3. 端口冲突
+### Port conflicts
+
 ```bash
-# 检查端口使用情况
 netstat -tulpn | grep -E ':(6379|8080|443)'
-
-# 修改docker-compose.yml中的端口映射
+# Or update port mappings in docker-compose.yml
 ```
 
-#### 4. 权限问题
+### Permission issues
+
 ```bash
-# 确保脚本有执行权限
 chmod +x quick-start.sh docker-entrypoint.sh
-
-# 检查Docker权限
 sudo usermod -aG docker $USER
-# 需要重新登录生效
+# Re-login for the change to take effect
 ```
 
-### 调试命令
+### Debugging commands
 
 ```bash
-# 检查容器状态
+# Container status
 docker-compose ps
 
-# 检查容器资源使用
+# Resource usage
 docker stats
 
-# 进入容器调试
+# Open a shell
 docker-compose exec device-emulator bash
 
-# 重启服务
+# Restart a service
 docker-compose restart device-emulator
 
-# 查看详细日志
+# Detailed logs
 docker-compose logs --details device-emulator
 ```
 
-## 清理
+## Cleanup
 
-### 停止服务
 ```bash
+# Stop services
 docker-compose down
-```
 
-### 完全清理（包括数据）
-```bash
+# Remove data volumes
 docker-compose down -v
+
 docker rmi device-emulator:latest
 ```
 
 ## ccache Build Caching
 
-The Docker build uses [ccache](https://ccache.dev/) to cache C++/CUDA compilation results across rebuilds. This requires **BuildKit** (enabled by default in Docker 23+, or set `DOCKER_BUILDKIT=1`).
+The Docker build uses ccache to cache C++/CUDA compilation results across
+rebuilds. This requires BuildKit (enabled by default in Docker 23+, or set
+`DOCKER_BUILDKIT=1`).
 
 ### How it works
 
-- `setup.py` detects ccache on `$PATH` and passes `-DCMAKE_<LANG>_COMPILER_LAUNCHER=ccache` to CMake.
-- The Dockerfile uses `--mount=type=cache,target=/ccache` so the ccache directory persists across Docker layer rebuilds.
+- `setup.py` detects `ccache` on `$PATH` and passes
+  `-DCMAKE_<LANG>_COMPILER_LAUNCHER=ccache` to CMake.
+- The Dockerfile uses `--mount=type=cache,target=/ccache` so the cache persists
+  across layer rebuilds.
 - The cache is capped at 5 GB (`ccache -M 5G`).
 
 ### Build behavior
 
-- **First build (cold cache):** normal build time — ccache is populated.
-- **Subsequent builds:** ccache hits on unchanged translation units, significantly faster C++ compilation even when `COPY . /app/` invalidates the layer.
+- First build (cold cache): normal build time, cache is populated.
+- Subsequent builds: ccache hits on unchanged translation units, even when
+  `COPY . /app/` invalidates the layer.
 
 ### Check cache stats
 
@@ -207,10 +229,8 @@ The Docker build uses [ccache](https://ccache.dev/) to cache C++/CUDA compilatio
 docker run --rm device-emulator:latest ccache -s
 ```
 
-### Run docker
+### Run a container with GPU
 
 ```bash
 docker run --rm -it --gpus=all --ulimit memlock=-1:-1 --cap-add IPC_LOCK device-emulator bash
 ```
-
-After a second build you should see cache hits > 0.
