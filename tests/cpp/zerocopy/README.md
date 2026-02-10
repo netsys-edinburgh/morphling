@@ -1,14 +1,16 @@
-# Zero-Copy Persistent Memory — Test Suite
+# Zero-Copy Persistent Memory Test Suite
 
-Unit tests and benchmarks for the zero-copy memory pool and serialization components:
-AlignedBufferPool, SerializationBuffer, ScatterGatherBuffer, MatrixPartition, and CudaPinnedMemoryPool.
+Unit tests and benchmarks for the zero-copy memory pool and serialization
+components: `AlignedBufferPool`, `SerializationBuffer`, `ScatterGatherBuffer`,
+`MatrixPartition`, and `CudaPinnedMemoryPool`.
 
 ## Prerequisites
 
 - Docker with the project image built:
-  ```bash
-  docker build -t device-emulator .
-  ```
+
+```bash
+docker build -t device-emulator .
+```
 
 ## Quick Start
 
@@ -87,7 +89,7 @@ docker run --rm device-emulator bash -c "
 ## Test Coverage
 
 | Test Binary | Class Under Test | Tests |
-|---|---|---|
+| --- | --- | --- |
 | `test_aligned_buffer_pool` | `AlignedBufferPool` | Bucket sizing, page alignment, buffer reuse, pool-full eviction, multi-bucket independence, null release, thread safety |
 | `test_serialization_buffer` | `SerializationBuffer` | Read/write roundtrips (uint32/uint64/int64/bytes, native & network order), seek/canread/validate, move semantics, pool-based free |
 | `test_scatter_gather_buffer` | `ScatterGatherBuffer` | Reference vs owned segments, total size, destructor pool release, move semantics with cleanup |
@@ -97,7 +99,7 @@ docker run --rm device-emulator bash -c "
 ## Benchmark Coverage
 
 | Benchmark Binary | What It Measures |
-|---|---|
+| --- | --- |
 | `bench_pool_allocation` | Pool acquire/release (warm ~20ns) vs raw posix_memalign+mlock (~10us), multi-thread contention (1-16 threads) |
 | `bench_serialization` | `SerializeProto` vs `SerializeZeroCopy` throughput (1KB-16MB), deserialization, WriteBytes throughput |
 
