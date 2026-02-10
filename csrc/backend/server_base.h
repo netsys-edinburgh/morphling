@@ -70,8 +70,10 @@ class AlignedBufferPool {
     free_lists_.clear();
   }
 
- private:
+  // Public for testing. Production code should use instance().
   AlignedBufferPool() = default;
+
+ private:
   AlignedBufferPool(const AlignedBufferPool&) = delete;
   AlignedBufferPool& operator=(const AlignedBufferPool&) = delete;
 
@@ -236,6 +238,8 @@ class SerializationBuffer {
 
   // Allocate new buffer (uses AlignedBufferPool)
   void Allocate(size_t size);
+  // Allocate using a specific pool (for testing)
+  void Allocate(size_t size, AlignedBufferPool& pool);
 
   // Write methods
   void WriteUInt32(uint32_t value, bool network_order = false);
@@ -271,6 +275,7 @@ class SerializationBuffer {
   bool owns_buffer_;
   size_t
       pool_bucket_size_;  // 0 = not from pool, >0 = bucket size for pool return
+  AlignedBufferPool* pool_ = nullptr;  // nullptr = use singleton
 };
 
 // ============================================================================
@@ -287,7 +292,8 @@ struct BufferSegment {
 
 class ScatterGatherBuffer {
  public:
-  ScatterGatherBuffer() = default;
+  ScatterGatherBuffer() : pool_(&AlignedBufferPool::instance()) {}
+  explicit ScatterGatherBuffer(AlignedBufferPool& pool) : pool_(&pool) {}
   ~ScatterGatherBuffer();
 
   ScatterGatherBuffer(ScatterGatherBuffer&& other) noexcept;
@@ -308,6 +314,7 @@ class ScatterGatherBuffer {
   std::vector<BufferSegment> segments_;
   // Track pool bucket sizes for owned segments to return them
   std::vector<std::pair<uint8_t*, size_t>> owned_pool_entries_;
+  AlignedBufferPool* pool_;
 };
 
 typedef std::shared_ptr<ScatterGatherBuffer> ScatterGatherBufferPtr;
