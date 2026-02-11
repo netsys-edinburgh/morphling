@@ -24,6 +24,16 @@ using namespace uevent;
 
 #include "base/logging.h"
 
+#define CUBLAS_CHECK(call)                                              \
+  do {                                                                  \
+    cublasStatus_t err = call;                                          \
+    if (err != CUBLAS_STATUS_SUCCESS) {                                 \
+      LOG_ERROR << "cuBLAS Error: " << err << " at " << __FILE__ << ":" \
+                << __LINE__ << std::endl;                               \
+      std::exit(err);                                                   \
+    }                                                                   \
+  } while (0)
+
 namespace morphling {
 namespace backend {
 
@@ -32,6 +42,11 @@ namespace backend {
 ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
     : ctx_(ctx), loop_(loop), cublas_handle_(nullptr) {
   SRV_STATS->Initialize();
+  cudaError_t flag_err = cudaSetDeviceFlags(cudaDeviceMapHost);
+  if (flag_err != cudaSuccess && flag_err != cudaErrorSetOnActiveProcess) {
+    LOG_ERROR << "cudaSetDeviceFlags(cudaDeviceMapHost) failed: "
+              << cudaGetErrorString(flag_err);
+  }
   cublasCreate(&cublas_handle_);
 }
 
@@ -192,6 +207,117 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   int64_t row_size = r_size / partition.h_dim / sizeof(float);
   int64_t col_size = c_size / partition.h_dim / sizeof(float);
 
+  // Check if input buffers are CUDA host-registered (pinned); if not, register
+  // them
+  bool r_registered = false;
+  bool c_registered = false;
+
+  if (r_ptr != nullptr && r_size > 0) {
+    cudaPointerAttributes r_attrs;
+    cudaError_t err = cudaPointerGetAttributes(&r_attrs, r_ptr);
+    if (err != cudaSuccess) {
+      cudaGetLastError();  // clear error
+      // Not known to CUDA, register it
+      err = cudaHostRegister(r_ptr, r_size, cudaHostRegisterMapped);
+      if (err != cudaSuccess) {
+        LOG_ERROR << "[HandlePartition] cudaHostRegister for row failed: "
+                  << cudaGetErrorString(err);
+        return;
+      }
+      r_registered = true;
+      LOG_DEBUG << "[HandlePartition] Registered row ptr=" << r_ptr
+                << " size=" << r_size;
+    } else if (r_attrs.type != cudaMemoryTypeHost ||
+               r_attrs.devicePointer == nullptr) {
+      // Known to CUDA but not host-mapped/pinned, register it
+      err = cudaHostRegister(r_ptr, r_size, cudaHostRegisterMapped);
+      if (err != cudaSuccess) {
+        LOG_ERROR << "[HandlePartition] cudaHostRegister for row failed: "
+                  << cudaGetErrorString(err);
+        return;
+      }
+      r_registered = true;
+      LOG_DEBUG << "[HandlePartition] Registered row ptr=" << r_ptr
+                << " size=" << r_size;
+    }
+  }
+
+  if (c_ptr != nullptr && c_size > 0) {
+    cudaPointerAttributes c_attrs;
+    cudaError_t err = cudaPointerGetAttributes(&c_attrs, c_ptr);
+    if (err != cudaSuccess) {
+      cudaGetLastError();  // clear error
+      err = cudaHostRegister(c_ptr, c_size, cudaHostRegisterMapped);
+      if (err != cudaSuccess) {
+        LOG_ERROR << "[HandlePartition] cudaHostRegister for col failed: "
+                  << cudaGetErrorString(err);
+        if (r_registered) cudaHostUnregister(r_ptr);
+        return;
+      }
+      c_registered = true;
+      LOG_DEBUG << "[HandlePartition] Registered col ptr=" << c_ptr
+                << " size=" << c_size;
+    } else if (c_attrs.type != cudaMemoryTypeHost ||
+               c_attrs.devicePointer == nullptr) {
+      err = cudaHostRegister(c_ptr, c_size, cudaHostRegisterMapped);
+      if (err != cudaSuccess) {
+        LOG_ERROR << "[HandlePartition] cudaHostRegister for col failed: "
+                  << cudaGetErrorString(err);
+        if (r_registered) cudaHostUnregister(r_ptr);
+        return;
+      }
+      c_registered = true;
+      LOG_DEBUG << "[HandlePartition] Registered col ptr=" << c_ptr
+                << " size=" << c_size;
+    }
+  }
+
+  // RAII guard to unregister after compute finishes
+  auto unregister_guard = [&]() {
+    if (r_registered) {
+      cudaError_t err = cudaHostUnregister(r_ptr);
+      if (err != cudaSuccess) {
+        LOG_ERROR << "[HandlePartition] cudaHostUnregister for row failed: "
+                  << cudaGetErrorString(err);
+      } else {
+        LOG_DEBUG << "[HandlePartition] Unregistered row ptr=" << r_ptr;
+      }
+    }
+    if (c_registered) {
+      cudaError_t err = cudaHostUnregister(c_ptr);
+      if (err != cudaSuccess) {
+        LOG_ERROR << "[HandlePartition] cudaHostUnregister for col failed: "
+                  << cudaGetErrorString(err);
+      } else {
+        LOG_DEBUG << "[HandlePartition] Unregistered col ptr=" << c_ptr;
+      }
+    }
+  };
+
+  // Get device-accessible pointers for cuBLAS
+  float* d_r_ptr = nullptr;
+  float* d_c_ptr = nullptr;
+  if (r_ptr && r_size > 0) {
+    cudaError_t err = cudaHostGetDevicePointer(
+        reinterpret_cast<void**>(&d_r_ptr), const_cast<void*>(r_ptr), 0);
+    if (err != cudaSuccess) {
+      LOG_ERROR << "[HandlePartition] cudaHostGetDevicePointer row failed: "
+                << cudaGetErrorString(err);
+      unregister_guard();
+      return;
+    }
+  }
+  if (c_ptr && c_size > 0) {
+    cudaError_t err = cudaHostGetDevicePointer(
+        reinterpret_cast<void**>(&d_c_ptr), const_cast<void*>(c_ptr), 0);
+    if (err != cudaSuccess) {
+      LOG_ERROR << "[HandlePartition] cudaHostGetDevicePointer col failed: "
+                << cudaGetErrorString(err);
+      unregister_guard();
+      return;
+    }
+  }
+
   if (row_size <= 0 || col_size <= 0 || partition.h_dim <= 0) {
     LOG_ERROR << "[HandlePartition] Invalid dimensions: row_size=" << row_size
               << ", col_size=" << col_size << ", h_dim=" << partition.h_dim;
@@ -221,6 +347,19 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
     return;
   }
 
+  float* d_result_ptr = nullptr;
+  {
+    cudaError_t err = cudaHostGetDevicePointer(
+        reinterpret_cast<void**>(&d_result_ptr), result_ptr, 0);
+    if (err != cudaSuccess) {
+      LOG_ERROR << "[HandlePartition] cudaHostGetDevicePointer result failed: "
+                << cudaGetErrorString(err);
+      cuda_pool_.Release(result_ptr, result_bucket);
+      unregister_guard();
+      return;
+    }
+  }
+
   auto start = std::chrono::high_resolution_clock::now();
 
   float alpha = 1.0f;
@@ -234,19 +373,29 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
                   row_size,         // n: number of cols in result
                   partition.h_dim,  // k: inner dimension (h_dim)
                   &alpha,
-                  (const float*)c_ptr,  // A: col (col_size x h_dim)
-                  col_size,             // lda: leading dimension of col
-                  (const float*)r_ptr,  // B: row (row_size x h_dim)
-                  partition.h_dim,      // ldb: leading dimension of row
+                  d_c_ptr,          // A: col (device-mapped)
+                  col_size,         // lda: leading dimension of col
+                  d_r_ptr,          // B: row (device-mapped)
+                  partition.h_dim,  // ldb: leading dimension of row
                   &beta,
-                  (float*)result_ptr,  // C: result (col_size x row_size)
-                  col_size             // ldc: leading dimension of result
+                  d_result_ptr,  // C: result (device-mapped)
+                  col_size       // ldc: leading dimension of result
       );
 
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
   LOG_DEBUG << part_key << " cuBLAS GEMM time: " << duration.count() << "us";
+
+  // sychronize to ensure compute is done before we access result or send
+  // response
+  cudaError_t sync_err = cudaDeviceSynchronize();
+  if (sync_err != cudaSuccess) {
+    LOG_ERROR << "[HandlePartition] cudaDeviceSynchronize failed: "
+              << cudaGetErrorString(sync_err);
+    cuda_pool_.Release(result_ptr, result_bucket);
+    return;
+  }
 
   if (cublas_status != CUBLAS_STATUS_SUCCESS) {
     LOG_ERROR << "[HandlePartition] cuBLAS GEMM failed, status="
@@ -271,6 +420,8 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   response.timestamp = CurrentTimeMicros();
   response.mat.clear();
   response.mat.push_back({result_ptr, result_size});
+
+  unregister_guard();  // Unregister input buffers before sending response
 
   // Zero-copy send: result buffer release is deferred to send completion
   ResponseToCaller(conn, response, result_ptr, result_bucket);
@@ -636,7 +787,8 @@ void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
 
   LOG_DEBUG << "Allocating pinned host memory: size=" << size << " bytes";
   void* cpy_ptr = nullptr;
-  cudaError_t cuda_err = cudaHostAlloc(&cpy_ptr, size, cudaHostAllocDefault);
+  cudaError_t cuda_err =
+      cudaHostAlloc(&cpy_ptr, size, cudaHostAllocDefault | cudaHostAllocMapped);
   if (cuda_err != cudaSuccess) {
     // Print detailed CUDA error information
     fprintf(stderr, "\n========================================\n");

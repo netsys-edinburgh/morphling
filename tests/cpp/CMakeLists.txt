@@ -49,6 +49,17 @@ if(ENABLE_CUDA_TESTS)
       CUDA::cudart
       CUDA::cublas
     )
+
+    add_executable(test_cublas_error15_repro
+      test_cublas_error15_repro.cpp
+    )
+    target_link_libraries(test_cublas_error15_repro
+      GTest::gtest
+      GTest::gtest_main
+      CUDA::cudart
+      CUDA::cublas
+    )
+    add_test(NAME test_cublas_error15_repro COMMAND test_cublas_error15_repro)
   else()
     message(WARNING "CUDAToolkit not found; CUDA tests will be skipped.")
   endif()

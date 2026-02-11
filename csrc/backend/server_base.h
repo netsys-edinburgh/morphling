@@ -94,7 +94,7 @@ class AlignedBufferPool {
     }
     ret = mlock(ptr, size);
     if (ret != 0) {
-      // mlock failure is non-fatal, continue without pinning
+      throw std::runtime_error("AlignedBufferPool: mlock failed");
     }
     return ptr;
   }
