@@ -20,6 +20,11 @@
 
 class CudaPinnedMemoryPool {
  public:
+  static CudaPinnedMemoryPool& Instance() {
+    static CudaPinnedMemoryPool pool;
+    return pool;
+  }
+
   explicit CudaPinnedMemoryPool(size_t max_buffers_per_bucket = 16)
       : max_per_bucket_(max_buffers_per_bucket) {}
 
@@ -45,7 +50,7 @@ class CudaPinnedMemoryPool {
     }
     // Allocate new pinned buffer
     void* ptr = nullptr;
-    cudaError_t err = cudaHostAlloc(&ptr, bucket, cudaHostAllocDefault);
+    cudaError_t err = cudaHostAlloc(&ptr, bucket, cudaHostAllocMapped);
     if (err != cudaSuccess || !ptr) {
       throw std::runtime_error("CudaPinnedMemoryPool: cudaHostAlloc failed");
     }
@@ -83,13 +88,14 @@ namespace backend {
 
 class ProxyCliHandle : public uevent::LoopHandle {
  public:
-  ProxyCliHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop);
+  ProxyCliHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop,
+                 int64_t device_id = 0);
   ~ProxyCliHandle();
 
   static void ThreadInit(uevent::UeventLoop* loop);
-  static uevent::LoopHandle* CreateMyself(ProxyEnvCfg& ctx,
+  static uevent::LoopHandle* CreateMyself(ProxyEnvCfg& ctx, int64_t device_id,
                                           uevent::UeventLoop* loop) {
-    return new ProxyCliHandle(ctx, loop);
+    return new ProxyCliHandle(ctx, loop, device_id);
   }
 
  public:
@@ -99,8 +105,7 @@ class ProxyCliHandle : public uevent::LoopHandle {
 
   void ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
                         const MatrixPartition& partition,
-                        void* deferred_cuda_ptr = nullptr,
-                        size_t deferred_cuda_bucket = 0);
+                        void* deferred_cuda_ptr = nullptr);
   void HandlePartition(const uevent::ConnectionUeventPtr& conn,
                        const MatrixPartition& partition);
 
@@ -111,13 +116,13 @@ class ProxyCliHandle : public uevent::LoopHandle {
 
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
+  int64_t device_id_;
   cublasHandle_t cublas_handle_;
-  CudaPinnedMemoryPool cuda_pool_;
 };
 
 class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
  public:
-  ProxyCliImpl(ProxyEnvCfg& context);
+  ProxyCliImpl(ProxyEnvCfg& context, int64_t device_id);
   void Initialize(uevent::UeventLoop* loop);
 
  private:
@@ -152,6 +157,7 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
 
  private:
   ProxyEnvCfg& ctx_;
+  int64_t device_id_;
   std::shared_ptr<uevent::ConnectorLibevent> connector_;
 
   // sw::redis::Redis* redis_;
@@ -193,7 +199,7 @@ class ProxyCli {
 
  public:
   ProxyCli();
-  void Initialize(const std::string& cfg_file);
+  void Initialize(const std::string& cfg_file, int64_t device_id = 0);
   void Start();
   void Send(const torch::Tensor& tensor,
             std::optional<int64_t> rank = std::nullopt);

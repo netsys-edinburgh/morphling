@@ -65,7 +65,8 @@ UeventLoop::UeventLoop(const std::string& thread_name)
       wakeup_fd_(CreateEventfd()),
       timer_fd_(-1),
       loop_handle_(NULL) {
-  LOG_INFO << "UeventLoop created " << this << " in thread id: " << thread_id_;
+  // LOG_INFO << "UeventLoop created " << this << " in thread id: " <<
+  // thread_id_;
   if (loop_in_this_thread) {
     LOG_FATAL << "Another UeventLoop " << loop_in_this_thread
               << " exists in this thread id: " << thread_id_;

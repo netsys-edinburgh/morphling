@@ -19,20 +19,57 @@ using namespace std;
 using namespace std::placeholders;
 using namespace uevent;
 
+#include <sys/stat.h>
+
 #include <iostream>
 #include <set>
 
+#include "base/log_file.h"
 #include "base/logging.h"
+#include "utils/device_log_tag.h"
 
 namespace morphling {
 namespace backend {
 
+namespace {
+std::unique_ptr<base::LogFile> g_client_log_file;
+
+void TeeOutput(const char* msg, int len) {
+  ::fwrite(msg, 1, len, stdout);
+  if (g_client_log_file) {
+    g_client_log_file->append(msg, len);
+  }
+}
+
+void TeeFlush() {
+  ::fflush(stdout);
+  if (g_client_log_file) {
+    g_client_log_file->flush();
+  }
+}
+
+int CudaPinBuffer(void* ptr, size_t size) {
+  auto err = cudaHostRegister(ptr, size, cudaHostRegisterMapped);
+  return (err == cudaSuccess) ? 0 : -1;
+}
+
+void CudaUnpinBuffer(void* ptr, size_t size) { cudaHostUnregister(ptr); }
+}  // namespace
+
+int PosixPinBuffer(void* ptr, size_t size) {
+  // No-op for CPU memory, but could add mlock here if desired
+  return mlock(ptr, size);
+}
+
+void PosixUnpinBuffer(void* ptr, size_t size) { munlock(ptr, size); }
+
 /*********************************ProxyCliHandle************************************/
 
-ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
-    : ctx_(ctx), loop_(loop), cublas_handle_(nullptr) {
+ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop,
+                               int64_t device_id)
+    : ctx_(ctx), loop_(loop), device_id_(device_id), cublas_handle_(nullptr) {
   SRV_STATS->Initialize();
-  cublasCreate(&cublas_handle_);
+  InitCublas();
 }
 
 ProxyCliHandle::~ProxyCliHandle() { CleanupCublas(); }
@@ -42,8 +79,8 @@ ProxyCliHandle::~ProxyCliHandle() { CleanupCublas(); }
 void ProxyCliHandle::InitCublas() {
   cublasStatus_t status = cublasCreate(&cublas_handle_);
   if (status != CUBLAS_STATUS_SUCCESS) {
-    LOG_ERROR << "Failed to create cuBLAS handle, status: " << status;
-    cublas_handle_ = nullptr;
+    throw std::runtime_error("Failed to create cuBLAS handle, status: " +
+                             std::to_string(status));
   } else {
     LOG_DEBUG << "cuBLAS handle created successfully: "
               << (void*)cublas_handle_;
@@ -73,14 +110,12 @@ void ProxyCliHandle::CleanupCublas() {
 // stays alive until libevent finishes sending all segments.
 struct ResponseSendContext {
   ScatterGatherBufferPtr sg_buffer;
-  // Deferred CUDA pinned memory release (result buffer)
+  // Deferred CUDA managed memory release (result buffer)
   void* cuda_ptr = nullptr;
-  size_t cuda_bucket = 0;
-  CudaPinnedMemoryPool* cuda_pool = nullptr;
 
   ~ResponseSendContext() {
-    if (cuda_pool && cuda_ptr) {
-      cuda_pool->Release(cuda_ptr, cuda_bucket);
+    if (cuda_ptr) {
+      cudaFree(cuda_ptr);
     }
   }
 };
@@ -92,16 +127,16 @@ static void ResponseSendCleanup(const void* /*data*/, size_t /*len*/,
 
 void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
                                       const MatrixPartition& partition,
-                                      void* deferred_cuda_ptr,
-                                      size_t deferred_cuda_bucket) {
+                                      void* deferred_cuda_ptr) {
   assert(conn);
 
   string client_addr = conn->GetPeerAddress().ToString();
   if (conn->IsClosed()) {
-    LOG_WARN << "connection already closed:" << client_addr;
-    // Release deferred cuda memory since we won't send
+    LOG_WARN << DEV_TAG(device_id_, partition.gemm_id)
+             << "connection already closed:" << client_addr;
+    // Release deferred cuda managed memory since we won't send
     if (deferred_cuda_ptr) {
-      cuda_pool_.Release(deferred_cuda_ptr, deferred_cuda_bucket);
+      cudaFree(deferred_cuda_ptr);
     }
     return;
   }
@@ -116,13 +151,11 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
   auto sg_buffer = partition.SerializeZeroCopy();
   auto size = sg_buffer->GetTotalSize();
 
-  // Create send context to keep scatter-gather buffer and cuda memory alive
-  // until libevent finishes sending all segments
+  // Create send context to keep scatter-gather buffer and cuda managed memory
+  // alive until libevent finishes sending all segments
   auto ctx = std::make_shared<ResponseSendContext>();
   ctx->sg_buffer = sg_buffer;
   ctx->cuda_ptr = deferred_cuda_ptr;
-  ctx->cuda_bucket = deferred_cuda_bucket;
-  ctx->cuda_pool = deferred_cuda_ptr ? &cuda_pool_ : nullptr;
 
   // Zero-copy send each segment
   for (const auto& segment : sg_buffer->GetSegments()) {
@@ -149,8 +182,8 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
   DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us,
                                               end_us);
 
-  LOG_INFO << "[ResponseToCaller] Device " << partition.dev_id
-           << " - Sent: " << size << " bytes"
+  LOG_INFO << DEV_TAG(device_id_, partition.gemm_id)
+           << "[ResponseToCaller] Sent: " << size << " bytes"
            << " [" << start_us << " -> " << end_us << " us]"
            << ", Upload TP: " << upload_tp << " B/s"
            << ", Last Packet TP: " << last_packet_tp << " B/s"
@@ -170,7 +203,8 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
   RECORD_SRV_COUNT(SRV_TOTAL_QUERY, 1);
   RECORD_SRV_COUNT(SRV_TOTAL_TRAFFIC, size);
 
-  LOG_DEBUG << "Response sent to " << client_addr << ", size: " << size;
+  LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id) << "Response sent to "
+            << client_addr << ", size: " << size;
 }
 
 void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
@@ -179,8 +213,8 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
 
   // Record COMPUTE start time (virtual time)
   uint64_t vt_compute_start = VirtualClockNow();
-  LOG_INFO << "[HandlePartition] Logging COMPUTE START for device "
-           << partition.dev_id << ", gemm_id=" << partition.gemm_id
+  LOG_INFO << DEV_TAG(device_id_, partition.gemm_id)
+           << "[HandlePartition] COMPUTE START"
            << ", vt_start=" << vt_compute_start;
   DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
                                      "COMPUTE", "START", vt_compute_start,
@@ -193,7 +227,8 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   int64_t col_size = c_size / partition.h_dim / sizeof(float);
 
   if (row_size <= 0 || col_size <= 0 || partition.h_dim <= 0) {
-    LOG_ERROR << "[HandlePartition] Invalid dimensions: row_size=" << row_size
+    LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
+              << "[HandlePartition] Invalid dimensions: row_size=" << row_size
               << ", col_size=" << col_size << ", h_dim=" << partition.h_dim;
     return;
   }
@@ -201,23 +236,73 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   // Input buffers come from CacheTensor (already cudaHostAlloc'd via cache)
   // No need to cudaHostRegister - they're already pinned
 
-  // Result buffer from CUDA pinned memory pool (avoids cudaHostAlloc per call)
+  // Result buffer via cudaMallocManaged (device-accessible unified memory)
   size_t result_size = 0;
   if (__builtin_mul_overflow(static_cast<size_t>(row_size),
                              static_cast<size_t>(col_size), &result_size) ||
       __builtin_mul_overflow(result_size, sizeof(float), &result_size)) {
-    LOG_ERROR << "[HandlePartition] Result size overflow: row_size=" << row_size
+    LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
+              << "[HandlePartition] Result size overflow: row_size=" << row_size
               << ", col_size=" << col_size;
     return;
   }
 
+  // register r_ptr and c_ptr as pinned memory (if not already pinned) to enable
+  // zero-copy access from GPU This is a no-op if the memory is already pinned
+  // (e.g. from cache)
+  // if (cudaHostRegister(r_ptr, r_size, cudaHostRegisterDefault) !=
+  // cudaSuccess) {
+  //   LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
+  //             << "[HandlePartition] Failed to register row buffer as pinned "
+  //                "memory, code: "
+  //             << cudaGetErrorString(cudaGetLastError());
+  //   return;
+  // }
+  // if (cudaHostRegister(c_ptr, c_size, cudaHostRegisterDefault) !=
+  // cudaSuccess) {
+  //   LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
+  //             << "[HandlePartition] Failed to register col buffer as pinned "
+  //                "memory, code: "
+  //             << cudaGetErrorString(cudaGetLastError());
+  //   return;
+  // }
+
+  // We must be able to get device pointers for the input buffers to use with
+  // cuBLAS. If the buffers are not already pinned (e.g. from cache), we attempt
+  // to pin them here. If pinning fails, we cannot proceed with GPU computation.
+
+  void* r_dev_ptr = nullptr;
+  void* c_dev_ptr = nullptr;
+
+  if (cudaHostGetDevicePointer(&r_dev_ptr, r_ptr, 0) != cudaSuccess) {
+    LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
+              << "[HandlePartition] Failed to get device pointer for row "
+                 "buffer, code: "
+              << cudaGetErrorString(cudaGetLastError());
+    return;
+  }
+
+  if (cudaHostGetDevicePointer(&c_dev_ptr, c_ptr, 0) != cudaSuccess) {
+    LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
+              << "[HandlePartition] Failed to get device pointer for col "
+                 "buffer, code: "
+              << cudaGetErrorString(cudaGetLastError());
+    return;
+  }
+
+  if (!r_dev_ptr || !c_dev_ptr) {
+    LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
+              << "[HandlePartition] Invalid device pointers: r_dev_ptr="
+              << r_dev_ptr << ", c_dev_ptr=" << c_dev_ptr;
+    return;
+  }
+
   void* result_ptr = nullptr;
-  size_t result_bucket = 0;
-  try {
-    std::tie(result_ptr, result_bucket) = cuda_pool_.Acquire(result_size);
-  } catch (const std::exception& ex) {
-    LOG_ERROR << "[HandlePartition] Failed to acquire CUDA pinned memory: "
-              << ex.what() << ", size=" << result_size;
+  cudaError_t alloc_err = cudaMallocManaged(&result_ptr, result_size);
+  if (alloc_err != cudaSuccess) {
+    LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
+              << "[HandlePartition] cudaMallocManaged failed: "
+              << cudaGetErrorString(alloc_err) << ", size=" << result_size;
     return;
   }
 
@@ -227,38 +312,45 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   float beta = 0.0f;
 
   cublasStatus_t cublas_status =
-      cublasSgemm(cublas_handle_,
-                  CUBLAS_OP_N,      // col^T: transpose col (op(col) = col^T)
-                  CUBLAS_OP_N,      // row: no transpose
-                  col_size,         // m: number of rows in result
-                  row_size,         // n: number of cols in result
-                  partition.h_dim,  // k: inner dimension (h_dim)
-                  &alpha,
-                  (const float*)c_ptr,  // A: col (col_size x h_dim)
-                  col_size,             // lda: leading dimension of col
-                  (const float*)r_ptr,  // B: row (row_size x h_dim)
-                  partition.h_dim,      // ldb: leading dimension of row
-                  &beta,
-                  (float*)result_ptr,  // C: result (col_size x row_size)
-                  col_size             // ldc: leading dimension of result
+      cublasGemmEx(cublas_handle_,
+                   CUBLAS_OP_N,      // col^T: transpose col (op(col) = col^T)
+                   CUBLAS_OP_N,      // row: no transpose
+                   col_size,         // m: number of rows in result
+                   row_size,         // n: number of cols in result
+                   partition.h_dim,  // k: inner dimension (h_dim)
+                   &alpha,
+                   (const float*)c_dev_ptr,  // A: col (col_size x h_dim)
+                   CUDA_R_32F,               // A type
+                   col_size,                 // lda: leading dimension of col
+                   (const float*)r_dev_ptr,  // B: row (row_size x h_dim)
+                   CUDA_R_32F,               // B type
+                   partition.h_dim,          // ldb: leading dimension of row
+                   &beta,
+                   (float*)result_ptr,  // C: result (col_size x row_size)
+                   CUDA_R_32F,          // C type
+                   col_size,            // ldc: leading dimension of result
+                   CUBLAS_COMPUTE_32F,  // compute type
+                   CUBLAS_GEMM_DEFAULT  // algo
       );
 
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG << part_key << " cuBLAS GEMM time: " << duration.count() << "us";
+  LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id) << part_key
+            << " cuBLAS GEMM time: " << duration.count() << "us";
 
   if (cublas_status != CUBLAS_STATUS_SUCCESS) {
-    LOG_ERROR << "[HandlePartition] cuBLAS GEMM failed, status="
+    LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
+              << "[HandlePartition] cuBLAS GEMM failed, status="
               << cublas_status;
-    cuda_pool_.Release(result_ptr, result_bucket);
+    cudaFree(result_ptr);
     return;
   }
 
   // Record COMPUTE end time (virtual time)
   uint64_t vt_compute_end = VirtualClockNow();
-  LOG_INFO << "[HandlePartition] Logging COMPUTE END for device "
-           << partition.dev_id << ", gemm_id=" << partition.gemm_id
+  LOG_INFO << DEV_TAG(device_id_, partition.gemm_id)
+           << "[HandlePartition] COMPUTE END"
            << ", vt_start=" << vt_compute_start
            << ", vt_end=" << vt_compute_end;
   DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
@@ -273,7 +365,7 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   response.mat.push_back({result_ptr, result_size});
 
   // Zero-copy send: result buffer release is deferred to send completion
-  ResponseToCaller(conn, response, result_ptr, result_bucket);
+  ResponseToCaller(conn, response, result_ptr);
 }
 
 void ProxyCliHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -288,8 +380,11 @@ void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 
 /********************************ProxyCliImpl****************************************/
 
-ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx)
-    : ctx_(ctx), connector_(nullptr), cached_tensors_(5ull * GB) {}
+ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx, int64_t device_id)
+    : ctx_(ctx),
+      device_id_(device_id),
+      connector_(nullptr),
+      cached_tensors_(5ull * GB) {}
 
 void ProxyCliImpl::Initialize(UeventLoop* loop) {
   UsockAddress addr(ctx_.listen_ip, ctx_.listen_port);
@@ -312,9 +407,18 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
   // Initialize performance logging (client side)
   // Client processes requests from all devices, so we use device ID 0 for
   // client-side processing
-  DEVICE_TRACKER.InitSeparatePerfLog("./logs", "device", 0);
+  DEVICE_TRACKER.InitSeparatePerfLog("./logs", "device", device_id_);
   LOG_INFO << "[ProxyCliImpl::Initialize] Performance logging initialized at "
-              "./logs/perf_device_0.log";
+              "./logs/perf_device_"
+           << device_id_ << ".log";
+
+  // Tee logging: write LOG_* output to both console and rotating file
+  ::mkdir("./logs", 0755);
+  g_client_log_file = std::make_unique<base::LogFile>(
+      "./logs/client_general", 256 * 1024 * 1024, true, 3);
+  base::Logger::setOutput(TeeOutput);
+  base::Logger::setFlush(TeeFlush);
+  LOG_INFO << "[ProxyCliImpl::Initialize] Tee logging initialized";
 
   // CUDA context warmup (optional, can cause OOM if GPU memory is tight)
   // Disabled to avoid unnecessary GPU memory allocation during initialization
@@ -457,8 +561,8 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
-            << "us";
+  LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id) << part_key
+            << " REQ Deserialization time: " << duration.count() << "us";
 
   // Record DOWNLOAD start time (virtual time)
   uint64_t vt_download_start = VirtualClockNow();
@@ -481,8 +585,8 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
   DEVICE_TRACKER.GetLastPacketEpochTimestamps(partition.dev_id, start_us,
                                               end_us);
 
-  LOG_INFO << "[HandleMatMulRequest] Device " << partition.dev_id
-           << " - Received: " << size << " bytes"
+  LOG_INFO << DEV_TAG(device_id_, partition.gemm_id)
+           << "[HandleMatMulRequest] Received: " << size << " bytes"
            << " [" << start_us << " -> " << end_us << " us]"
            << ", Download TP: " << download_tp << " B/s"
            << ", Last Packet TP: " << last_packet_tp << " B/s"
@@ -496,13 +600,15 @@ void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
 
   // Process the partition
   HandleMatMul(conn, partition);
-  LOG_DEBUG << "Processed partition: " << partition.DebugString();
+  LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id)
+            << "Processed partition: " << partition.DebugString();
 }
 
 void ProxyCliImpl::HandleMatMul(const ConnectionUeventPtr& conn,
                                 MatrixPartition& partition) {
   auto part_key = partition.GetPartitionKey();
-  LOG_DEBUG << part_key << " partition: " << partition.DebugString();
+  LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id) << part_key
+            << " partition: " << partition.DebugString();
 
   // create tensor from partition
   auto [r_ptr, r_size] = partition.mat[0];
@@ -529,27 +635,30 @@ void ProxyCliImpl::HandleMatMul(const ConnectionUeventPtr& conn,
     auto r_cached = cached_tensors_.Exist(tensor_key_row);
     auto c_cached = cached_tensors_.Exist(tensor_key_col);
 
-    LOG_DEBUG << part_key << " Row cached: " << r_cached
-              << ", row size: " << row_size << ", Col cached: " << c_cached
-              << ", col size: " << col_size;
+    LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id) << part_key
+              << " Row cached: " << r_cached << ", row size: " << row_size
+              << ", Col cached: " << c_cached << ", col size: " << col_size;
 
     FillPartition(partition);
     CheckCachedPartition(conn);
 
     if (r_size == 0 && !r_cached) {
-      LOG_WARN << part_key << " Row not cached, saving for next msg";
+      LOG_WARN << DEV_TAG(device_id_, partition.gemm_id) << part_key
+               << " Row not cached, saving for next msg";
       SavePartition(partition);
       return;
     }
 
     if (c_size == 0 && !c_cached) {
-      LOG_WARN << part_key << " Col not cached, saving for next msg";
+      LOG_WARN << DEV_TAG(device_id_, partition.gemm_id) << part_key
+               << " Col not cached, saving for next msg";
       SavePartition(partition);
       return;
     }
   }
 
-  LOG_DEBUG << part_key << " Handle partition immediately";
+  LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id) << part_key
+            << " Handle partition immediately";
   HandlePartition(conn, partition);
 }
 
@@ -562,7 +671,8 @@ void ProxyCliImpl::CheckCachedPartition(
     auto c_size = std::get<1>(c_part.mat[1]);
     if (r_size > 0 && c_size > 0) {
       auto key = c_part.GetPartitionKey();
-      LOG_DEBUG << key << " Handle partition from cache";
+      LOG_DEBUG << DEV_TAG(c_part.dev_id, c_part.gemm_id) << key
+                << " Handle partition from cache";
       HandlePartition(conn, c_part);
       keys.push_back(key);
     } else {
@@ -602,104 +712,68 @@ MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size) {
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
-            << "us";
+  LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id) << part_key
+            << " REQ Deserialization time: " << duration.count() << "us";
   return partition;
 }
 
 void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
                                int64_t h_dim) {
-  // Add debug logging for all parameters
-  LOG_INFO << "CacheTensor called: ptr=" << ptr << ", size=" << size
-           << ", h_dim=" << h_dim;
+  LOG_INFO << DEV_TAG_DEV(device_id_) << "CacheTensor called: ptr=" << ptr
+           << ", size=" << size << ", h_dim=" << h_dim;
 
   if (cached_tensors_.Exist(key)) {
-    LOG_DEBUG << "Tensor already cached, skipping";
+    LOG_DEBUG << DEV_TAG_DEV(device_id_) << "Tensor already cached, skipping";
     return;
   }
 
-  // Validate parameters before proceeding
   if (ptr == nullptr) {
-    LOG_ERROR << "CacheTensor: ptr is nullptr!";
+    LOG_ERROR << DEV_TAG_DEV(device_id_) << "CacheTensor: ptr is nullptr!";
     return;
   }
 
   if (size <= 0) {
-    LOG_ERROR << "CacheTensor: invalid size=" << size;
+    LOG_ERROR << DEV_TAG_DEV(device_id_)
+              << "CacheTensor: invalid size=" << size;
     return;
   }
 
   if (h_dim <= 0) {
-    LOG_ERROR << "CacheTensor: invalid h_dim=" << h_dim;
+    LOG_ERROR << DEV_TAG_DEV(device_id_)
+              << "CacheTensor: invalid h_dim=" << h_dim;
     return;
   }
 
-  LOG_DEBUG << "Allocating pinned host memory: size=" << size << " bytes";
-  void* cpy_ptr = nullptr;
-  cudaError_t cuda_err = cudaHostAlloc(&cpy_ptr, size, cudaHostAllocDefault);
-  if (cuda_err != cudaSuccess) {
-    // Print detailed CUDA error information
-    fprintf(stderr, "\n========================================\n");
-    fprintf(stderr, "cudaHostAlloc Error Details:\n");
-    fprintf(stderr, "----------------------------------------\n");
-    fprintf(stderr, "Error Code: %d\n", cuda_err);
-    fprintf(stderr, "Error String: %s\n", cudaGetErrorString(cuda_err));
-    fprintf(stderr, "Requested Size: %ld bytes (%.2f MiB)\n", size,
-            size / (1024.0 * 1024.0));
-    fprintf(stderr, "h_dim: %ld\n", h_dim);
+  LOG_DEBUG << DEV_TAG_DEV(device_id_)
+            << "Allocating pinned host memory: size=" << size << " bytes";
+  auto [cpy_ptr, cpy_bucket] = CudaPinnedMemoryPool::Instance().Acquire(size);
 
-    // Get GPU memory info
-    size_t free_mem = 0, total_mem = 0;
-    cudaError_t mem_err = cudaMemGetInfo(&free_mem, &total_mem);
-    if (mem_err == cudaSuccess) {
-      fprintf(stderr, "GPU Memory Status:\n");
-      fprintf(stderr, "  Total: %.2f MiB\n", total_mem / (1024.0 * 1024.0));
-      fprintf(stderr, "  Free: %.2f MiB\n", free_mem / (1024.0 * 1024.0));
-      fprintf(stderr, "  Used: %.2f MiB\n",
-              (total_mem - free_mem) / (1024.0 * 1024.0));
-    } else {
-      fprintf(stderr, "Failed to query GPU memory: %s\n",
-              cudaGetErrorString(mem_err));
-    }
-    fprintf(stderr, "----------------------------------------\n");
-    fprintf(stderr,
-            "Hint: Check with 'nvidia-smi' or 'nvtop' for GPU memory usage\n");
-    fprintf(stderr, "========================================\n\n");
-    fflush(stderr);
-
-    LOG_ERROR << "CacheTensor: cudaHostAlloc failed with error code "
-              << cuda_err << " (" << cudaGetErrorString(cuda_err)
-              << ") for size " << size << " bytes";
-    return;
-  }
-
-  LOG_DEBUG << "cudaHostAlloc succeeded: cpy_ptr=" << cpy_ptr
-            << " (pinned memory)";
-
-  LOG_DEBUG << "Copying data: from " << ptr << " to " << cpy_ptr
-            << ", size=" << size << " bytes";
+  LOG_DEBUG << DEV_TAG_DEV(device_id_) << "Copying data: from " << ptr << " to "
+            << cpy_ptr << ", size=" << size << " bytes";
   std::memcpy(cpy_ptr, ptr, size);
 
-  LOG_DEBUG << "memcpy completed successfully";
+  LOG_DEBUG << DEV_TAG_DEV(device_id_) << "memcpy completed successfully";
 
   // Store pinned memory pointer and metadata directly (no torch::from_blob)
   // Create a dummy tensor just to store the metadata, but don't trigger CUDA
   // operations
   int64_t ld_size = size / h_dim / sizeof(float);
 
-  // Store in cache with a lambda that will cleanup pinned memory when evicted
-  cached_tensors_.Put(
-      key,
-      torch::from_blob(
-          cpy_ptr, {ld_size, h_dim},
-          [](void* ptr) { cudaFreeHost(ptr); },  // Deleter called on eviction
-          at::TensorOptions()
-              .dtype(torch::kFloat32)
-              .device(torch::kCPU)
-              .layout(torch::kStrided)),
-      size);
+  // Store in cache with a lambda that returns pinned memory to pool on eviction
+  cached_tensors_.Put(key,
+                      torch::from_blob(
+                          cpy_ptr, {ld_size, h_dim},
+                          [cpy_bucket](void* ptr) {
+                            CudaPinnedMemoryPool::Instance().Release(
+                                ptr, cpy_bucket);
+                          },
+                          at::TensorOptions()
+                              .dtype(torch::kFloat32)
+                              .device(torch::kCPU)
+                              .layout(torch::kStrided)),
+                      size);
 
-  LOG_INFO << "CacheTensor completed successfully";
+  LOG_INFO << DEV_TAG_DEV(device_id_) << "CacheTensor completed successfully";
 }
 
 void ProxyCliImpl::FillPartition(MatrixPartition& partition) {
@@ -709,17 +783,36 @@ void ProxyCliImpl::FillPartition(MatrixPartition& partition) {
   auto tensor_key_col = partition.GetColKey();
   auto r_cached = cached_tensors_.Exist(tensor_key_row);
   auto c_cached = cached_tensors_.Exist(tensor_key_col);
-  if (r_size == 0 && r_cached) {
+
+  if (!r_cached || !c_cached) {
+    LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id)
+              << partition.GetPartitionKey()
+              << " FillPartition: r_cached=" << r_cached
+              << ", c_cached=" << c_cached << ", r_size=" << r_size
+              << ", c_size=" << c_size;
+  }
+
+  if (r_cached) {
     auto cached_tensor = cached_tensors_.Get(tensor_key_row);
     partition.mat[0] = {cached_tensor.data_ptr(),
                         cached_tensor.numel() * sizeof(float)};
   }
-
-  if (c_size == 0 && c_cached) {
+  if (c_cached) {
     auto cached_tensor = cached_tensors_.Get(tensor_key_col);
     partition.mat[1] = {cached_tensor.data_ptr(),
                         cached_tensor.numel() * sizeof(float)};
   }
+  // if (r_size == 0 && r_cached) {
+  //   auto cached_tensor = cached_tensors_.Get(tensor_key_row);
+  //   partition.mat[0] = {cached_tensor.data_ptr(),
+  //                       cached_tensor.numel() * sizeof(float)};
+  // }
+
+  // if (c_size == 0 && c_cached) {
+  //   auto cached_tensor = cached_tensors_.Get(tensor_key_col);
+  //   partition.mat[1] = {cached_tensor.data_ptr(),
+  //                       cached_tensor.numel() * sizeof(float)};
+  // }
 }
 
 void ProxyCliImpl::SavePartition(MatrixPartition& partition) {
@@ -740,11 +833,30 @@ const map<ProxyStatusType, string> ProxyStatus::status_str_ = {
 
 ProxyCli::ProxyCli() : svr_(nullptr), loop_thread_(nullptr) {}
 
-void ProxyCli::Initialize(const std::string& cfg_file) {
+void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
+  // detectm cuda availability and set device accordingly
+  int device_count = 0;
+  cudaError_t err = cudaGetDeviceCount(&device_count);
+  if (err != cudaSuccess) {
+    LOG_WARN << "Failed to get CUDA device count: " << cudaGetErrorString(err)
+             << ". Running in CPU-only mode.";
+    AlignedBufferPool::instance().SetPinFunctions(PosixPinBuffer,
+                                                  PosixUnpinBuffer);
+  } else if (device_count == 0) {
+    LOG_WARN << "No CUDA devices found. Running in CPU-only mode.";
+    AlignedBufferPool::instance().SetPinFunctions(PosixPinBuffer,
+                                                  PosixUnpinBuffer);
+  } else {
+    LOG_INFO << "CUDA devices detected: " << device_count
+             << ". Running in GPU mode.";
+    AlignedBufferPool::instance().SetPinFunctions(CudaPinBuffer,
+                                                  CudaUnpinBuffer);
+  }
+
   context_.Initialize(cfg_file);
-  svr_ = make_shared<ProxyCliImpl>(context_);
+  svr_ = make_shared<ProxyCliImpl>(context_, device_id);
   loop_thread_ = make_shared<UeventLoopThread>(
-      bind(ProxyCliHandle::CreateMyself, ref(context_), _1),
+      bind(ProxyCliHandle::CreateMyself, ref(context_), device_id, _1),
       bind(&ProxyCliImpl::Initialize, svr_, _1), "Proxy svr main thread");
 }
 
