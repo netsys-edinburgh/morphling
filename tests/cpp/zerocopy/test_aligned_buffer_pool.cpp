@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <thread>
 #include <vector>
 
@@ -129,4 +130,85 @@ TEST_F(AlignedBufferPoolTest, Acquire_BufferIsWritable) {
     EXPECT_EQ(ptr[i], static_cast<uint8_t>(i & 0xFF));
   }
   pool_.Release(ptr, bucket);
+}
+
+// ---------------------------------------------------------------------------
+// Custom pin/unpin callback tests
+// ---------------------------------------------------------------------------
+
+static std::atomic<int> g_pin_count{0};
+static std::atomic<int> g_unpin_count{0};
+
+static int TestPin(void* /*ptr*/, size_t /*size*/) {
+  g_pin_count.fetch_add(1, std::memory_order_relaxed);
+  return 0;
+}
+
+static void TestUnpin(void* /*ptr*/, size_t /*size*/) {
+  g_unpin_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+TEST(AlignedBufferPoolCustomPin, PinCalledOnAcquire) {
+  g_pin_count = 0;
+  g_unpin_count = 0;
+
+  AlignedBufferPool pool;
+  pool.SetPinFunctions(TestPin, TestUnpin);
+
+  auto [ptr, bucket] = pool.Acquire(4096);
+  ASSERT_NE(ptr, nullptr);
+  EXPECT_EQ(g_pin_count.load(), 1);
+
+  // Second acquire forces a new allocation (pool is empty)
+  auto [ptr2, bucket2] = pool.Acquire(4096);
+  EXPECT_EQ(g_pin_count.load(), 2);
+
+  pool.Release(ptr, bucket);
+  pool.Release(ptr2, bucket2);
+}
+
+TEST(AlignedBufferPoolCustomPin, UnpinCalledOnOverflowFree) {
+  g_pin_count = 0;
+  g_unpin_count = 0;
+
+  AlignedBufferPool pool;
+  pool.SetPinFunctions(TestPin, TestUnpin);
+
+  size_t bucket = AlignedBufferPool::PAGE_SIZE;
+  std::vector<uint8_t*> ptrs;
+
+  // Acquire MAX_BUFFERS_PER_BUCKET + 1 buffers
+  for (size_t i = 0; i <= AlignedBufferPool::MAX_BUFFERS_PER_BUCKET; ++i) {
+    auto [ptr, b] = pool.Acquire(bucket);
+    ASSERT_NE(ptr, nullptr);
+    ptrs.push_back(ptr);
+  }
+
+  int unpin_before = g_unpin_count.load();
+
+  // Release all — the last release overflows the pool and triggers unpin
+  for (auto* ptr : ptrs) {
+    pool.Release(ptr, bucket);
+  }
+
+  EXPECT_EQ(g_unpin_count.load(), unpin_before + 1);
+}
+
+TEST(AlignedBufferPoolCustomPin, UnpinCalledOnDestruction) {
+  g_pin_count = 0;
+  g_unpin_count = 0;
+
+  {
+    AlignedBufferPool pool;
+    pool.SetPinFunctions(TestPin, TestUnpin);
+
+    auto [ptr1, b1] = pool.Acquire(4096);
+    auto [ptr2, b2] = pool.Acquire(8192);
+    pool.Release(ptr1, b1);
+    pool.Release(ptr2, b2);
+    // 2 buffers sitting in the pool
+    EXPECT_EQ(g_unpin_count.load(), 0);
+  }
+  // Destructor should unpin both
+  EXPECT_EQ(g_unpin_count.load(), 2);
 }
