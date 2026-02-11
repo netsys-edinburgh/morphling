@@ -58,13 +58,11 @@ Because the Docker image bakes the installed package + compiled artifacts, **cha
 ### Any code change (Python or C++)
 1) Rebuild image
 ```bash
-newgrp docker
 docker build -t device-emulator:latest .
 ```
 
 2) Run tests in container
 ```bash
-newgrp docker
 docker run --rm --gpus all device-emulator:latest python3 -m pytest tests -v
 ```
 
@@ -82,10 +80,15 @@ If you change `Dockerfile` / system deps / Python deps, rebuild and re-test the 
 - C++ format: `.clang-format`.
 - Prefer minimal, targeted edits; follow existing patterns.
 
-## 5) “Don’t do this without asking”
+## 5) "Don't do this without asking"
 
 - Don't change `proto/*.proto` unless explicitly requested.
 - Don't do broad refactors in `csrc/backend/`.
 - Don't add heavy dependencies.
 - Don't provide summary of task, only when asked
 - Any runtime fix, please update corresponding readme
+
+## 6) "Do this without asking"
+
+- Plans write to a md file as PRD
+- Before action, convert PRD using taskmaster mcp
