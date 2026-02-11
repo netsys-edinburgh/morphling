@@ -46,7 +46,7 @@ void PinThreadToCore(int core_id) {
 
   int ret = syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
   if (ret == 0) {
-    LOG_INFO << "Thread " << tid << " pinned to CPU core " << core_id;
+    LOG_TRACE << "Thread " << tid << " pinned to CPU core " << core_id;
   } else {
     LOG_WARN << "Failed to pin thread " << tid << " to core " << core_id
              << " (errno: " << errno << ")";
