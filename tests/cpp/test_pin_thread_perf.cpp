@@ -1,5 +1,7 @@
 #include <sched.h>
+#include <stdio.h>
 #include <sys/syscall.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -18,13 +20,15 @@ void PinThreadToCore(int core_id) {
   CPU_SET(core_id, &cpuset);
 
   int ret = syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
-  if (ret == 0) {
-    std::cout << "Thread " << tid << " pinned to CPU core " << core_id
-              << std::endl;
-  } else {
-    std::cerr << "Failed to pin thread " << tid << " to core " << core_id
-              << std::endl;
-  }
+  if (ret)
+    sprintf(stderr, "Failed to pin thread %d to core %d\n", tid, core_id);
+  // if (ret == 0) {
+  //   std::cout << "Thread " << tid << " pinned to CPU core " << core_id
+  //             << std::endl;
+  // } else {
+  //   std::cerr << "Failed to pin thread " << tid << " to core " << core_id
+  //             << std::endl;
+  // }
 }
 
 // Worker thread function

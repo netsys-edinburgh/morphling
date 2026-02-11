@@ -50,7 +50,8 @@ class CudaPinnedMemoryPool {
     }
     // Allocate new pinned buffer
     void* ptr = nullptr;
-    cudaError_t err = cudaHostAlloc(&ptr, bucket, cudaHostAllocMapped);
+    cudaError_t err =
+        cudaHostAlloc(&ptr, bucket, cudaHostAllocDefault | cudaHostAllocMapped);
     if (err != cudaSuccess || !ptr) {
       throw std::runtime_error("CudaPinnedMemoryPool: cudaHostAlloc failed");
     }
