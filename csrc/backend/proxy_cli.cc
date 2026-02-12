@@ -432,19 +432,6 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
     return;
   }
 
-  float* d_result_ptr = nullptr;
-  {
-    cudaError_t err = cudaHostGetDevicePointer(
-        reinterpret_cast<void**>(&d_result_ptr), result_ptr, 0);
-    if (err != cudaSuccess) {
-      LOG_ERROR << "[HandlePartition] cudaHostGetDevicePointer result failed: "
-                << cudaGetErrorString(err);
-      cuda_pool_.Release(result_ptr, result_bucket);
-      unregister_guard();
-      return;
-    }
-  }
-
   auto start = std::chrono::high_resolution_clock::now();
 
   float alpha = 1.0f;
@@ -480,13 +467,13 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
 
   // sychronize to ensure compute is done before we access result or send
   // response
-  cudaError_t sync_err = cudaDeviceSynchronize();
-  if (sync_err != cudaSuccess) {
-    LOG_ERROR << "[HandlePartition] cudaDeviceSynchronize failed: "
-              << cudaGetErrorString(sync_err);
-    cuda_pool_.Release(result_ptr, result_bucket);
-    return;
-  }
+  CUDA_CHECK(cudaDeviceSynchronize());
+  // if (sync_err != cudaSuccess) {
+  //   LOG_ERROR << "[HandlePartition] cudaDeviceSynchronize failed: "
+  //             << cudaGetErrorString(sync_err);
+  //   cuda_pool_.Release(result_ptr, result_bucket);
+  //   return;
+  // }
 
   if (cublas_status != CUBLAS_STATUS_SUCCESS) {
     LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
