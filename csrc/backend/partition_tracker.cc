@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <sstream>
 
-#include "base/logging.h"
 #include "sched_policy.h"
+#include "utils/logger.h"
 
 namespace morphling {
 namespace backend {
@@ -28,8 +28,8 @@ void PartitionTracker::AddPartition(int64_t device_id,
   partition_map_[partition_key] = info;
   partition_to_device_[partition_key] = device_id;
 
-  LOG_DEBUG << "[PartitionTracker::AddPartition] Added partition " << partition_key
-            << " (oid=" << oid << ") to device " << device_id
+  LOG_DEBUG << "[PartitionTracker::AddPartition] Added partition "
+            << partition_key << " (oid=" << oid << ") to device " << device_id
             << ", partition->dev_id=" << partition->dev_id;
 }
 
@@ -67,8 +67,8 @@ void PartitionTracker::RemovePartitionByKey(const std::string& partition_key) {
   // Find device that has this partition
   auto rev_it = partition_to_device_.find(partition_key);
   if (rev_it == partition_to_device_.end()) {
-    LOG_WARN << "[PartitionTracker::RemovePartitionByKey] Partition " << partition_key
-             << " not found in any device";
+    LOG_WARN << "[PartitionTracker::RemovePartitionByKey] Partition "
+             << partition_key << " not found in any device";
     return;
   }
 
@@ -93,13 +93,14 @@ void PartitionTracker::RemovePartitionByKey(const std::string& partition_key) {
 
     if (part_it != parts.end()) {
       parts.erase(part_it);
-      LOG_DEBUG << "[PartitionTracker::RemovePartitionByKey] Removed partition " << partition_key
-                << " from device " << device_id << " (by key lookup)";
+      LOG_DEBUG << "[PartitionTracker::RemovePartitionByKey] Removed partition "
+                << partition_key << " from device " << device_id
+                << " (by key lookup)";
 
       if (parts.empty()) {
         device_partitions_.erase(it);
-        LOG_DEBUG << "[PartitionTracker::RemovePartitionByKey] Device " << device_id
-                  << " has no more partitions, removed from map";
+        LOG_DEBUG << "[PartitionTracker::RemovePartitionByKey] Device "
+                  << device_id << " has no more partitions, removed from map";
       }
     }
   }

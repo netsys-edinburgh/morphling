@@ -5,7 +5,7 @@
 #include <iomanip>
 #include <sstream>
 
-#include "base/logging.h"
+#include "utils/logger.h"
 
 namespace morphling {
 namespace backend {

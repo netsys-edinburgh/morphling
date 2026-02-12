@@ -1,14 +1,12 @@
 #include "proxy_cli.h"
 
+#include <cublasXt.h>
+#include <cuda_runtime.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <limits>
-
-#include <cuda_runtime.h>
-#include <cublasXt.h>
-
-#include <chrono>
 
 #include "base/my_uuid.h"
 #include "common/generator.h"
@@ -18,7 +16,7 @@
 #include "network/ueventloop_thread_pool.h"
 #include "proto_base.h"
 #include "utils/cuda_utils.h"
-#include "utils/logging.h"
+#include "utils/logger.h"
 
 using namespace std;
 using namespace std::placeholders;
@@ -30,8 +28,6 @@ using namespace uevent;
 #include <set>
 
 #include "base/log_file.h"
-#include "base/logging.h"
-#include "utils/device_log_tag.h"
 
 #define CUBLAS_CHECK(call)                                              \
   do {                                                                  \
@@ -45,8 +41,6 @@ using namespace uevent;
 
 namespace morphling {
 namespace backend {
-
-namespace {
 
 bool LogCudaError(cudaError_t status, const char* context) {
   if (status == cudaSuccess) {
@@ -85,7 +79,6 @@ int CudaPinBuffer(void* ptr, size_t size) {
 }
 
 void CudaUnpinBuffer(void* ptr, size_t size) { cudaHostUnregister(ptr); }
-}  // namespace
 
 int PosixPinBuffer(void* ptr, size_t size) {
   // No-op for CPU memory, but could add mlock here if desired
@@ -116,8 +109,7 @@ bool RunCublasXtGemm(const float* row_ptr, int64_t row_size,
   }
 
   int device_count = 0;
-  if (!LogCudaError(cudaGetDeviceCount(&device_count),
-                    "cudaGetDeviceCount")) {
+  if (!LogCudaError(cudaGetDeviceCount(&device_count), "cudaGetDeviceCount")) {
     return false;
   }
   if (device_count <= 0) {
@@ -148,9 +140,9 @@ bool RunCublasXtGemm(const float* row_ptr, int64_t row_size,
   int ldc = m;
 
   // Compute D = B * A^T in column-major, then interpret output as row-major C.
-  cublasStatus_t status = cublasXtSgemm(
-      handle, CUBLAS_OP_T, CUBLAS_OP_N, m, n, k, &alpha, col_ptr, lda, row_ptr,
-      ldb, &beta, out_ptr, ldc);
+  cublasStatus_t status =
+      cublasXtSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, m, n, k, &alpha, col_ptr,
+                    lda, row_ptr, ldb, &beta, out_ptr, ldc);
   bool ok = LogCublasError(status, "cublasXtSgemm");
   ok = ok && LogCudaError(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
 
@@ -158,12 +150,11 @@ bool RunCublasXtGemm(const float* row_ptr, int64_t row_size,
   return ok;
 }
 
-}  // namespace
-
 /*********************************ProxyCliHandle************************************/
 
-ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
-    : ctx_(ctx), loop_(loop) {
+ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop,
+                               int64_t device_id)
+    : ctx_(ctx), loop_(loop), device_id_(device_id) {
   SRV_STATS->Initialize();
 }
 
@@ -307,8 +298,8 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   LOG_DEBUG << part_key << " Row: [" << row_size << ", " << partition.h_dim
             << "], Col: [" << col_size << ", " << partition.h_dim << "]";
 
-  size_t out_elems = static_cast<size_t>(row_size) *
-                     static_cast<size_t>(col_size);
+  size_t out_elems =
+      static_cast<size_t>(row_size) * static_cast<size_t>(col_size);
   int64_t out_bytes = static_cast<int64_t>(out_elems * sizeof(float));
   float* out_ptr = nullptr;
   if (!LogCudaError(cudaMallocManaged(&out_ptr, out_bytes),
@@ -316,9 +307,8 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
     return;
   }
 
-  bool ok =
-      RunCublasXtGemm(row_ptr, row_size, col_ptr, col_size, partition.h_dim,
-                      out_ptr);
+  bool ok = RunCublasXtGemm(row_ptr, row_size, col_ptr, col_size,
+                            partition.h_dim, out_ptr);
   if (!ok) {
     cudaFree(out_ptr);
     return;
@@ -347,11 +337,8 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   response.mat.clear();
   response.mat.push_back({out_ptr, out_bytes});
 
-  unregister_guard();  // Unregister input buffers before sending response
-
-  cudaFree(out_ptr);
   // Zero-copy send: result buffer release is deferred to send completion
-  ResponseToCaller(conn, response, out_bytes);
+  ResponseToCaller(conn, response, out_ptr);
 }
 
 void ProxyCliHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -378,7 +365,8 @@ ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx, int64_t device_id)
           free(t.data);
 #endif
         }
-      }) {}
+      }) {
+}
 
 void ProxyCliImpl::Initialize(UeventLoop* loop) {
   UsockAddress addr(ctx_.listen_ip, ctx_.listen_port);
@@ -807,9 +795,7 @@ void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
 
   LOG_DEBUG << DEV_TAG_DEV(device_id_) << "memcpy completed successfully";
 
-  cached_tensors_.Put(key,
-                      CachedTensor{cpy_ptr, ld_size, h_dim, size},
-                      size);
+  cached_tensors_.Put(key, CachedTensor{cpy_ptr, ld_size, h_dim, size}, size);
 
   LOG_INFO << "CacheTensor completed successfully";
 }
@@ -897,9 +883,7 @@ void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
       bind(ProxyCliHandle::CreateMyself, ref(context_), device_id, _1),
       bind(&ProxyCliImpl::Initialize, svr_, _1), "Proxy svr main thread");
 }
-
 void ProxyCli::Start() { loop_thread_->StartLoop(); }
-
 void ProxyCli::Send(const torch::Tensor& tensor, std::optional<int64_t> rank) {}
 void ProxyCli::Receive(torch::Tensor& tensor, std::optional<int64_t> rank) {}
 void ProxyCli::AsyncSend(const torch::Tensor& tensor,
