@@ -108,6 +108,7 @@ class ProxyCliHandle : public uevent::LoopHandle {
  private:
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
+  int64_t device_id_;
 };
 
 struct CachedTensor {

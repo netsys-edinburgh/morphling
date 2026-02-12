@@ -50,10 +50,10 @@ struct DeviceLiveness {
   DeviceLiveness()
       : device_id(-1),
         is_connected(false),
+        stats_start_time(std::chrono::steady_clock::now()),
         total_partitions_processed(0),
         total_bytes_sent(0),
         total_bytes_received(0),
-        stats_start_time(std::chrono::steady_clock::now()),
         last_packet_time(std::chrono::steady_clock::now()),
         last_packet_size(0),
         last_packet_throughput(0.0),

@@ -9,7 +9,7 @@
 
 #include "common/generator.h"
 #include "global_api.pb.h"
-#include "utils/logging.h"
+#include "utils/logger.h"
 
 // ============================================================================
 // SerializationBuffer Implementation
@@ -617,31 +617,37 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
   // Write tensor data - optimized with direct memcpy
   auto t_tensor_start = std::chrono::high_resolution_clock::now();
   uint64_t total_tensor_copied = 0;
-  uint8_t* dest_ptr = static_cast<uint8_t*>(buffer->GetBuffer()) + buffer->GetOffset();
-  
+  uint8_t* dest_ptr =
+      static_cast<uint8_t*>(buffer->GetBuffer()) + buffer->GetOffset();
+
   int mat_idx = 0;
   for (const auto& m : mat) {
     const size_t size = std::get<1>(m);
     const void* src = std::get<0>(m);
-    
+
     // Direct memcpy without function call overhead
     if (size > 0 && src != nullptr) {
       auto copy_start = std::chrono::high_resolution_clock::now();
       memcpy(dest_ptr, src, size);
       auto copy_end = std::chrono::high_resolution_clock::now();
-      auto copy_time = std::chrono::duration_cast<std::chrono::microseconds>(copy_end - copy_start).count();
-      double copy_throughput = size > 0 ? (size / static_cast<double>(copy_time) * 1e6 / 1e9) : 0;  // GB/s
-      
-      LOG_DEBUG << "[Memcpy #" << mat_idx << "] size=" << size << " bytes (" 
-                << (size / 1024.0) << " KB), time=" << copy_time << " us, TP=" 
-                << copy_throughput << " GB/s, src=" << src << " -> dest=" << (void*)dest_ptr;
-      
+      auto copy_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                           copy_end - copy_start)
+                           .count();
+      double copy_throughput =
+          size > 0 ? (size / static_cast<double>(copy_time) * 1e6 / 1e9)
+                   : 0;  // GB/s
+
+      LOG_DEBUG << "[Memcpy #" << mat_idx << "] size=" << size << " bytes ("
+                << (size / 1024.0) << " KB), time=" << copy_time
+                << " us, TP=" << copy_throughput << " GB/s, src=" << src
+                << " -> dest=" << (void*)dest_ptr;
+
       dest_ptr += size;
       total_tensor_copied += size;
     }
     mat_idx++;
   }
-  
+
   // Update buffer offset once at the end
   buffer->SeekTo(buffer->GetOffset() + total_tensor_copied);
   auto t_tensor_end = std::chrono::high_resolution_clock::now();
@@ -660,8 +666,11 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
                              .count();
 
   LOG_DEBUG << "[Stage 4.1] Write headers: " << header_time << " us";
-  LOG_DEBUG << "[Stage 4.2] Write proto data: " << proto_copy_time << " us (" << proto_size << " bytes, TP: " << proto_throughput << " GB/s)";
-  LOG_DEBUG << "[Stage 4.3] Write tensor data: " << tensor_copy_time << " us (" << total_tensor_copied << " bytes, TP: " << tensor_throughput << " GB/s)";
+  LOG_DEBUG << "[Stage 4.2] Write proto data: " << proto_copy_time << " us ("
+            << proto_size << " bytes, TP: " << proto_throughput << " GB/s)";
+  LOG_DEBUG << "[Stage 4.3] Write tensor data: " << tensor_copy_time << " us ("
+            << total_tensor_copied << " bytes, TP: " << tensor_throughput
+            << " GB/s)";
   LOG_DEBUG << "[Stage 4] Write data to buffer: " << duration_stage4 << " us";
 
   auto end_total = std::chrono::high_resolution_clock::now();
