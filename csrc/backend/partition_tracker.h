@@ -86,6 +86,15 @@ class PartitionTracker {
   bool HasPendingPartitions(int64_t device_id) const;
   std::vector<PartitionInfoPtr> GetIdlePartitions() const;
 
+  // Statistics for a specific OID on a device (for debugging)
+  struct DeviceOidStats {
+    size_t idle_count = 0;
+    size_t running_count = 0;
+    size_t finished_count = 0;
+    std::vector<std::string> partition_keys;  // For detailed inspection
+  };
+  DeviceOidStats GetDeviceOidStats(int64_t device_id, int64_t oid) const;
+
   // Partition redistribution on device failure
   void RedistributeFailedDevicePartitions(
       int64_t failed_device_id, PartitionSchedulingPolicyPtr policy = nullptr);

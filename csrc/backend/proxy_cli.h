@@ -1,10 +1,5 @@
 #pragma once
 
-#include <cublas_v2.h>
-
-#include <deque>
-#include <mutex>
-
 #include "common/env_cfg.h"
 #include "common/lru.h"
 #include "common/pytorch_defs.h"
@@ -111,14 +106,15 @@ class ProxyCliHandle : public uevent::LoopHandle {
                        const MatrixPartition& partition);
 
  private:
-  // cuBLAS helper methods
-  void InitCublas();
-  void CleanupCublas();
-
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
-  int64_t device_id_;
-  cublasHandle_t cublas_handle_;
+};
+
+struct CachedTensor {
+  void* data = nullptr;
+  int64_t rows = 0;
+  int64_t cols = 0;
+  int64_t bytes = 0;
 };
 
 class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
@@ -167,7 +163,7 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
   std::string uuid_;
   std::vector<MatrixPartition> cached_partitions_;
   std::unordered_set<PtrData> cached_msgs_;
-  FixSizeLRUCache<TensorKey, torch::Tensor> cached_tensors_;
+  FixSizeLRUCache<TensorKey, CachedTensor> cached_tensors_;
 };
 
 typedef std::shared_ptr<ProxyCliImpl> ProxyCliImplPtr;
