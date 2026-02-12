@@ -1,10 +1,12 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <functional>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 
 #include "utils/noncopyable.h"
 

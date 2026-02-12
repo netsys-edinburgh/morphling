@@ -27,8 +27,6 @@ using namespace uevent;
 #include <iostream>
 #include <set>
 
-#include "base/log_file.h"
-
 #define CUBLAS_CHECK(call)                                              \
   do {                                                                  \
     cublasStatus_t err = call;                                          \
@@ -41,37 +39,6 @@ using namespace uevent;
 
 namespace morphling {
 namespace backend {
-
-bool LogCudaError(cudaError_t status, const char* context) {
-  if (status == cudaSuccess) {
-    return true;
-  }
-  LOG_ERROR << context << " failed: " << cudaGetErrorString(status);
-  return false;
-}
-
-bool LogCublasError(cublasStatus_t status, const char* context) {
-  if (status == CUBLAS_STATUS_SUCCESS) {
-    return true;
-  }
-  LOG_ERROR << context << " failed: " << cublasGetStatusString(status);
-  return false;
-}
-std::unique_ptr<base::LogFile> g_client_log_file;
-
-void TeeOutput(const char* msg, int len) {
-  ::fwrite(msg, 1, len, stdout);
-  if (g_client_log_file) {
-    g_client_log_file->append(msg, len);
-  }
-}
-
-void TeeFlush() {
-  ::fflush(stdout);
-  if (g_client_log_file) {
-    g_client_log_file->flush();
-  }
-}
 
 int CudaPinBuffer(void* ptr, size_t size) {
   auto err = cudaHostRegister(ptr, size, cudaHostRegisterMapped);
@@ -396,8 +363,8 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
 
   // Tee logging: write LOG_* output to both console and rotating file
   ::mkdir("./logs", 0755);
-  g_client_log_file = std::make_unique<base::LogFile>(
-      "./logs/client_general", 256 * 1024 * 1024, true, 3);
+  g_tee_log_file = std::make_unique<base::LogFile>("./logs/client_general",
+                                                   256 * 1024 * 1024, true, 3);
   base::Logger::setOutput(TeeOutput);
   base::Logger::setFlush(TeeFlush);
   LOG_INFO << "[ProxyCliImpl::Initialize] Tee logging initialized";

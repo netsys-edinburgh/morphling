@@ -7,9 +7,11 @@
 
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <string>
 
+#include "base/log_file.h"
 #include "base/logging.h"
 #include "common/types_and_defs.h"  // for TensorKey
 
@@ -42,6 +44,7 @@ enum LogLevel { kFatal, kDebug, kInfo, kWarn, kError };
 extern std::once_flag kLoggerFlag;
 extern int kLogLevel;
 extern std::mutex kLogMutex;
+extern std::unique_ptr<base::LogFile> g_tee_log_file;
 
 extern void InitLogger();
 
@@ -60,19 +63,8 @@ extern void InitLogger();
 #define LOG_INFO_IF(cond) \
   if (cond) LOG_INFO
 
-#define CHECK_CUBLAS_ERROR(call)                                    \
-  {                                                                 \
-    cublasStatus_t err = (call);                                    \
-    LOG_FATAL_IF(err != CUBLAS_STATUS_SUCCESS)                      \
-        << "CUBLAS error. message: " << cublasGetStatusString(err); \
-  }
-
-#define CHECK_CUDA_ERROR(call)                                 \
-  {                                                            \
-    cudaError_t err = (call);                                  \
-    LOG_FATAL_IF(err != cudaSuccess)                           \
-        << "CUDA error. message: " << cudaGetErrorString(err); \
-  }
+void TeeOutput(const char* msg, int len);
+void TeeFlush();
 
 // Streaming operators for common types used in logging
 template <typename T>
