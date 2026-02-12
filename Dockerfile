@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/ccache \
 # Build standalone C++ tests (CUDA/cuBLAS)
 RUN --mount=type=cache,target=/ccache \
     if [ "$USE_CCACHE" = "1" ]; then export PATH="/usr/lib/ccache:$PATH"; fi && \
-    cmake -S tests/cpp -B tests/cpp/build -DENABLE_ZEROCOPY_TESTS=ON && \
+    cmake -S tests/cpp -B tests/cpp/build -DENABLE_ZEROCOPY_TESTS=ON -DENABLE_XTGEMM_TESTS=ON && \
     cmake --build tests/cpp/build -j
 
 # 创建必要的目录

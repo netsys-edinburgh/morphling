@@ -66,6 +66,87 @@ if(ENABLE_CUDA_TESTS)
 endif()
 
 # ============================================================================
+# XtGemm Worker tests (require CUDA green contexts, compute capability 9.0+)
+# ============================================================================
+option(ENABLE_XTGEMM_TESTS "Build XtGemm worker tests" OFF)
+if(ENABLE_XTGEMM_TESTS)
+  find_package(CUDAToolkit QUIET)
+  find_package(Threads REQUIRED)
+
+  if(CUDAToolkit_FOUND AND TARGET CUDA::cuda_driver)
+    set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+    # Torch: add cmake prefix path
+    execute_process(
+      COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
+      OUTPUT_VARIABLE TORCH_PREFIX_PATH
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    list(APPEND CMAKE_PREFIX_PATH ${TORCH_PREFIX_PATH})
+    find_package(Torch REQUIRED)
+
+    # Base logging sources
+    file(GLOB BASE_LOGGING_SRC ${PROJECT_ROOT}/csrc/base/*.cc)
+
+    # Source dependencies for XtGemm tests
+    set(XTGEMM_TEST_DEPS
+      ${PROJECT_ROOT}/csrc/scheduler/gpu_worker.cpp
+      ${PROJECT_ROOT}/csrc/memory/caching_allocator.cpp
+      ${PROJECT_ROOT}/csrc/utils/cuda_utils.cpp
+      ${PROJECT_ROOT}/csrc/utils/logger.cpp
+      ${PROJECT_ROOT}/csrc/common/generator.cc
+      ${PROJECT_ROOT}/csrc/timer/virtual_clock.cc
+      ${BASE_LOGGING_SRC}
+    )
+
+    set(XTGEMM_INCLUDE_DIRS
+      ${PROJECT_ROOT}/csrc
+      ${TORCH_INCLUDE_DIRS}
+    )
+
+    set(XTGEMM_COMMON_LIBS
+      CUDA::cublas
+      CUDA::cudart
+      CUDA::cuda_driver
+      ${TORCH_LIBRARIES}
+      uuid
+      Threads::Threads
+    )
+
+    # Correctness tests
+    add_executable(test_xtgemm_worker
+      test_xtgemm_worker.cpp
+      ${XTGEMM_TEST_DEPS}
+    )
+    target_include_directories(test_xtgemm_worker PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+    )
+    target_link_libraries(test_xtgemm_worker PRIVATE
+      GTest::gtest
+      GTest::gtest_main
+      ${XTGEMM_COMMON_LIBS}
+    )
+    add_test(NAME test_xtgemm_worker COMMAND test_xtgemm_worker)
+
+    # Performance benchmarks
+    add_executable(bench_xtgemm_worker
+      bench_xtgemm_worker.cpp
+      ${XTGEMM_TEST_DEPS}
+    )
+    target_include_directories(bench_xtgemm_worker PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+    )
+    target_link_libraries(bench_xtgemm_worker PRIVATE
+      benchmark::benchmark
+      benchmark::benchmark_main
+      ${XTGEMM_COMMON_LIBS}
+    )
+  else()
+    message(WARNING "CUDAToolkit or CUDA driver API not found; XtGemm tests skipped.")
+  endif()
+endif()
+
+# ============================================================================
 # Zerocopy test suite (optional)
 # ============================================================================
 option(ENABLE_ZEROCOPY_TESTS "Build zerocopy tests" OFF)
