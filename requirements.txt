@@ -2,11 +2,10 @@ accelerate
 aio-pika
 clang-format
 cmake
-protobuf==3.13.0
 ninja
-transformers
-pre-commit
 pandas
+pre-commit
+protobuf==3.13.0
 psutil
 redis
-
+transformers

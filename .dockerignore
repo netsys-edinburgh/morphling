@@ -41,6 +41,7 @@ venv.bak/
 .tox/
 .coverage
 htmlcov/
+build/
 
 # 文档
 docs/_build/
@@ -61,6 +62,8 @@ logs/
 *~
 
 # 临时文件
+*build/
+**/build/
 tmp/
 temp/
 *.tmp

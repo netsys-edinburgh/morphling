@@ -32,7 +32,8 @@ class VirtualClock {
   /// Used in step-by-step simulation mode
   void Advance(uint64_t delta_us);
 
-  /// Set the time scale factor (1.0 = real-time, 2.0 = 2x speed, 0.5 = half speed)
+  /// Set the time scale factor (1.0 = real-time, 2.0 = 2x speed, 0.5 = half
+  /// speed)
   void SetTimeScale(double scale);
 
   /// Get current time scale factor
@@ -69,12 +70,12 @@ class VirtualClock {
   mutable std::mutex mutex_;
 
   // Virtual time state
-  uint64_t virtual_time_us_;           // Current virtual time in microseconds
-  uint64_t start_virtual_time_us_;     // Virtual time at initialization
-  uint64_t start_system_time_us_;      // System time at initialization
-  double time_scale_factor_;           // 1.0 = real-time
-  bool is_paused_;                     // Pause flag
-  int64_t pause_virtual_time_us_;      // Virtual time when paused
+  uint64_t virtual_time_us_;        // Current virtual time in microseconds
+  uint64_t start_virtual_time_us_;  // Virtual time at initialization
+  uint64_t start_system_time_us_;   // System time at initialization
+  double time_scale_factor_;        // 1.0 = real-time
+  bool is_paused_;                  // Pause flag
+  int64_t pause_virtual_time_us_;   // Virtual time when paused
 };
 
 }  // namespace base
