@@ -9,17 +9,89 @@
 #include "network/ueventloop_thread.h"
 #include "server_base.h"
 
+// ============================================================================
+// CudaPinnedMemoryPool: Pool of cudaHostAlloc'd buffers for GEMM results
+// ============================================================================
+
+class CudaPinnedMemoryPool {
+ public:
+  static CudaPinnedMemoryPool& Instance() {
+    static CudaPinnedMemoryPool pool;
+    return pool;
+  }
+
+  explicit CudaPinnedMemoryPool(size_t max_buffers_per_bucket = 16)
+      : max_per_bucket_(max_buffers_per_bucket) {}
+
+  ~CudaPinnedMemoryPool() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [bucket_size, free_list] : free_lists_) {
+      for (auto* ptr : free_list) {
+        cudaFreeHost(ptr);
+      }
+    }
+  }
+
+  // Acquire a pinned buffer of at least `size` bytes
+  // Returns {pointer, actual_bucket_size}
+  std::pair<void*, size_t> Acquire(size_t size) {
+    size_t bucket = BucketSize(size);
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& free_list = free_lists_[bucket];
+    if (!free_list.empty()) {
+      void* ptr = free_list.back();
+      free_list.pop_back();
+      return {ptr, bucket};
+    }
+    // Allocate new pinned buffer
+    void* ptr = nullptr;
+    cudaError_t err =
+        cudaHostAlloc(&ptr, bucket, cudaHostAllocDefault | cudaHostAllocMapped);
+    if (err != cudaSuccess || !ptr) {
+      throw std::runtime_error("CudaPinnedMemoryPool: cudaHostAlloc failed");
+    }
+    return {ptr, bucket};
+  }
+
+  // Release a buffer back to the pool
+  void Release(void* ptr, size_t bucket_size) {
+    if (!ptr) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& free_list = free_lists_[bucket_size];
+    if (free_list.size() < max_per_bucket_) {
+      free_list.push_back(ptr);
+    } else {
+      cudaFreeHost(ptr);
+    }
+  }
+
+ private:
+  static size_t BucketSize(size_t size) {
+    static constexpr size_t MIN_BUCKET = 4096;
+    if (size <= MIN_BUCKET) return MIN_BUCKET;
+    size_t bucket = MIN_BUCKET;
+    while (bucket < size) bucket <<= 1;
+    return bucket;
+  }
+
+  size_t max_per_bucket_;
+  std::mutex mutex_;
+  std::unordered_map<size_t, std::deque<void*>> free_lists_;
+};
+
 namespace morphling {
 namespace backend {
 
 class ProxyCliHandle : public uevent::LoopHandle {
  public:
-  ProxyCliHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop);
+  ProxyCliHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop,
+                 int64_t device_id = 0);
+  ~ProxyCliHandle();
 
   static void ThreadInit(uevent::UeventLoop* loop);
-  static uevent::LoopHandle* CreateMyself(ProxyEnvCfg& ctx,
+  static uevent::LoopHandle* CreateMyself(ProxyEnvCfg& ctx, int64_t device_id,
                                           uevent::UeventLoop* loop) {
-    return new ProxyCliHandle(ctx, loop);
+    return new ProxyCliHandle(ctx, loop, device_id);
   }
 
  public:
@@ -28,7 +100,8 @@ class ProxyCliHandle : public uevent::LoopHandle {
   void ConnectionClosedCb(const uevent::ConnectionUeventPtr& conn);
 
   void ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
-                        const MatrixPartition& partition);
+                        const MatrixPartition& partition,
+                        void* deferred_cuda_ptr = nullptr);
   void HandlePartition(const uevent::ConnectionUeventPtr& conn,
                        const MatrixPartition& partition);
 
@@ -46,7 +119,7 @@ struct CachedTensor {
 
 class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
  public:
-  ProxyCliImpl(ProxyEnvCfg& context);
+  ProxyCliImpl(ProxyEnvCfg& context, int64_t device_id);
   void Initialize(uevent::UeventLoop* loop);
 
  private:
@@ -81,6 +154,7 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
 
  private:
   ProxyEnvCfg& ctx_;
+  int64_t device_id_;
   std::shared_ptr<uevent::ConnectorLibevent> connector_;
 
   // sw::redis::Redis* redis_;
@@ -122,7 +196,7 @@ class ProxyCli {
 
  public:
   ProxyCli();
-  void Initialize(const std::string& cfg_file);
+  void Initialize(const std::string& cfg_file, int64_t device_id = 0);
   void Start();
   void Send(const torch::Tensor& tensor,
             std::optional<int64_t> rank = std::nullopt);

@@ -4,6 +4,7 @@
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 from distutils.command.build import build as _build
@@ -22,7 +23,12 @@ try:
     torch_available = True
     # The assert is not needed since Github CI does not use GPU server, install cuda library is sufficient
     # assert torch.cuda.is_available() == True
-    from torch.utils.cpp_extension import CUDA_HOME, _TORCH_PATH, TORCH_LIB_PATH, EXEC_EXT
+    from torch.utils.cpp_extension import (
+        _TORCH_PATH,
+        CUDA_HOME,
+        EXEC_EXT,
+        TORCH_LIB_PATH,
+    )
 
     protoc_path = os.path.join(_TORCH_PATH, "bin", "protoc" + EXEC_EXT)
 
@@ -36,6 +42,7 @@ except Exception:
 
 
 ROOT_DIR = os.path.dirname(__file__)
+
 
 def check_nvcc_installed(cuda_home: str) -> None:
     """Check if nvcc (NVIDIA CUDA compiler) is installed."""
@@ -155,6 +162,14 @@ class cmake_build_ext(build_ext):
             cmake_args.append("-DBUILD_TESTS=ON")
         else:
             cmake_args.append("-DBUILD_TESTS=OFF")
+
+        ccache = shutil.which("ccache")
+        if ccache:
+            cmake_args += [
+                f"-DCMAKE_C_COMPILER_LAUNCHER={ccache}",
+                f"-DCMAKE_CXX_COMPILER_LAUNCHER={ccache}",
+                f"-DCMAKE_CUDA_COMPILER_LAUNCHER={ccache}",
+            ]
 
         subprocess.check_call(
             ["cmake", ext.cmake_lists_dir, *build_tool, *cmake_args],

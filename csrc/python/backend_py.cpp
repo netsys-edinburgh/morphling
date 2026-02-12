@@ -24,7 +24,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   py::class_<ProxyCli>(m, "ProxyCli")
       .def(py::init<>())
-      .def("initialize", &ProxyCli::Initialize)
+      .def("initialize", &ProxyCli::Initialize, py::arg("cfg_file"),
+           py::arg("device_id") = 0)
       .def("start", &ProxyCli::Start);
 
   py::class_<MQTTWorker>(m, "MQTTWorker")

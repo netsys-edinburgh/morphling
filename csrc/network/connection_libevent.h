@@ -28,6 +28,15 @@ class BuffereventWrapper {
   inline int SendData(const void* data, size_t data_len) {
     return evbuffer_add(outbuf_, data, data_len);
   }
+  inline int SendDataZeroCopy(const void* data, size_t data_len,
+                              void (*cleanup_cb)(const void*, size_t, void*),
+                              void* cleanup_arg) {
+    return evbuffer_add_reference(outbuf_, data, data_len, cleanup_cb,
+                                  cleanup_arg);
+  }
+  inline unsigned char* PullupData(size_t len) {
+    return evbuffer_pullup(inbuf_, static_cast<ev_ssize_t>(len));
+  }
   inline int ReceiveData(void* data, size_t data_len) {
     return evbuffer_copyout(inbuf_, data, data_len);
   }
@@ -59,6 +68,10 @@ class ConnectionLibevent : public ConnectionUevent {
   virtual void SetFd();  // connector 确认连接成功后调用
   virtual ssize_t ReadableLength();
   virtual int SendData(const void* data, size_t data_len);
+  virtual int SendDataZeroCopy(const void* data, size_t data_len,
+                               void (*cleanup_cb)(const void*, size_t, void*),
+                               void* cleanup_arg);
+  virtual unsigned char* PullupData(size_t len);
   virtual int ReceiveData(void* data, size_t data_len);
   virtual int DrainData(size_t len);
   virtual int RemoveData(void* data, size_t data_len);

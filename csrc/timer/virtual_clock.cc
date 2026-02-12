@@ -47,7 +47,8 @@ uint64_t VirtualClock::GetCurrentTime() const {
 
   // Calculate elapsed system time
   uint64_t current_system_time_us = GetSystemTimeMicros();
-  uint64_t elapsed_system_time_us = current_system_time_us - start_system_time_us_;
+  uint64_t elapsed_system_time_us =
+      current_system_time_us - start_system_time_us_;
 
   // Apply time scale factor
   uint64_t elapsed_virtual_time_us =
@@ -67,14 +68,16 @@ void VirtualClock::Advance(uint64_t delta_us) {
     // In non-paused mode, we adjust the start times to simulate advancement
     // This keeps the clock "ahead" while maintaining system time relationship
     virtual_time_us_ += delta_us;
-    // Adjust start time to maintain the relationship: vt = svt + (st - sst) * scale
-    // We want: vt_new = vt_old + delta
-    // So: start_virtual_time = vt_new - (st_now - sst) * scale
+    // Adjust start time to maintain the relationship: vt = svt + (st - sst) *
+    // scale We want: vt_new = vt_old + delta So: start_virtual_time = vt_new -
+    // (st_now - sst) * scale
     uint64_t current_system_time_us = GetSystemTimeMicros();
-    uint64_t elapsed_system_time_us = current_system_time_us - start_system_time_us_;
+    uint64_t elapsed_system_time_us =
+        current_system_time_us - start_system_time_us_;
     uint64_t elapsed_virtual_time_us =
         static_cast<uint64_t>(elapsed_system_time_us * time_scale_factor_);
-    start_virtual_time_us_ = virtual_time_us_ + delta_us - elapsed_virtual_time_us;
+    start_virtual_time_us_ =
+        virtual_time_us_ + delta_us - elapsed_virtual_time_us;
   }
 }
 
@@ -89,7 +92,8 @@ void VirtualClock::SetTimeScale(double scale) {
   // To change scale without jumping time:
   // Get current virtual time first
   uint64_t current_system_time_us = GetSystemTimeMicros();
-  uint64_t elapsed_system_time_us = current_system_time_us - start_system_time_us_;
+  uint64_t elapsed_system_time_us =
+      current_system_time_us - start_system_time_us_;
   uint64_t current_virtual_time_us =
       start_virtual_time_us_ +
       static_cast<uint64_t>(elapsed_system_time_us * time_scale_factor_);
@@ -116,7 +120,8 @@ void VirtualClock::Pause() {
 
   // Capture current virtual time
   uint64_t current_system_time_us = GetSystemTimeMicros();
-  uint64_t elapsed_system_time_us = current_system_time_us - start_system_time_us_;
+  uint64_t elapsed_system_time_us =
+      current_system_time_us - start_system_time_us_;
   pause_virtual_time_us_ =
       start_virtual_time_us_ +
       static_cast<uint64_t>(elapsed_system_time_us * time_scale_factor_);

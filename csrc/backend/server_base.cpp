@@ -1,10 +1,11 @@
 #include "server_base.h"
 
 #include <arpa/inet.h>
+#include <sys/mman.h>
+
 #include <cerrno>
 #include <chrono>
 #include <cstring>
-#include <sys/mman.h>
 
 #include "common/generator.h"
 #include "global_api.pb.h"
@@ -15,63 +16,97 @@
 // ============================================================================
 
 SerializationBuffer::SerializationBuffer()
-    : buffer_(nullptr), size_(0), offset_(0), owns_buffer_(false) {}
+    : buffer_(nullptr),
+      size_(0),
+      offset_(0),
+      owns_buffer_(false),
+      pool_bucket_size_(0) {}
 
 SerializationBuffer::SerializationBuffer(const void* data, size_t size,
                                          bool take_ownership)
     : buffer_(const_cast<uint8_t*>(static_cast<const uint8_t*>(data))),
       size_(size),
       offset_(0),
-      owns_buffer_(take_ownership) {}
+      owns_buffer_(take_ownership),
+      pool_bucket_size_(0) {}
 
-SerializationBuffer::~SerializationBuffer() {
+SerializationBuffer::SerializationBuffer(SerializationBuffer&& other) noexcept
+    : buffer_(other.buffer_),
+      size_(other.size_),
+      offset_(other.offset_),
+      owns_buffer_(other.owns_buffer_),
+      pool_bucket_size_(other.pool_bucket_size_),
+      pool_(other.pool_) {
+  other.buffer_ = nullptr;
+  other.size_ = 0;
+  other.offset_ = 0;
+  other.owns_buffer_ = false;
+  other.pool_bucket_size_ = 0;
+  other.pool_ = nullptr;
+}
+
+SerializationBuffer& SerializationBuffer::operator=(
+    SerializationBuffer&& other) noexcept {
+  if (this != &other) {
+    FreeBuffer();
+    buffer_ = other.buffer_;
+    size_ = other.size_;
+    offset_ = other.offset_;
+    owns_buffer_ = other.owns_buffer_;
+    pool_bucket_size_ = other.pool_bucket_size_;
+    pool_ = other.pool_;
+    other.buffer_ = nullptr;
+    other.size_ = 0;
+    other.offset_ = 0;
+    other.owns_buffer_ = false;
+    other.pool_bucket_size_ = 0;
+    other.pool_ = nullptr;
+  }
+  return *this;
+}
+
+SerializationBuffer::~SerializationBuffer() { FreeBuffer(); }
+
+void SerializationBuffer::FreeBuffer() {
   if (owns_buffer_ && buffer_) {
-    free(buffer_);
+    if (pool_bucket_size_ > 0) {
+      // Return to injected pool or singleton
+      if (pool_) {
+        pool_->Release(buffer_, pool_bucket_size_);
+      } else {
+        AlignedBufferPool::instance().Release(buffer_, pool_bucket_size_);
+      }
+    } else {
+      free(buffer_);
+    }
+    buffer_ = nullptr;
+    owns_buffer_ = false;
+    pool_bucket_size_ = 0;
   }
 }
 
 void SerializationBuffer::Allocate(size_t size) {
-  if (owns_buffer_ && buffer_) {
-    //Unpin memory before freeing
-    if(buffer_!=nullptr){
-      int ret = munlock(buffer_, size_);
-      if (ret != 0) {
-        LOG_WARN << "munlock failed with error: " << ret;
-      }
-    }
-      
-    free(buffer_);
-  }
+  FreeBuffer();
 
-  // Allocate page-aligned memory using posix_memalign
-  // Align to 4KB (4096 bytes) for optimal TLB performance
-  const size_t PAGE_SIZE = 4096;
-  int ret = posix_memalign((void**)&buffer_, PAGE_SIZE, size);
-  
-  if (ret != 0) {
-    LOG_ERROR << "posix_memalign failed with error: " << ret;
-    buffer_ = nullptr;
-    size_ = 0;
-    offset_ = 0;
-    owns_buffer_ = false;
-    throw std::runtime_error("Failed to allocate page-aligned memory");
-  }
-
-  //Pin memory to prevent swapping
-  ret = mlock(buffer_, size);
-  if (ret != 0) {
-    LOG_WARN << "mlock failed: " << strerror(errno) << " (errno=" << errno << ")";
-    // Proceeding even if mlock fails
-  }else {
-    LOG_DEBUG << "Memory locked successfully, size: " << size<< " bytes";
-  }
-
+  // Acquire from pool (page-aligned, mlocked)
+  auto [ptr, bucket] = AlignedBufferPool::instance().Acquire(size);
+  buffer_ = ptr;
   size_ = size;
   offset_ = 0;
   owns_buffer_ = true;
-  
-  LOG_DEBUG << "Allocated page-aligned buffer: size=" << size 
-            << ", alignment=4096 bytes";
+  pool_bucket_size_ = bucket;
+}
+
+void SerializationBuffer::Allocate(size_t size, AlignedBufferPool& pool) {
+  FreeBuffer();
+
+  auto [ptr, bucket] = pool.Acquire(size);
+  buffer_ = ptr;
+  size_ = size;
+  offset_ = 0;
+  owns_buffer_ = true;
+  pool_bucket_size_ = bucket;
+  pool_ = &pool;
 }
 
 void SerializationBuffer::WriteUInt32(uint32_t value, bool network_order) {
@@ -98,7 +133,7 @@ void SerializationBuffer::WriteBytes(const void* data, size_t size) {
     // For large buffers, memcpy should use SIMD instructions
     // Compiler will optimize this based on -O3 and -march=native flags
     memcpy(buffer_ + offset_, data, size);
-    
+
     // Optional: Force memory to be loaded into cache for large copies
     // This helps with subsequent operations on the copied data
     // if (size > 1024 * 1024) {  // > 1 MB
@@ -484,10 +519,10 @@ void MatrixPartition::ReadMatricesData(SerializationBuffer& buffer,
 
 SerializationBufferPtr MatrixPartition::SerializeProto() const {
   auto start_total = std::chrono::high_resolution_clock::now();
-  
+
   // ========== Stage 1: Create and populate protobuf message ==========
   auto start_stage1 = std::chrono::high_resolution_clock::now();
-  
+
   morphling::UMessage umsg;
   CreateMessageHeader(umsg, morphling::global_api::COMPUTE_GEMM_DATA);
 
@@ -510,14 +545,17 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
     mat_payload->set_offset(0);
     mat_payload->set_size(std::get<1>(m));
   }
-  
+
   auto end_stage1 = std::chrono::high_resolution_clock::now();
-  auto duration_stage1 = std::chrono::duration_cast<std::chrono::microseconds>(end_stage1 - start_stage1).count();
-  LOG_DEBUG << "[Stage 1] Create protobuf message: " << duration_stage1 << " us";
+  auto duration_stage1 = std::chrono::duration_cast<std::chrono::microseconds>(
+                             end_stage1 - start_stage1)
+                             .count();
+  LOG_DEBUG << "[Stage 1] Create protobuf message: " << duration_stage1
+            << " us";
 
   // ========== Stage 2: Serialize protobuf and calculate sizes ==========
   auto start_stage2 = std::chrono::high_resolution_clock::now();
-  
+
   std::string proto_str = umsg.SerializeAsString();
   uint32_t proto_size = proto_str.size();
 
@@ -529,38 +567,52 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
   uint32_t payload_size =
       sizeof(proto_size) + sizeof(tensor_size) + proto_size + tensor_size;
   uint64_t total_size = sizeof(payload_size) + payload_size;
-  
+
   auto end_stage2 = std::chrono::high_resolution_clock::now();
-  auto duration_stage2 = std::chrono::duration_cast<std::chrono::microseconds>(end_stage2 - start_stage2).count();
-  LOG_DEBUG << "[Stage 2] Serialize protobuf and calculate sizes: " << duration_stage2 << " us (proto_size=" << proto_size << ", tensor_size=" << tensor_size << ")";
+  auto duration_stage2 = std::chrono::duration_cast<std::chrono::microseconds>(
+                             end_stage2 - start_stage2)
+                             .count();
+  LOG_DEBUG << "[Stage 2] Serialize protobuf and calculate sizes: "
+            << duration_stage2 << " us (proto_size=" << proto_size
+            << ", tensor_size=" << tensor_size << ")";
 
   // ========== Stage 3: Allocate buffer ==========
   auto start_stage3 = std::chrono::high_resolution_clock::now();
-  
+
   SerializationBufferPtr buffer = std::make_shared<SerializationBuffer>();
   buffer->Allocate(total_size);
-  
+
   auto end_stage3 = std::chrono::high_resolution_clock::now();
-  auto duration_stage3 = std::chrono::duration_cast<std::chrono::microseconds>(end_stage3 - start_stage3).count();
-  LOG_DEBUG << "[Stage 3] Allocate buffer: " << duration_stage3 << " us (total_size=" << total_size << ")";
+  auto duration_stage3 = std::chrono::duration_cast<std::chrono::microseconds>(
+                             end_stage3 - start_stage3)
+                             .count();
+  LOG_DEBUG << "[Stage 3] Allocate buffer: " << duration_stage3
+            << " us (total_size=" << total_size << ")";
 
   // ========== Stage 4: Write data to buffer ==========
   auto start_stage4 = std::chrono::high_resolution_clock::now();
-  
+
   // Write headers
   auto t_header_start = std::chrono::high_resolution_clock::now();
   buffer->WriteUInt32(payload_size, true);  // network byte order
   buffer->WriteUInt32(proto_size, false);
   buffer->WriteUInt64(tensor_size);
   auto t_header_end = std::chrono::high_resolution_clock::now();
-  auto header_time = std::chrono::duration_cast<std::chrono::microseconds>(t_header_end - t_header_start).count();
-  
+  auto header_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                         t_header_end - t_header_start)
+                         .count();
+
   // Write proto data
   auto t_proto_start = std::chrono::high_resolution_clock::now();
   buffer->WriteBytes(proto_str.data(), proto_size);
   auto t_proto_end = std::chrono::high_resolution_clock::now();
-  auto proto_copy_time = std::chrono::duration_cast<std::chrono::microseconds>(t_proto_end - t_proto_start).count();
-  double proto_throughput = proto_size > 0 ? (proto_size / static_cast<double>(proto_copy_time) * 1e6 / 1e9) : 0;  // GB/s
+  auto proto_copy_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                             t_proto_end - t_proto_start)
+                             .count();
+  double proto_throughput =
+      proto_size > 0
+          ? (proto_size / static_cast<double>(proto_copy_time) * 1e6 / 1e9)
+          : 0;  // GB/s
 
   // Write tensor data - optimized with direct memcpy
   auto t_tensor_start = std::chrono::high_resolution_clock::now();
@@ -593,21 +645,38 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
   // Update buffer offset once at the end
   buffer->SeekTo(buffer->GetOffset() + total_tensor_copied);
   auto t_tensor_end = std::chrono::high_resolution_clock::now();
-  auto tensor_copy_time = std::chrono::duration_cast<std::chrono::microseconds>(t_tensor_end - t_tensor_start).count();
-  double tensor_throughput = total_tensor_copied > 0 ? (total_tensor_copied / static_cast<double>(tensor_copy_time) * 1e6 / 1e9) : 0;  // GB/s
-  
+  auto tensor_copy_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                              t_tensor_end - t_tensor_start)
+                              .count();
+  double tensor_throughput =
+      total_tensor_copied > 0
+          ? (total_tensor_copied / static_cast<double>(tensor_copy_time) * 1e6 /
+             1e9)
+          : 0;  // GB/s
+
   auto end_stage4 = std::chrono::high_resolution_clock::now();
-  auto duration_stage4 = std::chrono::duration_cast<std::chrono::microseconds>(end_stage4 - start_stage4).count();
-  
+  auto duration_stage4 = std::chrono::duration_cast<std::chrono::microseconds>(
+                             end_stage4 - start_stage4)
+                             .count();
+
   LOG_DEBUG << "[Stage 4.1] Write headers: " << header_time << " us";
   LOG_DEBUG << "[Stage 4.2] Write proto data: " << proto_copy_time << " us (" << proto_size << " bytes, TP: " << proto_throughput << " GB/s)";
   LOG_DEBUG << "[Stage 4.3] Write tensor data: " << tensor_copy_time << " us (" << total_tensor_copied << " bytes, TP: " << tensor_throughput << " GB/s)";
   LOG_DEBUG << "[Stage 4] Write data to buffer: " << duration_stage4 << " us";
-  
+
   auto end_total = std::chrono::high_resolution_clock::now();
-  auto duration_total = std::chrono::duration_cast<std::chrono::microseconds>(end_total - start_total).count();
-  double total_throughput = total_size > 0 ? (total_size / static_cast<double>(duration_total) * 1e6 / 1e9) : 0;  // GB/s
-  LOG_DEBUG << "[SerializeProto] Total time: " << duration_total << " us (Stage1=" << duration_stage1 << ", Stage2=" << duration_stage2 << ", Stage3=" << duration_stage3 << ", Stage4=" << duration_stage4 << ") | Overall TP: " << total_throughput << " GB/s";
+  auto duration_total = std::chrono::duration_cast<std::chrono::microseconds>(
+                            end_total - start_total)
+                            .count();
+  double total_throughput =
+      total_size > 0
+          ? (total_size / static_cast<double>(duration_total) * 1e6 / 1e9)
+          : 0;  // GB/s
+  LOG_DEBUG << "[SerializeProto] Total time: " << duration_total
+            << " us (Stage1=" << duration_stage1
+            << ", Stage2=" << duration_stage2 << ", Stage3=" << duration_stage3
+            << ", Stage4=" << duration_stage4
+            << ") | Overall TP: " << total_throughput << " GB/s";
 
   return buffer;
 }
@@ -920,4 +989,132 @@ std::string MatrixPartition::DebugString() const {
     oss << ", m_size: " << std::get<1>(mat_data);
   }
   return oss.str();
+}
+
+// ============================================================================
+// ScatterGatherBuffer Implementation
+// ============================================================================
+
+ScatterGatherBuffer::~ScatterGatherBuffer() {
+  for (auto& [ptr, bucket] : owned_pool_entries_) {
+    pool_->Release(ptr, bucket);
+  }
+}
+
+ScatterGatherBuffer::ScatterGatherBuffer(ScatterGatherBuffer&& other) noexcept
+    : segments_(std::move(other.segments_)),
+      owned_pool_entries_(std::move(other.owned_pool_entries_)),
+      pool_(other.pool_) {
+  other.pool_ = &AlignedBufferPool::instance();
+}
+
+ScatterGatherBuffer& ScatterGatherBuffer::operator=(
+    ScatterGatherBuffer&& other) noexcept {
+  if (this != &other) {
+    // Free current owned entries
+    for (auto& [ptr, bucket] : owned_pool_entries_) {
+      pool_->Release(ptr, bucket);
+    }
+    segments_ = std::move(other.segments_);
+    owned_pool_entries_ = std::move(other.owned_pool_entries_);
+    pool_ = other.pool_;
+    other.pool_ = &AlignedBufferPool::instance();
+  }
+  return *this;
+}
+
+void ScatterGatherBuffer::AddOwnedSegment(uint8_t* data, size_t size,
+                                          size_t pool_bucket) {
+  segments_.emplace_back(data, size, true);
+  owned_pool_entries_.emplace_back(data, pool_bucket);
+}
+
+void ScatterGatherBuffer::AddReferenceSegment(const void* data, size_t size) {
+  if (data && size > 0) {
+    segments_.emplace_back(data, size, false);
+  }
+}
+
+size_t ScatterGatherBuffer::GetTotalSize() const {
+  size_t total = 0;
+  for (const auto& seg : segments_) {
+    total += seg.size;
+  }
+  return total;
+}
+
+// ============================================================================
+// MatrixPartition::SerializeZeroCopy Implementation
+// ============================================================================
+
+ScatterGatherBufferPtr MatrixPartition::SerializeZeroCopy() const {
+  // Create protobuf message (same as SerializeProto)
+  morphling::UMessage umsg;
+  CreateMessageHeader(umsg, morphling::global_api::COMPUTE_GEMM_DATA);
+
+  auto* body = umsg.mutable_body();
+  auto* gemm_data =
+      body->MutableExtension(morphling::global_api::compute_gemm_data);
+
+  gemm_data->set_version(version);
+  gemm_data->set_row(row);
+  gemm_data->set_col(col);
+  gemm_data->set_pivot(pivot);
+  gemm_data->set_h_dim(h_dim);
+  gemm_data->set_dev_id(dev_id);
+  gemm_data->set_oid(oid);
+  gemm_data->set_gemm_id(gemm_id);
+  gemm_data->set_timestamp(timestamp);
+
+  for (const auto& m : mat) {
+    auto* mat_payload = gemm_data->add_matrices();
+    mat_payload->set_offset(0);
+    mat_payload->set_size(std::get<1>(m));
+  }
+
+  std::string proto_str = umsg.SerializeAsString();
+  uint32_t proto_size = proto_str.size();
+
+  uint64_t tensor_size = 0;
+  for (const auto& m : mat) {
+    tensor_size += std::get<1>(m);
+  }
+
+  uint32_t payload_size =
+      sizeof(proto_size) + sizeof(tensor_size) + proto_size + tensor_size;
+
+  // Header = 4 (payload_size) + 4 (proto_size) + 8 (tensor_size) + proto_data
+  size_t header_size = sizeof(payload_size) + sizeof(proto_size) +
+                       sizeof(tensor_size) + proto_size;
+
+  // Allocate header buffer from pool
+  auto [header_ptr, header_bucket] =
+      AlignedBufferPool::instance().Acquire(header_size);
+
+  // Write header into owned buffer
+  size_t off = 0;
+  uint32_t payload_size_n = htonl(payload_size);
+  memcpy(header_ptr + off, &payload_size_n, sizeof(uint32_t));
+  off += sizeof(uint32_t);
+  memcpy(header_ptr + off, &proto_size, sizeof(uint32_t));
+  off += sizeof(uint32_t);
+  memcpy(header_ptr + off, &tensor_size, sizeof(uint64_t));
+  off += sizeof(uint64_t);
+  memcpy(header_ptr + off, proto_str.data(), proto_size);
+
+  auto sg = std::make_shared<ScatterGatherBuffer>();
+
+  // Segment 1: header + proto (owned, from pool)
+  sg->AddOwnedSegment(header_ptr, header_size, header_bucket);
+
+  // Segments 2+: tensor data (referenced in-place, NOT copied)
+  for (const auto& m : mat) {
+    auto* ptr = std::get<0>(m);
+    auto sz = std::get<1>(m);
+    if (ptr && sz > 0) {
+      sg->AddReferenceSegment(ptr, sz);
+    }
+  }
+
+  return sg;
 }

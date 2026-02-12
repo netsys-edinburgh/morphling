@@ -1,22 +1,20 @@
-#include <cuda_runtime_api.h>
 #include <cublas_v2.h>
+#include <cuda_runtime_api.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
-#include <cmath>
 
 // ============================================================================
 // Simple Test: CUDA Host Register for PyTorch Tensors
-// 
+//
 // Verify: Can we use cudaHostRegister pointers for torch tensor creation
 //         and matrix multiplication?
 // ============================================================================
 
-void PrintLine() {
-  std::cout << std::string(80, '=') << "\n";
-}
+void PrintLine() { std::cout << std::string(80, '=') << "\n"; }
 
 void PrintSection(const std::string& title) {
   std::cout << "\n";
@@ -36,7 +34,7 @@ bool CompareMatrices(float* a, float* b, int64_t size, float tolerance = 1e-4) {
     if (abs_diff > tolerance) {
       diff_count++;
       max_diff = std::max(max_diff, abs_diff);
-      
+
       // Relative difference
       float max_val = std::max(std::abs(a[i]), std::abs(b[i]));
       if (max_val > 1e-6f) {
@@ -48,8 +46,8 @@ bool CompareMatrices(float* a, float* b, int64_t size, float tolerance = 1e-4) {
 
   std::cout << "  Differences found: " << diff_count << " / " << size << "\n";
   if (diff_count > 0) {
-    std::cout << "  Max absolute difference: " << std::scientific << std::setprecision(6) 
-              << max_diff << "\n";
+    std::cout << "  Max absolute difference: " << std::scientific
+              << std::setprecision(6) << max_diff << "\n";
     std::cout << "  Max relative difference: " << max_rel_diff << "\n";
   }
 
@@ -57,8 +55,8 @@ bool CompareMatrices(float* a, float* b, int64_t size, float tolerance = 1e-4) {
 }
 
 float* TestMatrixMultiplication(const std::string& name, float* host_ptr_a,
-                                  float* host_ptr_b, int m, int k, int n,
-                                  bool use_host_ptr = false) {
+                                float* host_ptr_b, int m, int k, int n,
+                                bool use_host_ptr = false) {
   std::cout << "\n[" << name << "] Testing matrix multiplication";
   if (use_host_ptr) {
     std::cout << " (using host ptr directly)";
@@ -86,7 +84,7 @@ float* TestMatrixMultiplication(const std::string& name, float* host_ptr_a,
     std::cout << "  Allocating GPU memory and copying host data...\n";
     cudaMalloc((void**)&gpu_a, size_a);
     cudaMalloc((void**)&gpu_b, size_b);
-    
+
     cudaMemcpy(gpu_a, host_ptr_a, size_a, cudaMemcpyHostToDevice);
     cudaMemcpy(gpu_b, host_ptr_b, size_b, cudaMemcpyHostToDevice);
     cudaDeviceSynchronize();
@@ -104,15 +102,15 @@ float* TestMatrixMultiplication(const std::string& name, float* host_ptr_a,
 
   // Warmup: C = A * B
   float alpha = 1.0f, beta = 0.0f;
-  cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, m, k,
-              &alpha, gpu_b, n, gpu_a, k, &beta, gpu_c, n);
+  cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, m, k, &alpha, gpu_b, n,
+              gpu_a, k, &beta, gpu_c, n);
   cudaDeviceSynchronize();
 
   // Benchmark (5 iterations)
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < 5; i++) {
-    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, m, k,
-                &alpha, gpu_b, n, gpu_a, k, &beta, gpu_c, n);
+    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, m, k, &alpha, gpu_b, n,
+                gpu_a, k, &beta, gpu_c, n);
   }
   cudaDeviceSynchronize();
   auto end = std::chrono::high_resolution_clock::now();
@@ -136,7 +134,7 @@ float* TestMatrixMultiplication(const std::string& name, float* host_ptr_a,
 
   // Cleanup GPU
   cublasDestroy(handle);
-  
+
   // Only free GPU memory if we allocated it (not for pinned host ptr)
   if (!use_host_ptr) {
     cudaFree(gpu_a);
@@ -147,7 +145,8 @@ float* TestMatrixMultiplication(const std::string& name, float* host_ptr_a,
   return gpu_result;
 }
 
-// void TestMemoryTransfer(const std::string& name, float* host_ptr, int64_t size_bytes) {
+// void TestMemoryTransfer(const std::string& name, float* host_ptr, int64_t
+// size_bytes) {
 //   std::cout << "\n[" << name << "] Testing memory transfer...\n";
 
 //   float* device_ptr;
@@ -169,7 +168,8 @@ float* TestMatrixMultiplication(const std::string& name, float* host_ptr_a,
 //   double h2d_tp_gbs = (size_bytes / 1e9) / (h2d_time_ms / 1000.0);
 
 //   std::cout << "  H2D Time: " << std::fixed << std::setprecision(3)
-//             << h2d_time_ms << " ms, TP: " << std::setprecision(2) << h2d_tp_gbs
+//             << h2d_time_ms << " ms, TP: " << std::setprecision(2) <<
+//             h2d_tp_gbs
 //             << " GB/s\n";
 
 //   // Benchmark D2H
@@ -242,8 +242,10 @@ int main() {
 
   // Register as pinned memory
   std::cout << "Registering memory with cudaHostRegister...\n";
-  cudaError_t err1 = cudaHostRegister(host_a, size_bytes, cudaHostRegisterDefault);
-  cudaError_t err2 = cudaHostRegister(host_b, size_bytes, cudaHostRegisterDefault);
+  cudaError_t err1 =
+      cudaHostRegister(host_a, size_bytes, cudaHostRegisterDefault);
+  cudaError_t err2 =
+      cudaHostRegister(host_b, size_bytes, cudaHostRegisterDefault);
 
   if (err1 != cudaSuccess || err2 != cudaSuccess) {
     std::cerr << "cudaHostRegister failed: " << cudaGetErrorString(err1)
@@ -256,18 +258,21 @@ int main() {
   // Test 1: Direct host ptr access
   PrintSection("Test 1: Direct Host Ptr Access (via cudaHostGetDevicePointer)");
 
-  float* direct_host_ptr_result = TestMatrixMultiplication("Direct Host Ptr", host_a, host_b, m, k, n, true);
+  float* direct_host_ptr_result = TestMatrixMultiplication(
+      "Direct Host Ptr", host_a, host_b, m, k, n, true);
 
   // Test 2: cudaMemcpy with GPU ptr
   PrintSection("Test 2: cudaMemcpy + GPU Ptr Access");
 
-  float* gpu_ptr_result = TestMatrixMultiplication("GPU Ptr (after cudaMemcpy)", host_a, host_b, m, k, n, false);
+  float* gpu_ptr_result = TestMatrixMultiplication(
+      "GPU Ptr (after cudaMemcpy)", host_a, host_b, m, k, n, false);
 
   // Compare the two GPU results
   PrintSection("Comparing GPU Results");
   std::cout << "Verifying that both access methods produce identical results\n";
-  std::cout << "============================================================\n\n";
-  
+  std::cout
+      << "============================================================\n\n";
+
   std::cout << "Test Design:\n";
   std::cout << "  - Both tests use the SAME registered host memory\n";
   std::cout << "  - Test 1: cudaHostGetDevicePointer → direct host ptr GEMM\n";
@@ -275,8 +280,9 @@ int main() {
   std::cout << "  - Expected: Results should be IDENTICAL\n\n";
 
   int64_t result_size = (int64_t)m * n;
-  bool results_match = CompareMatrices(direct_host_ptr_result, gpu_ptr_result, result_size);
-  
+  bool results_match =
+      CompareMatrices(direct_host_ptr_result, gpu_ptr_result, result_size);
+
   std::cout << "Verification Result:\n";
   if (results_match) {
     std::cout << "✓ PASS! Results are IDENTICAL\n";
@@ -312,7 +318,8 @@ int main() {
   std::cout << "✓ cudaHostRegister pinned memory successfully\n";
   std::cout << "✓ cudaHostGetDevicePointer retrieves valid device pointer\n";
   std::cout << "✓ Both direct host ptr and GPU ptr access methods work\n";
-  std::cout << "\nConclusion: cudaHostRegister enables efficient GPU access to host data\n";
+  std::cout << "\nConclusion: cudaHostRegister enables efficient GPU access to "
+               "host data\n";
 
   return 0;
 }
