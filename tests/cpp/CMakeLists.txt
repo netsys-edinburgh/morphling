@@ -141,6 +141,20 @@ if(ENABLE_XTGEMM_TESTS)
       benchmark::benchmark_main
       ${XTGEMM_COMMON_LIBS}
     )
+
+    # Green Context benchmarks
+    add_executable(bench_green_ctx
+      bench_green_ctx.cpp
+      ${XTGEMM_TEST_DEPS}
+    )
+    target_include_directories(bench_green_ctx PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+    )
+    target_link_libraries(bench_green_ctx PRIVATE
+      benchmark::benchmark
+      benchmark::benchmark_main
+      ${XTGEMM_COMMON_LIBS}
+    )
   else()
     message(WARNING "CUDAToolkit or CUDA driver API not found; XtGemm tests skipped.")
   endif()

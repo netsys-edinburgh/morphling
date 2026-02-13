@@ -83,6 +83,12 @@ void ProxySvrHandle::ThreadInit(uevent::UeventLoop* loop) {
   PinThreadToNextAvailableCore();
 }
 
+// Helper for zero-copy send cleanup of SerializationBuffer (registration msgs)
+static void SerializationBufferSendCleanup(const void* /*data*/, size_t /*len*/,
+                                           void* arg) {
+  delete static_cast<SerializationBufferPtr*>(arg);
+}
+
 void ProxySvrHandle::RequestWriteCb(const uevent::ConnectionUeventPtr& conn) {
   size_t readable = conn->ReadableLength();
   LOG_DEBUG << "RequestWriteCb readable: " << readable;
@@ -99,8 +105,10 @@ void ProxySvrHandle::SendRegisterRequest(const ConnectionUeventPtr& conn) {
             << BinaryToHex(static_cast<const uint8_t*>(buffer->GetBuffer()),
                            buffer->GetSize());
 
-  // Send the serialized request
-  int ret = conn->SendData(buffer->GetBuffer(), buffer->GetSize());
+  // Zero-copy send: buffer ref-count prevents deallocation until libevent done
+  auto* ref = new SerializationBufferPtr(buffer);
+  int ret = conn->SendDataZeroCopy(buffer->GetBuffer(), buffer->GetSize(),
+                                   SerializationBufferSendCleanup, ref);
   if (ret < 0) {
     LOG_ERROR << "Failed to send registration request";
     conn->ForceClose();

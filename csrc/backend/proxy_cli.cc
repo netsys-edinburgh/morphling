@@ -157,6 +157,12 @@ static void ResponseSendCleanup(const void* /*data*/, size_t /*len*/,
   delete static_cast<std::shared_ptr<ResponseSendContext>*>(arg);
 }
 
+// Helper for zero-copy send cleanup of SerializationBuffer (registration msgs)
+static void SerializationBufferSendCleanup(const void* /*data*/,
+                                           size_t /*len*/, void* arg) {
+  delete static_cast<SerializationBufferPtr*>(arg);
+}
+
 void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
                                       const MatrixPartition& partition,
                                       void* deferred_cuda_ptr) {
@@ -368,50 +374,6 @@ void ProxyCliImpl::Initialize(UeventLoop* loop) {
   base::Logger::setOutput(TeeOutput);
   base::Logger::setFlush(TeeFlush);
   LOG_INFO << "[ProxyCliImpl::Initialize] Tee logging initialized";
-
-#if 0
-  // CUDA context warmup and do a small GEMM (skip if no CUDA available)
-  int device_count = 0;
-  if (cudaGetDeviceCount(&device_count) == cudaSuccess && device_count > 0) {
-    int64_t warmup_rows = 128;
-    int64_t warmup_cols = 128;
-    int64_t warmup_k = 128;
-    size_t a_bytes =
-        static_cast<size_t>(warmup_rows * warmup_k) * sizeof(float);
-    size_t b_bytes =
-        static_cast<size_t>(warmup_cols * warmup_k) * sizeof(float);
-    size_t c_bytes =
-        static_cast<size_t>(warmup_rows * warmup_cols) * sizeof(float);
-    float* warmup_a = nullptr;
-    float* warmup_b = nullptr;
-    float* warmup_c = nullptr;
-    if (LogCudaError(cudaMallocManaged(&warmup_a, a_bytes),
-                     "cudaMallocManaged(warmup_a)") &&
-        LogCudaError(cudaMallocManaged(&warmup_b, b_bytes),
-                     "cudaMallocManaged(warmup_b)") &&
-        LogCudaError(cudaMallocManaged(&warmup_c, c_bytes),
-                     "cudaMallocManaged(warmup_c)")) {
-      std::fill_n(warmup_a, warmup_rows * warmup_k, 1.0f);
-      std::fill_n(warmup_b, warmup_cols * warmup_k, 1.0f);
-      RunCublasXtGemm(warmup_a, warmup_rows, warmup_b, warmup_cols, warmup_k,
-                      warmup_c);
-      LOG_DEBUG << "CUDA warmup completed";
-    } else {
-      LOG_DEBUG << "CUDA warmup skipped due to allocation failure";
-    }
-    if (warmup_a) {
-      cudaFree(warmup_a);
-    }
-    if (warmup_b) {
-      cudaFree(warmup_b);
-    }
-    if (warmup_c) {
-      cudaFree(warmup_c);
-    }
-  } else {
-    LOG_DEBUG << "CUDA not available, skipping CUDA warmup";
-  }
-#endif
 }
 
 void ProxyCliImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -522,7 +484,10 @@ void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
   profile.dl_lat = 1000;                        // 1ms
 
   auto buffer = profile.Serialize();
-  int ret = conn->SendData(buffer->GetBuffer(), buffer->GetSize());
+  // Zero-copy send: buffer ref-count prevents deallocation until libevent done
+  auto* ref = new SerializationBufferPtr(buffer);
+  int ret = conn->SendDataZeroCopy(buffer->GetBuffer(), buffer->GetSize(),
+                                    SerializationBufferSendCleanup, ref);
   if (ret < 0) {
     LOG_ERROR << "Failed to send device profile data";
     conn->ForceClose();
