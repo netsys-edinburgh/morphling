@@ -1,26 +1,20 @@
 #pragma once
 
 #include <cublas_v2.h>
+#include <cublasXt.h>
 #include <cuda.h>  // CUDA driver API (green contexts)
 #include <cuda_runtime_api.h>
 
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
+#include <vector>
 
 #include "intercept/interceptor.h"
-#include "memory/caching_allocator.h"
 #include "scheduling_policy.h"
 #include "utils/cuda_utils.h"
 #include "worker_base.h"
-
-#define CUDA_MEMCPY_LOOP(trans, dst, src, ld, m, k, mode)                    \
-  for (int col = 0; col < ((trans == 'N' || trans == 'n') ? k : m); col++) { \
-    size_t num_elements = ((trans == 'N' || trans == 'n') ? m : k);          \
-    size_t offset = col * ld;                                                \
-    CHECK_CUDA_ERROR(cudaMemcpy(dst + offset, src + offset,                  \
-                                num_elements * sizeof(float), mode))         \
-  }
 
 #define CUDA_MEMCPY_ASYNC_LOOP(trans, dst, src, ld, m, k, mode, stream)      \
   for (int col = 0; col < ((trans == 'N' || trans == 'n') ? k : m); col++) { \
@@ -34,54 +28,78 @@
 #define CUDA_TRANS_OP(trans) \
   (trans == 'N' || trans == 'n') ? CUBLAS_OP_N : CUBLAS_OP_T
 
+// RAII wrapper for a green context + stream + cublasXt handle at a
+// specific SM count.  Movable, not copyable.
+struct ContextSlot {
+  int sm_count = 0;
+  CUdevResourceDesc resource_desc = nullptr;
+  CUgreenCtx green_ctx = nullptr;
+  CUcontext cuda_ctx = nullptr;
+  cudaStream_t stream = nullptr;
+  cublasXtHandle_t xt_handle = nullptr;
+
+  ContextSlot() = default;
+  ~ContextSlot();
+  ContextSlot(ContextSlot&& other) noexcept;
+  ContextSlot& operator=(ContextSlot&& other) noexcept;
+  ContextSlot(const ContextSlot&) = delete;
+  ContextSlot& operator=(const ContextSlot&) = delete;
+};
+
 // One XtGemmWorker per logical partition on a GPU.
-// Each worker owns a green context with a fraction of the GPU's SMs,
-// a CUDA stream created within that green context, and a cublas handle
-// bound to that stream. The API is cublasXt-style: caller passes host
-// pointers, the worker handles H2D/D2H transfers internally.
+// Pre-creates green contexts at every valid SM granularity within its
+// partition.  Tasks choose SMs dynamically via SwitchContext(num_sms).
+// Uses cublasXt so callers pass host pointers; H2D/D2H is automatic.
 class XtGemmWorker : public WorkerBase,
                      public std::enable_shared_from_this<XtGemmWorker> {
  public:
   // gpu_id: physical GPU index
   // num_partitions: how many workers share this GPU (for SM partitioning)
   // partition_idx: this worker's partition index [0, num_partitions)
-  // buffer_size: CachingAllocator pool size
+  // buffer_size: kept for API compat (unused — cublasXt manages memory)
   XtGemmWorker(int gpu_id, int num_partitions, int partition_idx,
                size_t buffer_size);
   ~XtGemmWorker();
 
   DELETE_COPY_AND_ASSIGN(XtGemmWorker);
 
-  // cublasXt-style API: host pointers in, host pointers out
-  // Internally: H2D copy -> cublasSgemm on green ctx stream -> D2H copy
-  //             -> stream sync
+  // cublasXt-style API: host pointers in, host pointers out.
+  // cublasXt handles all H2D/D2H internally.
   void RunXtGemm(std::shared_ptr<GemmArgs> args);
 
-  cudaStream_t GetStream() const { return stream_; }
+  // Switch to the green context with exactly `num_sms` SMs.
+  // Returns false if no such context exists.
+  bool SwitchContext(int num_sms);
+
+  cudaStream_t GetStream() const {
+    return active_slot_ ? active_slot_->stream : nullptr;
+  }
   int GetGpuId() const { return gpu_id_; }
   int GetPartitionIdx() const { return partition_idx_; }
+  int GetSmStep() const { return sm_step_; }
+  int GetPartitionSmCount() const { return partition_sm_count_; }
+  int GetActiveSmCount() const;
+  std::vector<int> GetAvailableSmCounts() const;
 
  private:
-  void Run() override;  // Thread entry: set device, green ctx, cublas, alloc
-  void InitGreenContext();
-  void DestroyGreenContext();
+  void Run() override;  // Thread entry: set device, init contexts, run loop
+  void InitAllContexts();
+  ContextSlot CreateContextSlot(CUdevResource* groups, int num_groups,
+                                int sm_count);
 
   int gpu_id_;
   int num_partitions_;
   int partition_idx_;
-  size_t buffer_size_;
+  size_t buffer_size_;  // kept for API compat
 
-  // CUDA green context resources (driver API)
   CUdevice cu_device_ = 0;
-  CUdevResource partition_resource_ = {};
-  CUdevResourceDesc resource_desc_ = nullptr;
-  CUgreenCtx green_ctx_ = nullptr;
-  CUcontext cuda_ctx_ = nullptr;
 
-  // Stream + cublas within the green context
-  cudaStream_t stream_ = nullptr;
-  cublasHandle_t cublas_handle_ = nullptr;
-  std::unique_ptr<CachingAllocator> allocator_;
+  // Multi-context state (populated by InitAllContexts on worker thread)
+  std::unordered_map<int, ContextSlot> context_slots_;
+  ContextSlot* active_slot_ = nullptr;
+  int sm_step_ = 0;             // hardware SM granularity
+  int partition_sm_count_ = 0;  // total SMs for this partition
+  std::vector<CUdevResource> sm_groups_;
 };
 
 // Pool of XtGemmWorkers, potentially multiple per GPU

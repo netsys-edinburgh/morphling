@@ -1,9 +1,5 @@
 #include "proxy_svr.h"
 
-#include <sched.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-
 #include <chrono>
 
 #include "base/my_uuid.h"
@@ -16,6 +12,7 @@
 #include "proto_base.h"
 #include "server_base.h"
 #include "utils/logger.h"
+#include "utils/thread_affinity.h"
 
 using namespace std;
 using namespace std::placeholders;
@@ -28,41 +25,15 @@ using namespace uevent;
 namespace morphling {
 namespace backend {
 
-// ============================================================================
-// Thread Pinning Helper
-// ============================================================================
-
 // Global atomic counter to assign each thread to a different CPU core
 static std::atomic<int> g_thread_core_counter(0);
 
-void PinThreadToCore(int core_id) {
-  pid_t tid = syscall(SYS_gettid);
-  cpu_set_t cpuset;
-
-  CPU_ZERO(&cpuset);
-  CPU_SET(core_id, &cpuset);
-
-  int ret = syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
-  if (ret != 0) {
-    LOG_WARN << "Failed to pin thread " << tid << " to core " << core_id
-             << " (errno: " << errno << ")";
-  }
-}
-
-// Auto-assign thread to next available CPU core
-void PinThreadToNextAvailableCore() {
-  // Get current number of CPUs available
-  int num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
-  if (num_cpus <= 0) {
-    LOG_WARN << "Failed to get number of CPUs, defaulting to 8";
-    num_cpus = 8;
-  }
-
-  // Atomically increment counter and assign core
+static void PinThreadToNextAvailableCore() {
+  int num_cpus = morphling::GetOnlineCoreCount();
   int core_id =
-      g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) % num_cpus;
-
-  PinThreadToCore(core_id);
+      g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) %
+      num_cpus;
+  morphling::PinThreadToCore(core_id);
 }
 
 /*********************************ProxySvrHandle***********************************/
