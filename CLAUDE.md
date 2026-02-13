@@ -92,3 +92,19 @@ If you change `Dockerfile` / system deps / Python deps, rebuild and re-test the 
 
 - Plans write to a md file as PRD
 - Before action, convert PRD using taskmaster mcp
+
+## 7) CUDA API offline reference
+
+Use the offline CUDA Driver/Runtime API reference instead of web search:
+
+- Index: `docs/cuda/README.md`
+- Driver API: `docs/cuda/driver_api.md`
+- Runtime API: `docs/cuda/runtime_api.md`
+
+Regenerate (inside the CUDA-enabled Docker image):
+
+```bash
+python3 scripts/generate_cuda_api_docs.py \
+  --cuda-include /usr/local/cuda/include \
+  --out docs/cuda
+```
