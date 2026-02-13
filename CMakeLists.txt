@@ -323,6 +323,7 @@ set(MORPHLING_MSG_SRC
   ${PROTO_SRCS}
   "csrc/scheduler/amqp_dispatcher.cpp"
   "csrc/scheduler/amqp_worker.cpp"
+  "csrc/scheduler/cpu_worker.cpp"
   "csrc/python/client_py.cpp"
   "csrc/utils/logger.cpp"
   "csrc/memory/caching_allocator.cpp"

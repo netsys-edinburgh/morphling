@@ -1,6 +1,71 @@
 #include "gpu_worker.h"
 
+#include <algorithm>
+
 #include "utils/logger.h"
+
+// ---------------------------------------------------------------------------
+// ContextSlot RAII
+// ---------------------------------------------------------------------------
+
+ContextSlot::~ContextSlot() {
+  if (xt_handle) {
+    cublasXtDestroy(xt_handle);
+    xt_handle = nullptr;
+  }
+  if (stream) {
+    if (cuda_ctx) {
+      cuCtxSetCurrent(cuda_ctx);
+    }
+    cudaStreamDestroy(stream);
+    stream = nullptr;
+  }
+  if (cuda_ctx) {
+    cuCtxDestroy(cuda_ctx);
+    cuda_ctx = nullptr;
+  }
+  if (green_ctx) {
+    cuGreenCtxDestroy(green_ctx);
+    green_ctx = nullptr;
+  }
+}
+
+ContextSlot::ContextSlot(ContextSlot&& other) noexcept
+    : sm_count(other.sm_count),
+      resource_desc(other.resource_desc),
+      green_ctx(other.green_ctx),
+      cuda_ctx(other.cuda_ctx),
+      stream(other.stream),
+      xt_handle(other.xt_handle) {
+  other.sm_count = 0;
+  other.resource_desc = nullptr;
+  other.green_ctx = nullptr;
+  other.cuda_ctx = nullptr;
+  other.stream = nullptr;
+  other.xt_handle = nullptr;
+}
+
+ContextSlot& ContextSlot::operator=(ContextSlot&& other) noexcept {
+  if (this != &other) {
+    // Destroy current resources
+    this->~ContextSlot();
+    // Move from other
+    sm_count = other.sm_count;
+    resource_desc = other.resource_desc;
+    green_ctx = other.green_ctx;
+    cuda_ctx = other.cuda_ctx;
+    stream = other.stream;
+    xt_handle = other.xt_handle;
+    // Null out other
+    other.sm_count = 0;
+    other.resource_desc = nullptr;
+    other.green_ctx = nullptr;
+    other.cuda_ctx = nullptr;
+    other.stream = nullptr;
+    other.xt_handle = nullptr;
+  }
+  return *this;
+}
 
 // ---------------------------------------------------------------------------
 // XtGemmWorker
@@ -14,33 +79,20 @@ XtGemmWorker::XtGemmWorker(int gpu_id, int num_partitions, int partition_idx,
       buffer_size_(buffer_size) {
   worker_ = std::thread([this] { Run(); });
   LOG_DEBUG << "XtGemmWorker created: gpu=" << gpu_id_
-            << " partition=" << partition_idx_ << "/" << num_partitions_
-            << " buffer=" << int(buffer_size_ / GB) << "GB";
+            << " partition=" << partition_idx_ << "/" << num_partitions_;
 }
 
 XtGemmWorker::~XtGemmWorker() {
-  if (cublas_handle_) {
-    cublasDestroy(cublas_handle_);
-    cublas_handle_ = nullptr;
-  }
-  if (stream_) {
-    cudaStreamDestroy(stream_);
-    stream_ = nullptr;
-  }
-  DestroyGreenContext();
+  active_slot_ = nullptr;
+  context_slots_.clear();  // ContextSlot RAII handles cleanup
   LOG_DEBUG << "XtGemmWorker destroyed: gpu=" << gpu_id_
             << " partition=" << partition_idx_;
 }
 
-void XtGemmWorker::InitGreenContext() {
+void XtGemmWorker::InitAllContexts() {
   CHECK_CU_RESULT(cuDeviceGet(&cu_device_, gpu_id_));
 
-  // Step 1: Get the device's full SM resource
-  CUdevResource device_sm_resource = {};
-  CHECK_CU_RESULT(cuDeviceGetDevResource(cu_device_, &device_sm_resource,
-                                         CU_DEV_RESOURCE_TYPE_SM));
-
-  // Query SM count for logging
+  // Query total SM count
   int sm_count = 0;
   CHECK_CU_RESULT(cuDeviceGetAttribute(
       &sm_count, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, cu_device_));
@@ -48,81 +100,115 @@ void XtGemmWorker::InitGreenContext() {
            << "partitioning " << num_partitions_ << " ways for partition "
            << partition_idx_;
 
-  // Step 2: Split SM resource into num_partitions_ equal groups
-  unsigned int min_sm_per_partition =
-      static_cast<unsigned int>(sm_count / num_partitions_);
-  LOG_FATAL_IF(min_sm_per_partition == 0)
-      << "Not enough SMs (" << sm_count << ") for " << num_partitions_
-      << " partitions";
+  // Split into finest-grained groups (minCount=2)
+  CUdevResource device_sm_resource = {};
+  CHECK_CU_RESULT(cuDeviceGetDevResource(cu_device_, &device_sm_resource,
+                                         CU_DEV_RESOURCE_TYPE_SM));
 
-  // First query: how many groups will be created?
   unsigned int nb_groups = 0;
   CHECK_CU_RESULT(cuDevSmResourceSplitByCount(
       nullptr, &nb_groups, &device_sm_resource, nullptr,
-      CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING, min_sm_per_partition));
-  LOG_FATAL_IF(nb_groups < static_cast<unsigned int>(num_partitions_))
-      << "Cannot create " << num_partitions_ << " partitions, "
-      << "only " << nb_groups
-      << " possible with minCount=" << min_sm_per_partition;
+      CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING, 2));
+  LOG_FATAL_IF(nb_groups == 0) << "Cannot split SMs into groups";
 
-  // Second call: actually split into groups
-  std::vector<CUdevResource> split_results(nb_groups);
+  sm_groups_.resize(nb_groups);
   CUdevResource remaining = {};
   CHECK_CU_RESULT(cuDevSmResourceSplitByCount(
-      split_results.data(), &nb_groups, &device_sm_resource, &remaining,
-      CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING, min_sm_per_partition));
+      sm_groups_.data(), &nb_groups, &device_sm_resource, &remaining,
+      CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING, 2));
 
-  // Pick this partition's resource
-  partition_resource_ = split_results[partition_idx_];
+  sm_step_ = static_cast<int>(sm_groups_[0].sm.smCount);
+  LOG_INFO << "SM step size: " << sm_step_
+           << " (" << nb_groups << " groups total)";
 
-  // Step 3: Generate resource descriptor from the partition
-  CHECK_CU_RESULT(
-      cuDevResourceGenerateDesc(&resource_desc_, &partition_resource_, 1));
+  // Divide groups among partitions
+  unsigned int groups_per_partition = nb_groups / num_partitions_;
+  LOG_FATAL_IF(groups_per_partition == 0)
+      << "Not enough SM groups (" << nb_groups << ") for "
+      << num_partitions_ << " partitions";
 
-  // Step 4: Create green context
-  CHECK_CU_RESULT(cuGreenCtxCreate(&green_ctx_, resource_desc_, cu_device_,
-                                   CU_GREEN_CTX_DEFAULT_STREAM));
-  CHECK_CU_RESULT(cuCtxFromGreenCtx(&cuda_ctx_, green_ctx_));
-  CHECK_CU_RESULT(cuCtxSetCurrent(cuda_ctx_));
+  partition_sm_count_ = static_cast<int>(groups_per_partition) * sm_step_;
+  unsigned int base_offset = partition_idx_ * groups_per_partition;
 
-  LOG_INFO << "Green context created: gpu=" << gpu_id_
-           << " partition=" << partition_idx_
-           << " min_sm_count=" << min_sm_per_partition;
+  LOG_INFO << "Partition " << partition_idx_ << ": "
+           << groups_per_partition << " groups, "
+           << partition_sm_count_ << " SMs (offset=" << base_offset << ")";
+
+  // Create a context slot for each valid SM count (1 group, 2 groups, ...)
+  for (unsigned int n = 1; n <= groups_per_partition; n++) {
+    int slot_sm_count = static_cast<int>(n) * sm_step_;
+    auto slot = CreateContextSlot(
+        &sm_groups_[base_offset], static_cast<int>(n), slot_sm_count);
+    context_slots_.emplace(slot_sm_count, std::move(slot));
+    LOG_INFO << "  Created context slot: " << slot_sm_count << " SMs"
+             << " (" << n << " groups)";
+  }
+
+  // Default: use all partition SMs
+  active_slot_ = &context_slots_.at(partition_sm_count_);
+  CHECK_CU_RESULT(cuCtxSetCurrent(active_slot_->cuda_ctx));
+
+  LOG_INFO << "XtGemmWorker initialized: " << context_slots_.size()
+           << " context slots, active=" << partition_sm_count_ << " SMs";
 }
 
-void XtGemmWorker::DestroyGreenContext() {
-  if (cuda_ctx_) {
-    cuCtxDestroy(cuda_ctx_);
-    cuda_ctx_ = nullptr;
+ContextSlot XtGemmWorker::CreateContextSlot(CUdevResource* groups,
+                                            int num_groups,
+                                            int sm_count) {
+  ContextSlot slot;
+  slot.sm_count = sm_count;
+
+  // Combine groups into a resource descriptor
+  CHECK_CU_RESULT(cuDevResourceGenerateDesc(
+      &slot.resource_desc, groups, num_groups));
+
+  // Create green context
+  CHECK_CU_RESULT(cuGreenCtxCreate(
+      &slot.green_ctx, slot.resource_desc, cu_device_,
+      CU_GREEN_CTX_DEFAULT_STREAM));
+  CHECK_CU_RESULT(cuCtxFromGreenCtx(&slot.cuda_ctx, slot.green_ctx));
+  CHECK_CU_RESULT(cuCtxSetCurrent(slot.cuda_ctx));
+
+  // Create stream within the green context
+  CUstream cu_stream = nullptr;
+  CHECK_CU_RESULT(cuGreenCtxStreamCreate(
+      &cu_stream, slot.green_ctx, CU_STREAM_NON_BLOCKING, 0));
+  slot.stream = cu_stream;
+
+  // Create cublasXt handle — manages H2D/D2H internally
+  CHECK_CUBLAS_ERROR(cublasXtCreate(&slot.xt_handle));
+  int device_id = gpu_id_;
+  CHECK_CUBLAS_ERROR(
+      cublasXtDeviceSelect(slot.xt_handle, 1, &device_id));
+
+  return slot;
+}
+
+bool XtGemmWorker::SwitchContext(int num_sms) {
+  auto it = context_slots_.find(num_sms);
+  if (it == context_slots_.end()) return false;
+  active_slot_ = &it->second;
+  CHECK_CU_RESULT(cuCtxSetCurrent(active_slot_->cuda_ctx));
+  return true;
+}
+
+int XtGemmWorker::GetActiveSmCount() const {
+  return active_slot_ ? active_slot_->sm_count : 0;
+}
+
+std::vector<int> XtGemmWorker::GetAvailableSmCounts() const {
+  std::vector<int> counts;
+  counts.reserve(context_slots_.size());
+  for (const auto& [sm_count, _] : context_slots_) {
+    counts.push_back(sm_count);
   }
-  if (green_ctx_) {
-    cuGreenCtxDestroy(green_ctx_);
-    green_ctx_ = nullptr;
-  }
+  std::sort(counts.begin(), counts.end());
+  return counts;
 }
 
 void XtGemmWorker::Run() {
-  // Set device for this thread
   cudaSetDevice(gpu_id_);
-
-  // Create green context with SM partitioning
-  InitGreenContext();
-
-  // Create stream within the green context (driver API)
-  // Note: CU_STREAM_NON_BLOCKING is required by cuGreenCtxStreamCreate
-  CUstream cu_stream = nullptr;
-  CHECK_CU_RESULT(cuGreenCtxStreamCreate(&cu_stream, green_ctx_,
-                                         CU_STREAM_NON_BLOCKING, 0));
-  stream_ = cu_stream;
-
-  // Create cublas handle bound to this stream
-  CHECK_CUBLAS_ERROR(cublasCreate(&cublas_handle_));
-  CHECK_CUBLAS_ERROR(cublasSetStream(cublas_handle_, stream_));
-  CHECK_CUBLAS_ERROR(cublasSetMathMode(cublas_handle_, CUBLAS_DEFAULT_MATH));
-
-  // Create per-worker caching allocator for device memory
-  allocator_ = std::make_unique<CachingAllocator>(buffer_size_,
-                                                  MemoryType::CUDA, gpu_id_);
+  InitAllContexts();
 
   LOG_INFO << "XtGemmWorker ready: gpu=" << gpu_id_
            << " partition=" << partition_idx_;
@@ -132,53 +218,24 @@ void XtGemmWorker::Run() {
 }
 
 void XtGemmWorker::RunXtGemm(std::shared_ptr<GemmArgs> args) {
-  LOG_DEBUG << "RunXtGemm on gpu=" << gpu_id_ << " partition=" << partition_idx_
+  LOG_DEBUG << "RunXtGemm on gpu=" << gpu_id_
+            << " partition=" << partition_idx_
+            << " sms=" << (active_slot_ ? active_slot_->sm_count : 0)
             << " " << args->DebugString();
 
-  // Calculate buffer sizes for A, B, C
-  auto [size_a, size_b, size_c] = CalculateTaskSizes(args.get());
-  LOG_DEBUG << "Allocating device memory: A=" << size_a << " B=" << size_b
-            << " C=" << size_c;
+  cublasXtHandle_t handle = active_slot_->xt_handle;
 
-  // Allocate device buffers via per-worker allocator
-  auto* d_A = static_cast<float*>(allocator_->Allocate(size_a));
-  auto* d_B = static_cast<float*>(allocator_->Allocate(size_b));
-  auto* d_C = static_cast<float*>(allocator_->Allocate(size_c));
-
-  // H2D: copy input matrices to device asynchronously on this stream
-  CUDA_MEMCPY_ASYNC_LOOP(args->transa[0], d_A, args->a[0], args->lda[0],
-                         args->m[0], args->k[0], cudaMemcpyHostToDevice,
-                         stream_);
-  CUDA_MEMCPY_ASYNC_LOOP(args->transb[0], d_B, args->b[0], args->ldb[0],
-                         args->k[0], args->n[0], cudaMemcpyHostToDevice,
-                         stream_);
-  // C must also be copied when beta != 0 (cublas reads d_C for beta*C term)
-  if (args->beta[0] != 0.0f) {
-    CUDA_MEMCPY_ASYNC_LOOP('N', d_C, args->c[0], args->ldc[0], args->m[0],
-                           args->n[0], cudaMemcpyHostToDevice, stream_);
-  }
-
-  // Set cublas operation modes
   cublasOperation_t transa = CUDA_TRANS_OP(args->transa[0]);
   cublasOperation_t transb = CUDA_TRANS_OP(args->transb[0]);
 
-  // Execute GEMM on this worker's stream (restricted to green ctx SMs)
-  CHECK_CUBLAS_ERROR(cublasSgemm_v2(cublas_handle_, transa, transb, args->m[0],
-                                    args->n[0], args->k[0], args->alpha, d_A,
-                                    args->lda[0], d_B, args->ldb[0], args->beta,
-                                    d_C, args->ldc[0]));
+  CHECK_CUBLAS_ERROR(cublasXtSgemm(
+      handle, transa, transb,
+      args->m[0], args->n[0], args->k[0],
+      args->alpha, args->a[0], args->lda[0],
+      args->b[0], args->ldb[0],
+      args->beta, args->c[0], args->ldc[0]));
 
-  // D2H: copy result back to host asynchronously
-  CUDA_MEMCPY_ASYNC_LOOP('N', args->c[0], d_C, args->ldc[0], args->m[0],
-                         args->n[0], cudaMemcpyDeviceToHost, stream_);
-
-  // Synchronize only this worker's stream (no device-wide sync)
-  CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_));
-
-  // Free device buffers back to pool
-  allocator_->Free(d_A);
-  allocator_->Free(d_B);
-  allocator_->Free(d_C);
+  CHECK_CUDA_ERROR(cudaDeviceSynchronize());
 
   LOG_DEBUG << "RunXtGemm completed on gpu=" << gpu_id_
             << " partition=" << partition_idx_;
