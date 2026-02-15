@@ -6,12 +6,14 @@
 #include <cuda_runtime_api.h>
 
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include "intercept/interceptor.h"
+#include "memory/caching_allocator.h"
 #include "scheduling_policy.h"
 #include "utils/cuda_utils.h"
 #include "worker_base.h"
@@ -56,7 +58,7 @@ class XtGemmWorker : public WorkerBase,
   // gpu_id: physical GPU index
   // num_partitions: how many workers share this GPU (for SM partitioning)
   // partition_idx: this worker's partition index [0, num_partitions)
-  // buffer_size: kept for API compat (unused — cublasXt manages memory)
+  // buffer_size: CachingAllocator pool size per worker
   XtGemmWorker(int gpu_id, int num_partitions, int partition_idx,
                size_t buffer_size);
   ~XtGemmWorker();
@@ -81,6 +83,10 @@ class XtGemmWorker : public WorkerBase,
   int GetActiveSmCount() const;
   std::vector<int> GetAvailableSmCounts() const;
 
+  CachingAllocator* GetAllocator() const {
+    return allocator_.get();
+  }
+
  private:
   void Run() override;  // Thread entry: set device, init contexts, run loop
   void InitAllContexts();
@@ -90,7 +96,7 @@ class XtGemmWorker : public WorkerBase,
   int gpu_id_;
   int num_partitions_;
   int partition_idx_;
-  size_t buffer_size_;  // kept for API compat
+  size_t buffer_size_;
 
   CUdevice cu_device_ = 0;
 
@@ -100,6 +106,9 @@ class XtGemmWorker : public WorkerBase,
   int sm_step_ = 0;             // hardware SM granularity
   int partition_sm_count_ = 0;  // total SMs for this partition
   std::vector<CUdevResource> sm_groups_;
+
+  // Per-worker CUDA memory pool
+  std::unique_ptr<CachingAllocator> allocator_;
 };
 
 // Pool of XtGemmWorkers, potentially multiple per GPU
@@ -114,8 +123,9 @@ class XtGemmWorkerPool : public noncopyable {
 
   DELETE_COPY_AND_ASSIGN(XtGemmWorkerPool);
 
-  void EnqueueGemm(const std::string& task_id,
-                   std::shared_ptr<GemmArgs> args);
+  TaskHandle EnqueueGemm(const std::string& task_id,
+                         std::shared_ptr<GemmArgs> args,
+                         TaskCallback callback = nullptr);
   void WaitAll();
   void Wait(const std::string& task_id);
 

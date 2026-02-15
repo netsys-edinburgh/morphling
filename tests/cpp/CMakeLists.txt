@@ -28,14 +28,14 @@ set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest googlebenchmark)
 
 # ==========================================================================
-# CUDA / cuBLAS tests
+# CUDA / cuBLAS tests (unit/cuda/)
 # ==========================================================================
 option(ENABLE_CUDA_TESTS "Build CUDA/cuBLAS tests" ON)
 if(ENABLE_CUDA_TESTS)
   find_package(CUDAToolkit QUIET)
   if(CUDAToolkit_FOUND)
     add_executable(test_cublas_hostalloc_direct
-      test_cublas_hostalloc_direct.cpp
+      unit/cuda/test_cublas_hostalloc_direct.cpp
     )
     target_link_libraries(test_cublas_hostalloc_direct
       CUDA::cudart
@@ -43,7 +43,7 @@ if(ENABLE_CUDA_TESTS)
     )
 
     add_executable(test_cublas_hostregister_posix
-      test_cublas_hostregister_posix.cpp
+      unit/cuda/test_cublas_hostregister_posix.cpp
     )
     target_link_libraries(test_cublas_hostregister_posix
       CUDA::cudart
@@ -51,7 +51,7 @@ if(ENABLE_CUDA_TESTS)
     )
 
     add_executable(test_cublas_error15_repro
-      test_cublas_error15_repro.cpp
+      unit/cuda/test_cublas_error15_repro.cpp
     )
     target_link_libraries(test_cublas_error15_repro
       GTest::gtest
@@ -65,7 +65,7 @@ if(ENABLE_CUDA_TESTS)
   endif()
 endif()
 
-# ============================================================================
+# ==========================================================================
 # XtGemm Worker tests (require CUDA green contexts, compute capability 9.0+)
 # ============================================================================
 option(ENABLE_XTGEMM_TESTS "Build XtGemm worker tests" OFF)
@@ -113,9 +113,9 @@ if(ENABLE_XTGEMM_TESTS)
       Threads::Threads
     )
 
-    # Correctness tests
+    # Correctness tests (unit/worker/)
     add_executable(test_xtgemm_worker
-      test_xtgemm_worker.cpp
+      unit/worker/test_xtgemm_worker.cpp
       ${XTGEMM_TEST_DEPS}
     )
     target_include_directories(test_xtgemm_worker PRIVATE
@@ -128,9 +128,9 @@ if(ENABLE_XTGEMM_TESTS)
     )
     add_test(NAME test_xtgemm_worker COMMAND test_xtgemm_worker)
 
-    # Performance benchmarks
+    # Performance benchmarks (bench/cuda/)
     add_executable(bench_xtgemm_worker
-      bench_xtgemm_worker.cpp
+      bench/cuda/bench_xtgemm_worker.cpp
       ${XTGEMM_TEST_DEPS}
     )
     target_include_directories(bench_xtgemm_worker PRIVATE
@@ -142,9 +142,9 @@ if(ENABLE_XTGEMM_TESTS)
       ${XTGEMM_COMMON_LIBS}
     )
 
-    # Green Context benchmarks
+    # Green Context benchmarks (bench/cuda/)
     add_executable(bench_green_ctx
-      bench_green_ctx.cpp
+      bench/cuda/bench_green_ctx.cpp
       ${XTGEMM_TEST_DEPS}
     )
     target_include_directories(bench_green_ctx PRIVATE
@@ -160,7 +160,27 @@ if(ENABLE_XTGEMM_TESTS)
   endif()
 endif()
 
+# ==========================================================================
+# WorkerBase / WorkerPool tests (unit/worker/)
 # ============================================================================
+find_package(Threads REQUIRED)
+
+set(PROJECT_ROOT_WB ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+add_executable(test_worker_base
+  unit/worker/test_worker_base.cpp
+)
+target_include_directories(test_worker_base PRIVATE
+  ${PROJECT_ROOT_WB}/csrc
+)
+target_link_libraries(test_worker_base PRIVATE
+  GTest::gtest
+  GTest::gtest_main
+  Threads::Threads
+)
+add_test(NAME test_worker_base COMMAND test_worker_base)
+
+# ==========================================================================
 # Zerocopy test suite (optional)
 # ============================================================================
 option(ENABLE_ZEROCOPY_TESTS "Build zerocopy tests" OFF)
@@ -205,5 +225,6 @@ if(ENABLE_ZEROCOPY_TESTS)
   )
   add_custom_target(generate_proto_files ALL DEPENDS ${PROTO_SRCS})
 
-  add_subdirectory(zerocopy)
+  add_subdirectory(unit/zerocopy)
+  add_subdirectory(bench/zerocopy)
 endif()

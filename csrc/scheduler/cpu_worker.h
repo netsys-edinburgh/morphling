@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "memory/caching_allocator.h"
 #include "scheduling_policy.h"
 #include "utils/thread_affinity.h"
 #include "worker_base.h"
@@ -66,7 +67,9 @@ class CpuWorker : public WorkerBase,
  public:
   // assigned_cores: the set of CPU core IDs this worker owns
   // partition_idx: this worker's partition index (for logging)
-  CpuWorker(std::vector<int> assigned_cores, int partition_idx);
+  // buffer_size: CachingAllocator pool size per worker
+  CpuWorker(std::vector<int> assigned_cores, int partition_idx,
+            size_t buffer_size = 0);
   ~CpuWorker();
 
   DELETE_COPY_AND_ASSIGN(CpuWorker);
@@ -87,6 +90,10 @@ class CpuWorker : public WorkerBase,
   std::vector<int> GetAvailableCoreCounts() const;
   int GetPartitionIdx() const { return partition_idx_; }
 
+  CachingAllocator* GetAllocator() const {
+    return allocator_.get();
+  }
+
  private:
   void Run() override;
   void InitAllAffinitySlots();
@@ -94,9 +101,13 @@ class CpuWorker : public WorkerBase,
 
   std::vector<int> assigned_cores_;
   int partition_idx_;
+  size_t buffer_size_;
 
   std::unordered_map<int, CpuAffinitySlot> affinity_slots_;
   CpuAffinitySlot* active_slot_ = nullptr;
+
+  // Per-worker pinned memory pool
+  std::unique_ptr<CachingAllocator> allocator_;
 };
 
 // Pool of CpuWorkers, partitioning CPU cores among workers.
@@ -105,13 +116,16 @@ class CpuWorkerPool : public noncopyable {
   // num_workers: number of CPU workers to create
   // assignable_cores: full set of cores to partition among workers
   // policy: scheduling policy for task distribution
+  // buffer_size: CachingAllocator pool size per worker
   CpuWorkerPool(int num_workers, std::vector<int> assignable_cores,
-                SchedulingPolicyType policy);
+                SchedulingPolicyType policy, size_t buffer_size = 0);
   ~CpuWorkerPool();
 
   DELETE_COPY_AND_ASSIGN(CpuWorkerPool);
 
-  void EnqueueTask(const std::string& task_id, WorkerBase::Task task);
+  TaskHandle EnqueueTask(const std::string& task_id,
+                         WorkerBase::Task task,
+                         TaskCallback callback = nullptr);
   void WaitAll();
   void Wait(const std::string& task_id);
 

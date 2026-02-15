@@ -66,7 +66,8 @@ RUN --mount=type=cache,target=/ccache \
 RUN --mount=type=cache,target=/ccache \
     if [ "$USE_CCACHE" = "1" ]; then export PATH="/usr/lib/ccache:$PATH"; fi && \
     cmake -S tests/cpp -B tests/cpp/build -DENABLE_ZEROCOPY_TESTS=ON -DENABLE_XTGEMM_TESTS=ON && \
-    cmake --build tests/cpp/build -j
+    cmake --build tests/cpp/build -j && \
+    ./tests/cpp/build/test_worker_base
 
 # 创建必要的目录
 RUN mkdir -p /app/logs /app/data /app/config
