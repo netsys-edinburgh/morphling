@@ -108,3 +108,27 @@ python3 scripts/generate_cuda_api_docs.py \
   --cuda-include /usr/local/cuda/include \
   --out docs/cuda
 ```
+
+## 8) Test organization principles
+
+Tests follow a strict organization pattern by **language** and **test type**:
+
+```
+tests/
+├── cpp/
+│   ├── unit/        # Unit tests (Google Test)
+│   ├── bench/       # Benchmarks (Google Benchmark)
+│   └── integration/ # Integration tests
+├── python/
+│   ├── unit/        # Unit tests (pytest)
+│   ├── bench/       # Benchmarks
+│   └── integration/ # Integration tests
+└── cmake/           # Shared CMake test utilities
+```
+
+**Rules:**
+- All C++ tests go in `tests/cpp/`, all Python tests in `tests/python/`
+- Separate `unit/` (correctness) from `bench/` (performance) at the language level
+- Group tests by component/subject area within each category (e.g., `cpp/unit/cuda/`, `cpp/unit/memory/`)
+- CMake helper functions go in `tests/cmake/`
+- Build artifacts (e.g., `tests/cpp/build/`) should never be committed

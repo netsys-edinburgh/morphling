@@ -1,8 +1,21 @@
 #include "gpu_worker.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 #include "utils/logger.h"
+
+namespace {
+constexpr size_t kDefaultPoolBytes = 256ull * 1024 * 1024;  // 256 MB
+
+size_t ResolvePoolBytes(size_t buffer_size) {
+  if (const char* v = std::getenv("MORPHLING_WORKER_POOL_SIZE")) {
+    return std::stoull(v);
+  }
+  if (buffer_size > 0) return buffer_size;
+  return kDefaultPoolBytes;
+}
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // ContextSlot RAII
@@ -148,6 +161,14 @@ void XtGemmWorker::InitAllContexts() {
   active_slot_ = &context_slots_.at(partition_sm_count_);
   CHECK_CU_RESULT(cuCtxSetCurrent(active_slot_->cuda_ctx));
 
+  // Initialize per-worker CUDA memory pool
+  size_t pool_bytes = ResolvePoolBytes(buffer_size_);
+  allocator_ = std::make_unique<CachingAllocator>(
+      pool_bytes, MemoryType::CUDA, gpu_id_);
+  LOG_INFO << "XtGemmWorker gpu=" << gpu_id_
+           << " partition=" << partition_idx_
+           << " allocator initialized: " << pool_bytes << " bytes";
+
   LOG_INFO << "XtGemmWorker initialized: " << context_slots_.size()
            << " context slots, active=" << partition_sm_count_ << " SMs";
 }
@@ -279,11 +300,14 @@ XtGemmWorkerPool::~XtGemmWorkerPool() {
   }
 }
 
-void XtGemmWorkerPool::EnqueueGemm(const std::string& task_id,
-                                   std::shared_ptr<GemmArgs> args) {
+TaskHandle XtGemmWorkerPool::EnqueueGemm(
+    const std::string& task_id,
+    std::shared_ptr<GemmArgs> args,
+    TaskCallback callback) {
   auto [worker_idx, priority] = scheduler_->Schedule(args.get());
   auto task = std::bind(&XtGemmWorker::RunXtGemm, workers_[worker_idx], args);
-  workers_[worker_idx]->AddTask(task_id, std::move(task));
+  return workers_[worker_idx]->AddTask(
+      task_id, std::move(task), std::move(callback));
 }
 
 void XtGemmWorkerPool::WaitAll() {

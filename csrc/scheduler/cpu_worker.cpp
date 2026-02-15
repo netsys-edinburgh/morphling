@@ -1,17 +1,32 @@
 #include "cpu_worker.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <unordered_set>
 
 #include "utils/logger.h"
+
+namespace {
+constexpr size_t kDefaultPoolBytes = 256ull * 1024 * 1024;  // 256 MB
+
+size_t ResolvePoolBytes(size_t buffer_size) {
+  if (const char* v = std::getenv("MORPHLING_WORKER_POOL_SIZE")) {
+    return std::stoull(v);
+  }
+  if (buffer_size > 0) return buffer_size;
+  return kDefaultPoolBytes;
+}
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // CpuWorker
 // ---------------------------------------------------------------------------
 
-CpuWorker::CpuWorker(std::vector<int> assigned_cores, int partition_idx)
+CpuWorker::CpuWorker(std::vector<int> assigned_cores, int partition_idx,
+                      size_t buffer_size)
     : assigned_cores_(std::move(assigned_cores)),
-      partition_idx_(partition_idx) {
+      partition_idx_(partition_idx),
+      buffer_size_(buffer_size) {
   worker_ = std::thread([this] { Run(); });
   LOG_DEBUG << "CpuWorker created: partition=" << partition_idx_
             << " cores=" << assigned_cores_.size();
@@ -42,6 +57,13 @@ void CpuWorker::InitAllAffinitySlots() {
   // Default: use all assigned cores
   active_slot_ = &affinity_slots_.at(total_cores);
   active_slot_->Apply();
+
+  // Initialize per-worker pinned memory pool
+  size_t pool_bytes = ResolvePoolBytes(buffer_size_);
+  allocator_ =
+      std::make_unique<CachingAllocator>(pool_bytes, MemoryType::PIN);
+  LOG_INFO << "CpuWorker partition=" << partition_idx_
+           << " allocator initialized: " << pool_bytes << " bytes";
 
   LOG_INFO << "CpuWorker initialized: " << affinity_slots_.size()
            << " affinity slots, active=" << total_cores << " cores";
@@ -126,7 +148,8 @@ void CpuWorker::Run() {
 
 CpuWorkerPool::CpuWorkerPool(int num_workers,
                               std::vector<int> assignable_cores,
-                              SchedulingPolicyType policy) {
+                              SchedulingPolicyType policy,
+                              size_t buffer_size) {
   int total_cores = static_cast<int>(assignable_cores.size());
   int cores_per_worker = total_cores / num_workers;
   LOG_FATAL_IF(cores_per_worker == 0)
@@ -139,8 +162,8 @@ CpuWorkerPool::CpuWorkerPool(int num_workers,
                                      : start + cores_per_worker;
     std::vector<int> partition(assignable_cores.begin() + start,
                                assignable_cores.begin() + end);
-    workers_.emplace_back(
-        std::make_shared<CpuWorker>(std::move(partition), w));
+    workers_.emplace_back(std::make_shared<CpuWorker>(
+        std::move(partition), w, buffer_size));
   }
 
   switch (policy) {
@@ -164,10 +187,12 @@ CpuWorkerPool::~CpuWorkerPool() {
   }
 }
 
-void CpuWorkerPool::EnqueueTask(const std::string& task_id,
-                                 WorkerBase::Task task) {
+TaskHandle CpuWorkerPool::EnqueueTask(const std::string& task_id,
+                                       WorkerBase::Task task,
+                                       TaskCallback callback) {
   auto [worker_idx, priority] = scheduler_->Schedule(nullptr);
-  workers_[worker_idx]->AddTask(task_id, std::move(task));
+  return workers_[worker_idx]->AddTask(
+      task_id, std::move(task), std::move(callback));
 }
 
 void CpuWorkerPool::WaitAll() {
