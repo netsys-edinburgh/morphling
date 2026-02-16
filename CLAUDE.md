@@ -132,3 +132,45 @@ tests/
 - Group tests by component/subject area within each category (e.g., `cpp/unit/cuda/`, `cpp/unit/memory/`)
 - CMake helper functions go in `tests/cmake/`
 - Build artifacts (e.g., `tests/cpp/build/`) should never be committed
+
+## 9) Core architecture patterns
+
+### Worker pool model
+- `WorkerBase` → `XtGemmWorker` (GPU, cublasXt) and `CpuWorker` (MKL)
+- `WorkerPool` dispatches via pluggable `SchedulingPolicy` (round-robin, shortest-wait)
+- Task queue: `std::mutex` + `std::condition_variable`, atomic task counts
+- Dual-path GPU/CPU with identical public interfaces (`AddTask`, `EnqueueGemm`)
+
+### Memory & zero-copy
+- Pool-based allocation everywhere: `AlignedBufferPool`, CUDA pinned pool, context slots
+- Pools are bucketed by power-of-2 sizes, pre-allocated, mlocked
+- Zero-copy send: `evbuffer_add_reference()` with shared_ptr cleanup callbacks
+- Scatter-gather buffers: `SerializeZeroCopy()` → `ScatterGatherBufferPtr`
+- RAII + move semantics for all resource wrappers
+
+### CUDA green contexts
+- SM partitioning via `cuGreenCtxCreate` (requires SM 9.0+ / Hopper)
+- Pre-computed context map keyed by SM count; switch at runtime
+- `ContextSlot` struct: green context + stream + cublasXt handle (RAII)
+- Graceful skip on older GPUs
+
+## 10) Vendored & linked dependencies
+
+- **Protobuf:** vendored in `external/protobuf/` — never use system protobuf
+- **MKL:** linked via `mkl_rt`; thread-local control with `mkl_set_num_threads_local()`
+- **Google Benchmark / Google Test:** used for C++ bench/unit tests
+- **libevent:** used for networking layer (`evbuffer` APIs)
+
+## 11) Concurrency rules
+
+- All shared state mutations under `std::unique_lock<std::mutex>`
+- `std::atomic<int>` for lock-free read counters (e.g., `task_count_`)
+- Completion signaling via `cv_.notify_all()` + per-task-ID tracking
+- CPU affinity: POSIX `sched_setaffinity`, contiguous core partitioning across workers
+- Performance tracking: `SlidingWindowDurationTracker` (header-only, single-thread access from event loop)
+
+## 12) CLI → C++ parameter flow
+
+Runtime parameters (e.g., `device_id`, scheduling policy) flow:
+  Python CLI (`--id X`) → pybind11 binding → C++ constructor parameter
+Always use default values for backward compatibility.

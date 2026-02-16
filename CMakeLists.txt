@@ -327,6 +327,7 @@ set(MORPHLING_MSG_SRC
   "csrc/scheduler/gpu_worker.cpp"
   "csrc/python/client_py.cpp"
   "csrc/utils/logger.cpp"
+  "csrc/utils/cuda_utils.cpp"
   "csrc/memory/caching_allocator.cpp"
   "csrc/memory/shared_memory.cpp"
 )
@@ -340,6 +341,7 @@ set(MORPHLING_EXT_LIB
   event
   openblas
   CUDA::cublas
+  CUDA::cuda_driver
 )
 
 define_gpu_extension_target(
