@@ -1,12 +1,11 @@
 #include "proxy_cli.h"
 
-#include <cublasXt.h>
 #include <cuda_runtime.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstring>
-#include <limits>
+#include <thread>
 
 #include "base/my_uuid.h"
 #include "common/generator.h"
@@ -15,6 +14,8 @@
 #include "network/eventloop_libevent.h"
 #include "network/ueventloop_thread_pool.h"
 #include "proto_base.h"
+#include "scheduler/cpu_worker.h"
+#include "scheduler/gpu_worker.h"
 #include "utils/cuda_utils.h"
 #include "utils/logger.h"
 
@@ -26,16 +27,6 @@ using namespace uevent;
 
 #include <iostream>
 #include <set>
-
-#define CUBLAS_CHECK(call)                                              \
-  do {                                                                  \
-    cublasStatus_t err = call;                                          \
-    if (err != CUBLAS_STATUS_SUCCESS) {                                 \
-      LOG_ERROR << "cuBLAS Error: " << err << " at " << __FILE__ << ":" \
-                << __LINE__ << std::endl;                               \
-      std::exit(err);                                                   \
-    }                                                                   \
-  } while (0)
 
 namespace morphling {
 namespace backend {
@@ -56,74 +47,19 @@ void PosixUnpinBuffer(void* ptr, size_t size) { munlock(ptr, size); }
 
 /*********************************ProxyCliHandle************************************/
 
-bool RunCublasXtGemm(const float* row_ptr, int64_t row_size,
-                     const float* col_ptr, int64_t col_size, int64_t h_dim,
-                     float* out_ptr) {
-  if (!row_ptr || !col_ptr || !out_ptr) {
-    LOG_ERROR << "RunCublasXtGemm: null input/output pointer";
-    return false;
-  }
-  if (row_size <= 0 || col_size <= 0 || h_dim <= 0) {
-    LOG_ERROR << "RunCublasXtGemm: invalid dims row=" << row_size
-              << ", col=" << col_size << ", h_dim=" << h_dim;
-    return false;
-  }
-  if (row_size > std::numeric_limits<int>::max() ||
-      col_size > std::numeric_limits<int>::max() ||
-      h_dim > std::numeric_limits<int>::max()) {
-    LOG_ERROR << "RunCublasXtGemm: dims exceed cublas int limits";
-    return false;
-  }
-
-  int device_count = 0;
-  if (!LogCudaError(cudaGetDeviceCount(&device_count), "cudaGetDeviceCount")) {
-    return false;
-  }
-  if (device_count <= 0) {
-    LOG_ERROR << "RunCublasXtGemm: no CUDA device available";
-    return false;
-  }
-
-  cublasXtHandle_t handle = nullptr;
-  if (!LogCublasError(cublasXtCreate(&handle), "cublasXtCreate")) {
-    return false;
-  }
-
-  int device_id = 0;
-  if (!LogCublasError(cublasXtDeviceSelect(handle, 1, &device_id),
-                      "cublasXtDeviceSelect")) {
-    cublasXtDestroy(handle);
-    return false;
-  }
-
-  float alpha = 1.0f;
-  float beta = 0.0f;
-
-  int m = static_cast<int>(col_size);
-  int n = static_cast<int>(row_size);
-  int k = static_cast<int>(h_dim);
-  int lda = k;
-  int ldb = k;
-  int ldc = m;
-
-  // Compute D = B * A^T in column-major, then interpret output as row-major C.
-  cublasStatus_t status =
-      cublasXtSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, m, n, k, &alpha, col_ptr,
-                    lda, row_ptr, ldb, &beta, out_ptr, ldc);
-  bool ok = LogCublasError(status, "cublasXtSgemm");
-  ok = ok && LogCudaError(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
-
-  cublasXtDestroy(handle);
-  return ok;
-}
-
-/*********************************ProxyCliHandle************************************/
-
 ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop,
-                               int64_t device_id)
-    : ctx_(ctx), loop_(loop), device_id_(device_id) {
+                               int64_t device_id,
+                               XtGemmWorkerPool* gpu_pool,
+                               CpuWorkerPool* cpu_pool)
+    : ctx_(ctx),
+      loop_(loop),
+      device_id_(device_id),
+      gpu_pool_(gpu_pool),
+      cpu_pool_(cpu_pool) {
   SRV_STATS->Initialize();
 }
+
+ProxyCliHandle::~ProxyCliHandle() = default;
 
 void ProxyCliHandle::ThreadInit(uevent::UeventLoop* loop) {
   auto* loop_handle = loop->GetLoopHandle();
@@ -144,10 +80,15 @@ struct ResponseSendContext {
   ScatterGatherBufferPtr sg_buffer;
   // Deferred CUDA managed memory release (result buffer)
   void* cuda_ptr = nullptr;
+  // Deferred host memory release (CPU pool result buffer)
+  void* host_ptr = nullptr;
 
   ~ResponseSendContext() {
     if (cuda_ptr) {
       cudaFree(cuda_ptr);
+    }
+    if (host_ptr) {
+      free(host_ptr);
     }
   }
 };
@@ -165,16 +106,20 @@ static void SerializationBufferSendCleanup(const void* /*data*/,
 
 void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
                                       const MatrixPartition& partition,
-                                      void* deferred_cuda_ptr) {
+                                      void* deferred_cuda_ptr,
+                                      void* deferred_host_ptr) {
   assert(conn);
 
   string client_addr = conn->GetPeerAddress().ToString();
   if (conn->IsClosed()) {
     LOG_WARN << DEV_TAG(device_id_, partition.gemm_id)
              << "connection already closed:" << client_addr;
-    // Release deferred cuda managed memory since we won't send
+    // Release deferred memory since we won't send
     if (deferred_cuda_ptr) {
       cudaFree(deferred_cuda_ptr);
+    }
+    if (deferred_host_ptr) {
+      free(deferred_host_ptr);
     }
     return;
   }
@@ -194,6 +139,7 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
   auto ctx = std::make_shared<ResponseSendContext>();
   ctx->sg_buffer = sg_buffer;
   ctx->cuda_ptr = deferred_cuda_ptr;
+  ctx->host_ptr = deferred_host_ptr;
 
   // Zero-copy send each segment
   for (const auto& segment : sg_buffer->GetSegments()) {
@@ -264,7 +210,6 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   int64_t row_size = r_size / partition.h_dim / sizeof(float);
   int64_t col_size = c_size / partition.h_dim / sizeof(float);
 
-  auto start = std::chrono::high_resolution_clock::now();
   auto* row_ptr = reinterpret_cast<const float*>(r_ptr);
   auto* col_ptr = reinterpret_cast<const float*>(c_ptr);
 
@@ -274,26 +219,128 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   size_t out_elems =
       static_cast<size_t>(row_size) * static_cast<size_t>(col_size);
   int64_t out_bytes = static_cast<int64_t>(out_elems * sizeof(float));
-  float* out_ptr = nullptr;
-  if (!LogCudaError(cudaMallocManaged(&out_ptr, out_bytes),
-                    "cudaMallocManaged(output)")) {
+
+  if (gpu_pool_) {
+    float* out_ptr = nullptr;
+    if (!LogCudaError(cudaMallocManaged(&out_ptr, out_bytes),
+                      "cudaMallocManaged(output)")) {
+      return;
+    }
+    SubmitToGpuPool(conn, partition, out_ptr, out_bytes,
+                    row_ptr, row_size, col_ptr, col_size,
+                    partition.h_dim, vt_compute_start,
+                    /*is_host_alloc=*/false);
     return;
   }
 
-  bool ok = RunCublasXtGemm(row_ptr, row_size, col_ptr, col_size,
-                            partition.h_dim, out_ptr);
-  if (!ok) {
-    cudaFree(out_ptr);
+  if (cpu_pool_) {
+    float* out_ptr = static_cast<float*>(malloc(out_bytes));
+    if (!out_ptr) {
+      LOG_ERROR << "malloc failed for output buffer (" << out_bytes << " bytes)";
+      return;
+    }
+    SubmitToCpuPool(conn, partition, out_ptr, out_bytes,
+                    row_ptr, row_size, col_ptr, col_size,
+                    partition.h_dim, vt_compute_start,
+                    /*is_host_alloc=*/true);
     return;
   }
 
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration =
-      std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  auto mm_time = duration.count();
-  LOG_DEBUG << part_key << " Matmul real time: " << duration.count()
-            << "us, Matmul logical time: " << mm_time;
+  LOG_ERROR << "No worker pool available";
+}
 
+std::shared_ptr<GemmArgs> ProxyCliHandle::BuildGemmArgs(
+    const float* col_ptr, int64_t col_size,
+    const float* row_ptr, int64_t row_size,
+    int64_t h_dim, float* out_ptr) {
+  auto args = std::make_shared<GemmArgs>();
+  args->group_size = 1;
+  args->transa[0] = 'T';
+  args->transb[0] = 'N';
+  args->m[0] = static_cast<int>(col_size);
+  args->n[0] = static_cast<int>(row_size);
+  args->k[0] = static_cast<int>(h_dim);
+  args->alpha[0] = 1.0f;
+  args->beta[0] = 0.0f;
+  args->a[0] = col_ptr;
+  args->lda[0] = static_cast<int>(h_dim);
+  args->b[0] = row_ptr;
+  args->ldb[0] = static_cast<int>(h_dim);
+  args->c[0] = out_ptr;
+  args->ldc[0] = static_cast<int>(col_size);
+  return args;
+}
+
+void ProxyCliHandle::SubmitToGpuPool(
+    const uevent::ConnectionUeventPtr& conn,
+    const MatrixPartition& partition,
+    float* out_ptr, int64_t out_bytes,
+    const float* row_ptr, int64_t row_size,
+    const float* col_ptr, int64_t col_size,
+    int64_t h_dim, uint64_t vt_compute_start,
+    bool is_host_alloc) {
+  auto args = BuildGemmArgs(col_ptr, col_size, row_ptr, row_size,
+                            h_dim, out_ptr);
+
+  uint64_t task_num = task_counter_.fetch_add(1, std::memory_order_relaxed);
+  std::string task_id = "gemm_" + std::to_string(task_num);
+
+  // Copy partition by value for the callback closure
+  MatrixPartition part_copy = partition;
+
+  TaskCallback callback = [this, conn, part_copy, out_ptr, out_bytes,
+                           col_size, vt_compute_start,
+                           is_host_alloc](const std::string&) {
+    loop_->RunInLoop([this, conn, part_copy, out_ptr, out_bytes,
+                      col_size, vt_compute_start, is_host_alloc]() {
+      OnComputeComplete(conn, part_copy, out_ptr, out_bytes,
+                        col_size, vt_compute_start, is_host_alloc);
+    });
+  };
+
+  gpu_pool_->EnqueueGemm(task_id, args, std::move(callback));
+  LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id)
+            << "[SubmitToGpuPool] task=" << task_id;
+}
+
+void ProxyCliHandle::SubmitToCpuPool(
+    const uevent::ConnectionUeventPtr& conn,
+    const MatrixPartition& partition,
+    float* out_ptr, int64_t out_bytes,
+    const float* row_ptr, int64_t row_size,
+    const float* col_ptr, int64_t col_size,
+    int64_t h_dim, uint64_t vt_compute_start,
+    bool is_host_alloc) {
+  auto args = BuildGemmArgs(col_ptr, col_size, row_ptr, row_size,
+                            h_dim, out_ptr);
+
+  uint64_t task_num = task_counter_.fetch_add(1, std::memory_order_relaxed);
+  std::string task_id = "gemm_cpu_" + std::to_string(task_num);
+
+  // Copy partition by value for the callback closure
+  MatrixPartition part_copy = partition;
+
+  TaskCallback callback = [this, conn, part_copy, out_ptr, out_bytes,
+                           col_size, vt_compute_start,
+                           is_host_alloc](const std::string&) {
+    loop_->RunInLoop([this, conn, part_copy, out_ptr, out_bytes,
+                      col_size, vt_compute_start, is_host_alloc]() {
+      OnComputeComplete(conn, part_copy, out_ptr, out_bytes,
+                        col_size, vt_compute_start, is_host_alloc);
+    });
+  };
+
+  cpu_pool_->EnqueueGemm(task_id, args, std::move(callback));
+  LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id)
+            << "[SubmitToCpuPool] task=" << task_id;
+}
+
+void ProxyCliHandle::OnComputeComplete(
+    const uevent::ConnectionUeventPtr& conn,
+    const MatrixPartition& partition,
+    float* out_ptr, int64_t out_bytes,
+    int64_t col_size, uint64_t vt_compute_start,
+    bool is_host_alloc) {
   // Record COMPUTE end time (virtual time)
   uint64_t vt_compute_end = VirtualClockNow();
   LOG_INFO << DEV_TAG(device_id_, partition.gemm_id)
@@ -311,7 +358,12 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   response.mat.push_back({out_ptr, out_bytes});
 
   // Zero-copy send: result buffer release is deferred to send completion
-  ResponseToCaller(conn, response, out_ptr);
+  if (is_host_alloc) {
+    ResponseToCaller(conn, response, /*deferred_cuda_ptr=*/nullptr,
+                     /*deferred_host_ptr=*/out_ptr);
+  } else {
+    ResponseToCaller(conn, response, /*deferred_cuda_ptr=*/out_ptr);
+  }
 }
 
 void ProxyCliHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -653,8 +705,10 @@ void ProxyCliImpl::HandlePartition(const ConnectionUeventPtr& conn,
   auto* loop_handle = loop->GetLoopHandle();
   auto* handle = reinterpret_cast<ProxyCliHandle*>(loop_handle);
   // handle->HandlePartition(conn, partition);
+  // Copy partition by value for safety with async dispatch
+  MatrixPartition part_copy = partition;
   loop->RunInLoop(bind(&ProxyCliHandle::HandlePartition, handle, conn,
-                       std::cref(partition)));
+                       std::move(part_copy)));
 }
 
 MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size) {
@@ -789,17 +843,21 @@ const map<ProxyStatusType, string> ProxyStatus::status_str_ = {
 
 ProxyCli::ProxyCli() : svr_(nullptr), loop_thread_(nullptr) {}
 
+ProxyCli::~ProxyCli() = default;
+
 void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
-  // detectm cuda availability and set device accordingly
+  // detect cuda availability and set device accordingly
   int device_count = 0;
   cudaError_t err = cudaGetDeviceCount(&device_count);
-  if (err != cudaSuccess) {
-    LOG_WARN << "Failed to get CUDA device count: " << cudaGetErrorString(err)
-             << ". Running in CPU-only mode.";
-    AlignedBufferPool::instance().SetPinFunctions(PosixPinBuffer,
-                                                  PosixUnpinBuffer);
-  } else if (device_count == 0) {
-    LOG_WARN << "No CUDA devices found. Running in CPU-only mode.";
+  bool has_gpu = (err == cudaSuccess && device_count > 0);
+
+  if (!has_gpu) {
+    if (err != cudaSuccess) {
+      LOG_WARN << "Failed to get CUDA device count: "
+               << cudaGetErrorString(err) << ". Running in CPU-only mode.";
+    } else {
+      LOG_WARN << "No CUDA devices found. Running in CPU-only mode.";
+    }
     AlignedBufferPool::instance().SetPinFunctions(PosixPinBuffer,
                                                   PosixUnpinBuffer);
   } else {
@@ -810,9 +868,39 @@ void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
   }
 
   context_.Initialize(cfg_file);
+
+  bool want_gpu = (context_.pool_mode == "gpu" ||
+                   context_.pool_mode == "both");
+  bool want_cpu = (context_.pool_mode == "cpu" ||
+                   context_.pool_mode == "both");
+
+  // Create worker pools based on config + hardware availability
+  if (want_gpu && has_gpu) {
+    int workers_per_gpu = 1;  // one green-context partition per GPU
+    size_t buffer_size = 256ull * 1024 * 1024;  // 256 MB per worker
+    gpu_pool_ = std::make_unique<XtGemmWorkerPool>(
+        workers_per_gpu, buffer_size,
+        WorkerSchedulingPolicy::kRoundRobinGemm);
+    LOG_INFO << "GPU worker pool created: " << workers_per_gpu
+             << " workers/GPU, " << device_count << " GPUs";
+  }
+  if (want_cpu) {
+    int num_cores = static_cast<int>(std::thread::hardware_concurrency());
+    int num_workers = std::max(1, num_cores / 2);
+    std::vector<int> cores;
+    cores.reserve(num_workers);
+    for (int i = 0; i < num_workers; i++) {
+      cores.push_back(i);
+    }
+    cpu_pool_ = std::make_unique<CpuWorkerPool>(
+        num_workers, std::move(cores),
+        WorkerSchedulingPolicy::kRoundRobinCpu);
+    LOG_INFO << "CPU worker pool created: " << num_workers << " workers";
+  }
   svr_ = make_shared<ProxyCliImpl>(context_, device_id);
   loop_thread_ = make_shared<UeventLoopThread>(
-      bind(ProxyCliHandle::CreateMyself, ref(context_), device_id, _1),
+      bind(ProxyCliHandle::CreateMyself, ref(context_), device_id,
+           gpu_pool_.get(), cpu_pool_.get(), _1),
       bind(&ProxyCliImpl::Initialize, svr_, _1), "Proxy svr main thread");
 }
 void ProxyCli::Start() { loop_thread_->StartLoop(); }

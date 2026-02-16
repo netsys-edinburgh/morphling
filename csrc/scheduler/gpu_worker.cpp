@@ -267,7 +267,7 @@ void XtGemmWorker::RunXtGemm(std::shared_ptr<GemmArgs> args) {
 // ---------------------------------------------------------------------------
 
 XtGemmWorkerPool::XtGemmWorkerPool(int workers_per_gpu, size_t buffer_size,
-                                   SchedulingPolicyType policy) {
+                                   WorkerSchedulingPolicy policy) {
   int device_count = 0;
   CHECK_CUDA_ERROR(cudaGetDeviceCount(&device_count));
 
@@ -281,17 +281,17 @@ XtGemmWorkerPool::XtGemmWorkerPool(int workers_per_gpu, size_t buffer_size,
   }
 
   switch (policy) {
-    case SchedulingPolicyType::kRoundRobinGemm:
+    case WorkerSchedulingPolicy::kRoundRobinGemm:
       scheduler_ = std::make_unique<RoundRobinGemmPolicy>(total_workers);
       break;
     default:
       LOG_FATAL << "Unsupported scheduling policy: "
-                << SchedulingPolicyTypeToString(policy);
+                << WorkerSchedulingPolicyToString(policy);
   }
 
   LOG_INFO << "XtGemmWorkerPool created: " << total_workers << " workers ("
            << workers_per_gpu << " per GPU, " << device_count
-           << " GPUs), policy=" << SchedulingPolicyTypeToString(policy);
+           << " GPUs), policy=" << WorkerSchedulingPolicyToString(policy);
 }
 
 XtGemmWorkerPool::~XtGemmWorkerPool() {

@@ -1,5 +1,8 @@
 #include "cpu_worker.h"
 
+#include <cblas.h>
+#include <openblas_config.h>
+
 #include <algorithm>
 #include <cstdlib>
 #include <unordered_set>
@@ -142,13 +145,37 @@ void CpuWorker::Run() {
   WorkerBase::Run();
 }
 
+void CpuWorker::RunMklGemm(std::shared_ptr<GemmArgs> args) {
+  int cores = active_slot_ ? active_slot_->core_count : 1;
+  LOG_DEBUG << "RunMklGemm on partition=" << partition_idx_
+            << " cores=" << cores << " " << args->DebugString();
+
+  // Constrain OpenBLAS threads to this worker's core allocation
+  openblas_set_num_threads(cores);
+
+  CBLAS_TRANSPOSE cblas_transa =
+      (args->transa[0] == 'N' || args->transa[0] == 'n') ? CblasNoTrans
+                                                          : CblasTrans;
+  CBLAS_TRANSPOSE cblas_transb =
+      (args->transb[0] == 'N' || args->transb[0] == 'n') ? CblasNoTrans
+                                                          : CblasTrans;
+
+  cblas_sgemm(CblasColMajor, cblas_transa, cblas_transb,
+              args->m[0], args->n[0], args->k[0],
+              args->alpha[0], args->a[0], args->lda[0],
+              args->b[0], args->ldb[0],
+              args->beta[0], args->c[0], args->ldc[0]);
+
+  LOG_DEBUG << "RunMklGemm completed on partition=" << partition_idx_;
+}
+
 // ---------------------------------------------------------------------------
 // CpuWorkerPool
 // ---------------------------------------------------------------------------
 
 CpuWorkerPool::CpuWorkerPool(int num_workers,
                               std::vector<int> assignable_cores,
-                              SchedulingPolicyType policy,
+                              WorkerSchedulingPolicy policy,
                               size_t buffer_size) {
   int total_cores = static_cast<int>(assignable_cores.size());
   int cores_per_worker = total_cores / num_workers;
@@ -167,18 +194,18 @@ CpuWorkerPool::CpuWorkerPool(int num_workers,
   }
 
   switch (policy) {
-    case SchedulingPolicyType::kRoundRobinCpu:
+    case WorkerSchedulingPolicy::kRoundRobinCpu:
       scheduler_ =
           std::make_unique<RoundRobinCpuPolicy>(num_workers);
       break;
     default:
       LOG_FATAL << "Unsupported scheduling policy for CpuWorkerPool: "
-                << SchedulingPolicyTypeToString(policy);
+                << WorkerSchedulingPolicyToString(policy);
   }
 
   LOG_INFO << "CpuWorkerPool created: " << num_workers
            << " workers over " << total_cores
-           << " cores, policy=" << SchedulingPolicyTypeToString(policy);
+           << " cores, policy=" << WorkerSchedulingPolicyToString(policy);
 }
 
 CpuWorkerPool::~CpuWorkerPool() {
@@ -191,6 +218,16 @@ TaskHandle CpuWorkerPool::EnqueueTask(const std::string& task_id,
                                        WorkerBase::Task task,
                                        TaskCallback callback) {
   auto [worker_idx, priority] = scheduler_->Schedule(nullptr);
+  return workers_[worker_idx]->AddTask(
+      task_id, std::move(task), std::move(callback));
+}
+
+TaskHandle CpuWorkerPool::EnqueueGemm(
+    const std::string& task_id,
+    std::shared_ptr<GemmArgs> args,
+    TaskCallback callback) {
+  auto [worker_idx, priority] = scheduler_->Schedule(args.get());
+  auto task = std::bind(&CpuWorker::RunMklGemm, workers_[worker_idx], args);
   return workers_[worker_idx]->AddTask(
       task_id, std::move(task), std::move(callback));
 }

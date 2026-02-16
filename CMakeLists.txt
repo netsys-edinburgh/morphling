@@ -324,6 +324,7 @@ set(MORPHLING_MSG_SRC
   "csrc/scheduler/amqp_dispatcher.cpp"
   "csrc/scheduler/amqp_worker.cpp"
   "csrc/scheduler/cpu_worker.cpp"
+  "csrc/scheduler/gpu_worker.cpp"
   "csrc/python/client_py.cpp"
   "csrc/utils/logger.cpp"
   "csrc/memory/caching_allocator.cpp"
@@ -337,6 +338,8 @@ set(MORPHLING_EXT_LIB
   redis++
   hiredis
   event
+  openblas
+  CUDA::cublas
 )
 
 define_gpu_extension_target(

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cblas.h>
 #include <sched.h>
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "intercept/interceptor.h"
 #include "memory/caching_allocator.h"
 #include "scheduling_policy.h"
 #include "utils/thread_affinity.h"
@@ -82,6 +84,9 @@ class CpuWorker : public WorkerBase,
   // set). Returns false if any core is not in the assigned set.
   bool SwitchAffinity(const std::vector<int>& cores);
 
+  // MKL cblas_sgemm: CPU-side GEMM mirroring XtGemmWorker::RunXtGemm.
+  void RunMklGemm(std::shared_ptr<GemmArgs> args);
+
   int GetActiveCoreCount() const;
   std::vector<int> GetActiveCores() const;
   const std::vector<int>& GetAssignedCores() const {
@@ -118,13 +123,16 @@ class CpuWorkerPool : public noncopyable {
   // policy: scheduling policy for task distribution
   // buffer_size: CachingAllocator pool size per worker
   CpuWorkerPool(int num_workers, std::vector<int> assignable_cores,
-                SchedulingPolicyType policy, size_t buffer_size = 0);
+                WorkerSchedulingPolicy policy, size_t buffer_size = 0);
   ~CpuWorkerPool();
 
   DELETE_COPY_AND_ASSIGN(CpuWorkerPool);
 
   TaskHandle EnqueueTask(const std::string& task_id,
                          WorkerBase::Task task,
+                         TaskCallback callback = nullptr);
+  TaskHandle EnqueueGemm(const std::string& task_id,
+                         std::shared_ptr<GemmArgs> args,
                          TaskCallback callback = nullptr);
   void WaitAll();
   void Wait(const std::string& task_id);

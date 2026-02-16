@@ -224,7 +224,4 @@ if(ENABLE_ZEROCOPY_TESTS)
     IMPORT_DIRS "${PROTO_SRC_DIR}"
   )
   add_custom_target(generate_proto_files ALL DEPENDS ${PROTO_SRCS})
-
-  add_subdirectory(unit/zerocopy)
-  add_subdirectory(bench/zerocopy)
 endif()

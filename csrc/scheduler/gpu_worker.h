@@ -118,7 +118,7 @@ class XtGemmWorkerPool : public noncopyable {
   // buffer_size: CachingAllocator pool size per worker
   // policy: scheduling policy for task distribution
   XtGemmWorkerPool(int workers_per_gpu, size_t buffer_size,
-                   SchedulingPolicyType policy);
+                   WorkerSchedulingPolicy policy);
   ~XtGemmWorkerPool();
 
   DELETE_COPY_AND_ASSIGN(XtGemmWorkerPool);
