@@ -13,8 +13,7 @@
 #include "utils/noncopyable.h"
 
 // Async completion callback type
-using TaskCallback =
-    std::function<void(const std::string& task_id)>;
+using TaskCallback = std::function<void(const std::string& task_id)>;
 
 // Per-task completion state, shared between producer and consumer
 struct TaskState {
@@ -75,8 +74,7 @@ class WorkerBase : public noncopyable {
     worker_.join();
   }
 
-  virtual TaskHandle AddTask(const std::string& task_id,
-                             Task&& t,
+  virtual TaskHandle AddTask(const std::string& task_id, Task&& t,
                              TaskCallback callback = nullptr) {
     auto state = std::make_shared<TaskState>();
     state->task_id = task_id;
@@ -96,8 +94,7 @@ class WorkerBase : public noncopyable {
   virtual void Run() {
     while (true) {
       std::unique_lock<std::mutex> lock(mutex_);
-      cv_.wait(lock,
-               [this] { return !tasks_.empty() || quit_; });
+      cv_.wait(lock, [this] { return !tasks_.empty() || quit_; });
       if (quit_) {
         break;
       }
@@ -137,9 +134,8 @@ class WorkerBase : public noncopyable {
 
   void WaitTaskDone() {
     std::unique_lock<std::mutex> lock(mutex_);
-    cv_.wait(lock, [this] {
-      return (tasks_.empty() && task_count_ == 0) || quit_;
-    });
+    cv_.wait(lock,
+             [this] { return (tasks_.empty() && task_count_ == 0) || quit_; });
   }
 
   void WaitTaskDone(const std::string& task_id) {
@@ -154,9 +150,7 @@ class WorkerBase : public noncopyable {
   std::condition_variable cv_;
   bool quit_ = false;
   std::thread worker_;
-  std::deque<
-      std::tuple<std::string, Task, TaskHandle>>
-      tasks_;
+  std::deque<std::tuple<std::string, Task, TaskHandle>> tasks_;
   std::unordered_set<std::string> task_ids_;
   std::atomic_int task_count_{0};
 };
@@ -165,8 +159,9 @@ class WorkerPool : public noncopyable {
  public:
   WorkerPool(int num_workers) : num_workers_(num_workers) {
     for (int i = 0; i < num_workers_; i++) {
-      workers_.emplace_back(
-          std::make_unique<WorkerBase>());
+      auto worker = std::make_unique<WorkerBase>();
+      worker->Start();
+      workers_.emplace_back(std::move(worker));
     }
   }
 
@@ -176,12 +171,10 @@ class WorkerPool : public noncopyable {
     }
   }
 
-  TaskHandle AddTask(const std::string& task_id,
-                     WorkerBase::Task&& t,
+  TaskHandle AddTask(const std::string& task_id, WorkerBase::Task&& t,
                      TaskCallback callback = nullptr) {
     auto& worker = workers_[next_worker_];
-    auto handle = worker->AddTask(
-        task_id, std::move(t), std::move(callback));
+    auto handle = worker->AddTask(task_id, std::move(t), std::move(callback));
     next_worker_ = (next_worker_ + 1) % num_workers_;
     return handle;
   }

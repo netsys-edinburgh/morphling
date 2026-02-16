@@ -8,7 +8,7 @@
   X(kRoundRobinGemm, EnumType)               \
   X(kRoundRobinCpu, EnumType)
 
-DEFINE_ENUM_CLASS(SchedulingPolicyType, SCHEDULING_POLICY_VALUES)
+DEFINE_ENUM_CLASS(WorkerSchedulingPolicy, SCHEDULING_POLICY_VALUES)
 
 class SchedulingPolicy {
  public:

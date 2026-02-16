@@ -1,70 +1,89 @@
 # C++ Tests
 
-This directory contains standalone C++ tests and benchmarks. Two CUDA/cuBLAS
-tests validate whether host-allocated buffers can be used directly with
-cuBLAS, and compare mapped vs. non-mapped host registration.
+This directory contains standalone C++ tests and benchmarks organized by type and component.
 
-## CUDA/cuBLAS Tests
+## Test Organization
 
-### 1) `test_cublas_hostalloc_direct`
+```
+tests/cpp/
+├── unit/           # Unit tests (Google Test)
+│   ├── cuda/      # CUDA/cuBLAS tests
+│   ├── memory/    # Memory operation tests
+│   ├── ml/        # ML framework tests
+│   ├── network/   # Network/messaging tests
+│   ├── worker/    # Worker tests
+│   └── zerocopy/  # Zero-copy buffer tests
+│
+├── bench/          # Benchmarks (Google Benchmark)
+│   ├── cuda/      # CUDA benchmarks
+│   └── zerocopy/  # Zero-copy benchmarks
+│
+└── integration/   # Integration tests (placeholder)
+```
 
-Goal: Compare cuBLAS behavior when using:
+## Running Tests
 
-- `cudaHostAllocDefault` (host pointer directly)
-- `cudaHostAllocMapped` + `cudaHostGetDevicePointer` (mapped device pointer)
+Tests are automatically built in the Docker image. Use the test runner script:
 
-### 2) `test_cublas_hostregister_posix`
+```bash
+# Run all tests
+./tests/run_cpp_tests.sh
 
-Goal: Compare cuBLAS behavior when using:
+# Run specific categories
+./tests/run_cpp_tests.sh unit      # Unit tests only
+./tests/run_cpp_tests.sh cuda     # CUDA tests
+./tests/run_cpp_tests.sh worker   # Worker tests
+```
 
-- `posix_memalign` (+ `mlock`) host pointers directly
-- `cudaHostRegisterDefault` host pointers directly
-- `cudaHostRegisterMapped` + `cudaHostGetDevicePointer`
-
-Both tests print CUDA pointer attributes and the cuBLAS status so you can see
-which pointer modes are accepted.
-
-## Build and Run in Docker
-
-These commands assume the Docker image is already built with the provided
-`Dockerfile`, and you have a running container with GPU access.
+## Running Tests in Docker
 
 ### Option A: exec into existing container
 
 ```bash
-sudo docker exec -it <container_id> bash -lc "\
-  cmake -S tests/cpp -B tests/cpp/build && \
-  cmake --build tests/cpp/build -j && \
-  ./tests/cpp/build/test_cublas_hostalloc_direct && \
-  ./tests/cpp/build/test_cublas_hostregister_posix"
+docker exec -it <container_id> bash -lc "cd /app && ./tests/run_cpp_tests.sh"
 ```
 
 ### Option B: one-shot run
 
 ```bash
-sudo docker run --rm --gpus=all --ulimit memlock=-1 --cap-add IPC_LOCK \
+docker run --rm --gpus=all --ulimit memlock=-1 --cap-add IPC_LOCK \
   -v "$(pwd)":/app -w /app device-emulator:latest \
-  bash -lc "\
-    cmake -S tests/cpp -B tests/cpp/build && \
-    cmake --build tests/cpp/build -j && \
-    ./tests/cpp/build/test_cublas_hostalloc_direct && \
-    ./tests/cpp/build/test_cublas_hostregister_posix"
+  bash -lc "./tests/run_cpp_tests.sh"
+```
+
+### Run individual tests
+
+```bash
+docker run --rm --gpus=all device-emulator:latest \
+  /app/tests/cpp/build/test_worker_base
+```
+
+## Available Tests
+
+The following tests are built by default:
+
+- `test_worker_base` - WorkerBase tests (unit/worker/)
+- `test_cublas_hostalloc_direct` - CUDA host allocation test
+- `test_cublas_hostregister_posix` - CUDA host register test
+- `test_cublas_error15_repro` - cuBLAS error reproduction test
+
+Additional tests require specific CMake flags (see Building Tests below).
+
+## Building Tests (if needed)
+
+If you need to rebuild tests manually:
+
+```bash
+# Build all tests with all features
+cmake -S tests/cpp -B tests/cpp/build \
+    -DENABLE_CUDA_TESTS=ON \
+    -DENABLE_XTGEMM_TESTS=ON \
+    -DENABLE_ZEROCOPY_TESTS=ON
+cmake --build tests/cpp/build -j
 ```
 
 ## Notes
 
-- Zerocopy tests are optional and controlled via:
-
-```bash
-cmake -S tests/cpp -B tests/cpp/build -DENABLE_ZEROCOPY_TESTS=ON
-```
-
-By default, zerocopy tests are off so CUDA tests can build independently
-without `generate_proto_files`.
-
-- CUDA tests are optional and default on. If CUDA toolkit libraries are
-missing, CMake will skip them with a warning. You can force-disable via:
-
-```bash
-cmake -S tests/cpp -B tests/cpp/build -DENABLE_CUDA_TESTS=OFF
-```
+- All tests require building in Docker with proper GPU support
+- Tests are built automatically in the Docker image
+- Some tests (XtGemm, Zerocopy) require additional dependencies and are disabled by default

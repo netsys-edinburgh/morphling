@@ -310,7 +310,7 @@ TEST_F(XtGemmWorkerTest, WorkerPool_RoundRobin) {
   const int workers_per_gpu = 2;
   const size_t buffer = 256_MB;
   XtGemmWorkerPool pool(workers_per_gpu, buffer,
-                        SchedulingPolicyType::kRoundRobinGemm);
+                        WorkerSchedulingPolicy::kRoundRobinGemm);
 
   const int num_tasks = 4;
   const int m = 256, n = 256, k = 128;

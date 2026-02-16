@@ -65,6 +65,7 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
   PARSE_INT_ENVCFG(parser, "worker", "max_inflight", false, 5, max_inflight);
   PARSE_INT_ENVCFG(parser, "worker", "block_size", false, 32, block_size);
   PARSE_INT_ENVCFG(parser, "worker", "num_device", false, 32, num_device);
+  PARSE_STR_ENVCFG(parser, "worker", "pool_mode", false, "gpu", pool_mode);
 
   PARSE_INT_ENVCFG(parser, "internal", "cleanup_wait", false, 60, cleanup_wait);
   PARSE_INT_ENVCFG(parser, "internal", "tcp_timeout", false, 5, tcp_timeout);
