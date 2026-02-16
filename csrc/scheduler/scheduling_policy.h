@@ -4,9 +4,11 @@
 
 #include "common/types_and_defs.h"
 
-#define SCHEDULING_POLICY_VALUES(X, EnumType) X(kRoundRobinGemm, EnumType)
+#define SCHEDULING_POLICY_VALUES(X, EnumType) \
+  X(kRoundRobinGemm, EnumType)               \
+  X(kRoundRobinCpu, EnumType)
 
-DEFINE_ENUM_CLASS(SchedulingPolicyType, SCHEDULING_POLICY_VALUES)
+DEFINE_ENUM_CLASS(WorkerSchedulingPolicy, SCHEDULING_POLICY_VALUES)
 
 class SchedulingPolicy {
  public:
@@ -33,4 +35,20 @@ class RoundRobinGemmPolicy : public SchedulingPolicy {
  private:
   int num_gpus_;
   int next_gpu_id_ = 0;
+};
+
+class RoundRobinCpuPolicy : public SchedulingPolicy {
+ public:
+  RoundRobinCpuPolicy(int num_workers) : num_workers_(num_workers) {}
+  ~RoundRobinCpuPolicy() = default;
+
+  std::tuple<int, int> Schedule(void* args) override {
+    int worker_id = next_worker_id_;
+    next_worker_id_ = (next_worker_id_ + 1) % num_workers_;
+    return {worker_id, 0};
+  }
+
+ private:
+  int num_workers_;
+  int next_worker_id_ = 0;
 };

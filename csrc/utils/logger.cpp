@@ -11,6 +11,8 @@
 #include <cstdlib>
 #include <iostream>
 
+std::unique_ptr<base::LogFile> g_tee_log_file;
+
 std::once_flag kLoggerFlag;
 int kLogLevel = -1;
 std::mutex kLogMutex;
@@ -84,4 +86,18 @@ void InitLogger() {
     LOG_INFO << "Logger initialized with level: "
              << (log_level_env ? log_level_env : "INFO");
   });
+}
+
+void TeeOutput(const char* msg, int len) {
+  ::fwrite(msg, 1, len, stdout);
+  if (g_tee_log_file) {
+    g_tee_log_file->append(msg, len);
+  }
+}
+
+void TeeFlush() {
+  ::fflush(stdout);
+  if (g_tee_log_file) {
+    g_tee_log_file->flush();
+  }
 }

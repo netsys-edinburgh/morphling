@@ -5,9 +5,13 @@
 
 #pragma once
 
+#include <cstdint>
 #include <iostream>
+#include <memory>
 #include <mutex>
+#include <string>
 
+#include "base/log_file.h"
 #include "base/logging.h"
 #include "common/types_and_defs.h"  // for TensorKey
 
@@ -40,6 +44,7 @@ enum LogLevel { kFatal, kDebug, kInfo, kWarn, kError };
 extern std::once_flag kLoggerFlag;
 extern int kLogLevel;
 extern std::mutex kLogMutex;
+extern std::unique_ptr<base::LogFile> g_tee_log_file;
 
 extern void InitLogger();
 
@@ -58,19 +63,8 @@ extern void InitLogger();
 #define LOG_INFO_IF(cond) \
   if (cond) LOG_INFO
 
-#define CHECK_CUBLAS_ERROR(call)                                    \
-  {                                                                 \
-    cublasStatus_t err = (call);                                    \
-    LOG_FATAL_IF(err != CUBLAS_STATUS_SUCCESS)                      \
-        << "CUBLAS error. message: " << cublasGetStatusString(err); \
-  }
-
-#define CHECK_CUDA_ERROR(call)                                 \
-  {                                                            \
-    cudaError_t err = (call);                                  \
-    LOG_FATAL_IF(err != cudaSuccess)                           \
-        << "CUDA error. message: " << cudaGetErrorString(err); \
-  }
+void TeeOutput(const char* msg, int len);
+void TeeFlush();
 
 // Streaming operators for common types used in logging
 template <typename T>
@@ -91,3 +85,21 @@ inline base::LogStream& operator<<(base::LogStream& stream,
          << std::get<2>(key) << ":" << std::get<3>(key) << "]";
   return stream;
 }
+
+// Device log tag helpers (moved from utils/device_log_tag.h)
+inline std::string DevLogTag(int64_t dev_id, int64_t gemm_id) {
+  return "[dev:" + std::to_string(dev_id) + "|gemm:" + std::to_string(gemm_id) +
+         "] ";
+}
+
+inline std::string DevLogTag(int64_t dev_id, std::string part_key) {
+  return "[dev:" + std::to_string(dev_id) + "|part:" + part_key + "] ";
+}
+
+inline std::string DevLogTagDev(int64_t dev_id) {
+  return "[dev:" + std::to_string(dev_id) + "] ";
+}
+
+#define DEV_TAG(dev_id, gemm_id) DevLogTag(dev_id, gemm_id)
+#define DEV_TAG_PART(dev_id, part_key) DevLogTag(dev_id, part_key)
+#define DEV_TAG_DEV(dev_id) DevLogTagDev(dev_id)

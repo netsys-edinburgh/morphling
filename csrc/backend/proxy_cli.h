@@ -1,9 +1,7 @@
 #pragma once
 
-#include <cublas_v2.h>
-
-#include <deque>
-#include <mutex>
+#include <atomic>
+#include <memory>
 
 #include "common/env_cfg.h"
 #include "common/lru.h"
@@ -12,6 +10,7 @@
 #include "network/connector_libevent.h"
 #include "network/uevent.h"
 #include "network/ueventloop_thread.h"
+#include "scheduler/sliding_window_tracker.h"
 #include "server_base.h"
 
 // ============================================================================
@@ -20,6 +19,11 @@
 
 class CudaPinnedMemoryPool {
  public:
+  static CudaPinnedMemoryPool& Instance() {
+    static CudaPinnedMemoryPool pool;
+    return pool;
+  }
+
   explicit CudaPinnedMemoryPool(size_t max_buffers_per_bucket = 16)
       : max_per_bucket_(max_buffers_per_bucket) {}
 
@@ -45,7 +49,8 @@ class CudaPinnedMemoryPool {
     }
     // Allocate new pinned buffer
     void* ptr = nullptr;
-    cudaError_t err = cudaHostAlloc(&ptr, bucket, cudaHostAllocDefault | cudaHostAllocMapped);
+    cudaError_t err =
+        cudaHostAlloc(&ptr, bucket, cudaHostAllocDefault | cudaHostAllocMapped);
     if (err != cudaSuccess || !ptr) {
       throw std::runtime_error("CudaPinnedMemoryPool: cudaHostAlloc failed");
     }
@@ -78,18 +83,28 @@ class CudaPinnedMemoryPool {
   std::unordered_map<size_t, std::deque<void*>> free_lists_;
 };
 
+// Forward declarations for worker pools
+struct GemmArgs;
+class XtGemmWorkerPool;
+class CpuWorkerPool;
+
 namespace morphling {
 namespace backend {
 
 class ProxyCliHandle : public uevent::LoopHandle {
  public:
-  ProxyCliHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop);
+  ProxyCliHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop,
+                 int64_t device_id = 0,
+                 XtGemmWorkerPool* gpu_pool = nullptr,
+                 CpuWorkerPool* cpu_pool = nullptr);
   ~ProxyCliHandle();
 
   static void ThreadInit(uevent::UeventLoop* loop);
-  static uevent::LoopHandle* CreateMyself(ProxyEnvCfg& ctx,
+  static uevent::LoopHandle* CreateMyself(ProxyEnvCfg& ctx, int64_t device_id,
+                                          XtGemmWorkerPool* gpu_pool,
+                                          CpuWorkerPool* cpu_pool,
                                           uevent::UeventLoop* loop) {
-    return new ProxyCliHandle(ctx, loop);
+    return new ProxyCliHandle(ctx, loop, device_id, gpu_pool, cpu_pool);
   }
 
  public:
@@ -100,24 +115,65 @@ class ProxyCliHandle : public uevent::LoopHandle {
   void ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
                         const MatrixPartition& partition,
                         void* deferred_cuda_ptr = nullptr,
-                        size_t deferred_cuda_bucket = 0);
+                        void* deferred_host_ptr = nullptr);
   void HandlePartition(const uevent::ConnectionUeventPtr& conn,
                        const MatrixPartition& partition);
 
  private:
-  // cuBLAS helper methods
-  void InitCublas();
-  void CleanupCublas();
+  bool ShouldUseGpu() const;
+
+  void SubmitToGpuPool(const uevent::ConnectionUeventPtr& conn,
+                       const MatrixPartition& partition,
+                       float* out_ptr, int64_t out_bytes,
+                       const float* row_ptr, int64_t row_size,
+                       const float* col_ptr, int64_t col_size,
+                       int64_t h_dim, uint64_t vt_compute_start,
+                       bool is_host_alloc,
+                       SlidingWindowDurationTracker<>::TimePoint
+                           task_enqueue_time);
+  void SubmitToCpuPool(const uevent::ConnectionUeventPtr& conn,
+                       const MatrixPartition& partition,
+                       float* out_ptr, int64_t out_bytes,
+                       const float* row_ptr, int64_t row_size,
+                       const float* col_ptr, int64_t col_size,
+                       int64_t h_dim, uint64_t vt_compute_start,
+                       bool is_host_alloc,
+                       SlidingWindowDurationTracker<>::TimePoint
+                           task_enqueue_time);
+  static std::shared_ptr<GemmArgs> BuildGemmArgs(
+      const float* col_ptr, int64_t col_size,
+      const float* row_ptr, int64_t row_size,
+      int64_t h_dim, float* out_ptr);
+  void OnComputeComplete(const uevent::ConnectionUeventPtr& conn,
+                         const MatrixPartition& partition,
+                         float* out_ptr, int64_t out_bytes,
+                         int64_t col_size, uint64_t vt_compute_start,
+                         bool is_host_alloc, bool is_gpu_task,
+                         SlidingWindowDurationTracker<>::TimePoint
+                             task_enqueue_time);
 
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
-  cublasHandle_t cublas_handle_;
-  CudaPinnedMemoryPool cuda_pool_;
+  int64_t device_id_;
+  XtGemmWorkerPool* gpu_pool_;
+  CpuWorkerPool* cpu_pool_;
+  std::atomic<uint64_t> task_counter_{0};
+
+  // Sliding window trackers for dispatch estimation
+  SlidingWindowDurationTracker<64> gpu_duration_tracker_{1000};  // 1ms default
+  SlidingWindowDurationTracker<64> cpu_duration_tracker_{5000};  // 5ms default
+};
+
+struct CachedTensor {
+  void* data = nullptr;
+  int64_t rows = 0;
+  int64_t cols = 0;
+  int64_t bytes = 0;
 };
 
 class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
  public:
-  ProxyCliImpl(ProxyEnvCfg& context);
+  ProxyCliImpl(ProxyEnvCfg& context, int64_t device_id);
   void Initialize(uevent::UeventLoop* loop);
 
  private:
@@ -152,6 +208,7 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
 
  private:
   ProxyEnvCfg& ctx_;
+  int64_t device_id_;
   std::shared_ptr<uevent::ConnectorLibevent> connector_;
 
   // sw::redis::Redis* redis_;
@@ -160,7 +217,7 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
   std::string uuid_;
   std::vector<MatrixPartition> cached_partitions_;
   std::unordered_set<PtrData> cached_msgs_;
-  FixSizeLRUCache<TensorKey, torch::Tensor> cached_tensors_;
+  FixSizeLRUCache<TensorKey, CachedTensor> cached_tensors_;
 };
 
 typedef std::shared_ptr<ProxyCliImpl> ProxyCliImplPtr;
@@ -193,7 +250,8 @@ class ProxyCli {
 
  public:
   ProxyCli();
-  void Initialize(const std::string& cfg_file);
+  ~ProxyCli();
+  void Initialize(const std::string& cfg_file, int64_t device_id = 0);
   void Start();
   void Send(const torch::Tensor& tensor,
             std::optional<int64_t> rank = std::nullopt);
@@ -207,6 +265,10 @@ class ProxyCli {
  private:
   ProxyCliImplPtr svr_;
   ProxyEnvCfg context_;
+  // Worker pools declared before loop_thread_ for correct destruction order:
+  // loop_thread_ is destroyed first (draining callbacks), then pools.
+  std::unique_ptr<XtGemmWorkerPool> gpu_pool_;
+  std::unique_ptr<CpuWorkerPool> cpu_pool_;
   std::shared_ptr<uevent::UeventLoopThread> loop_thread_;
 };
 
