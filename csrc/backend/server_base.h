@@ -25,12 +25,23 @@ class AlignedBufferPool {
   static constexpr size_t PAGE_SIZE = 4096;
   static constexpr size_t MAX_BUFFERS_PER_BUCKET = 32;
 
+  // Pluggable pin/unpin callbacks. Return 0 on success.
+  using PinFn = int (*)(void* ptr, size_t size);
+  using UnpinFn = void (*)(void* ptr, size_t size);
+
   static AlignedBufferPool& instance() {
     static AlignedBufferPool pool;
     return pool;
   }
 
-  // Acquire a buffer of at least `size` bytes (page-aligned, mlocked)
+  // Override the default mlock/munlock pinning strategy.
+  // Must be called before any Acquire() (e.g. at process startup).
+  void SetPinFunctions(PinFn pin, UnpinFn unpin) {
+    pin_fn_ = pin;
+    unpin_fn_ = unpin;
+  }
+
+  // Acquire a buffer of at least `size` bytes (page-aligned, pinned)
   // Returns {pointer, actual_bucket_size}
   std::pair<uint8_t*, size_t> Acquire(size_t size) {
     size_t bucket = BucketSize(size);
@@ -54,7 +65,7 @@ class AlignedBufferPool {
       free_list.push_back(ptr);
     } else {
       // Pool is full, free the buffer
-      munlock(ptr, bucket_size);
+      unpin_fn_(ptr, bucket_size);
       free(ptr);
     }
   }
@@ -63,7 +74,7 @@ class AlignedBufferPool {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& [bucket_size, free_list] : free_lists_) {
       for (auto* ptr : free_list) {
-        munlock(ptr, bucket_size);
+        unpin_fn_(ptr, bucket_size);
         free(ptr);
       }
     }
@@ -76,6 +87,10 @@ class AlignedBufferPool {
  private:
   AlignedBufferPool(const AlignedBufferPool&) = delete;
   AlignedBufferPool& operator=(const AlignedBufferPool&) = delete;
+
+  static int DefaultPin(void* ptr, size_t size) { return mlock(ptr, size); }
+
+  static void DefaultUnpin(void* ptr, size_t size) { munlock(ptr, size); }
 
   // Round up to the next power-of-two bucket size (min 4KB)
   static size_t BucketSize(size_t size) {
@@ -92,13 +107,16 @@ class AlignedBufferPool {
     if (ret != 0 || !ptr) {
       throw std::runtime_error("AlignedBufferPool: posix_memalign failed");
     }
-    ret = mlock(ptr, size);
+    ret = pin_fn_(ptr, size);
     if (ret != 0) {
-      throw std::runtime_error("AlignedBufferPool: mlock failed");
+      // Pin failure is non-fatal, continue without pinning
+      throw std::runtime_error("AlignedBufferPool: pin_fn_ failed");
     }
     return ptr;
   }
 
+  PinFn pin_fn_ = DefaultPin;
+  UnpinFn unpin_fn_ = DefaultUnpin;
   std::mutex mutex_;
   std::unordered_map<size_t, std::deque<uint8_t*>> free_lists_;
 };

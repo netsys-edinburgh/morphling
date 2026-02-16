@@ -276,6 +276,7 @@ def main():
 
         inputs = inputs.to("cpu")
         model = model.to("cpu")
+        model = model.to(torch.float32)
 
         # Debug: Print input info
         print(f"Input shape: {inputs['input_ids'].shape}")

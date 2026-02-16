@@ -7,6 +7,22 @@
 
 #include "logger.h"
 
+bool LogCudaError(cudaError_t status, const char* context) {
+  if (status == cudaSuccess) {
+    return true;
+  }
+  LOG_ERROR << context << " failed: " << cudaGetErrorString(status);
+  return false;
+}
+
+bool LogCublasError(cublasStatus_t status, const char* context) {
+  if (status == CUBLAS_STATUS_SUCCESS) {
+    return true;
+  }
+  LOG_ERROR << context << " failed: " << cublasGetStatusString(status);
+  return false;
+}
+
 bool IsDevicePointer(const void* ptr) {
   cudaPointerAttributes attr;
   cudaError_t err = cudaPointerGetAttributes(&attr, ptr);

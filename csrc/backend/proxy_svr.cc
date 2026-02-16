@@ -1,9 +1,5 @@
 #include "proxy_svr.h"
 
-#include <sched.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-
 #include <chrono>
 
 #include "base/my_uuid.h"
@@ -15,7 +11,8 @@
 #include "partition_tracker.h"
 #include "proto_base.h"
 #include "server_base.h"
-#include "utils/logging.h"
+#include "utils/logger.h"
+#include "utils/thread_affinity.h"
 
 using namespace std;
 using namespace std::placeholders;
@@ -25,48 +22,18 @@ using namespace uevent;
 #include <iostream>
 #include <set>
 
-#include "base/logging.h"
-
 namespace morphling {
 namespace backend {
-
-// ============================================================================
-// Thread Pinning Helper
-// ============================================================================
 
 // Global atomic counter to assign each thread to a different CPU core
 static std::atomic<int> g_thread_core_counter(0);
 
-void PinThreadToCore(int core_id) {
-  pid_t tid = syscall(SYS_gettid);
-  cpu_set_t cpuset;
-
-  CPU_ZERO(&cpuset);
-  CPU_SET(core_id, &cpuset);
-
-  int ret = syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
-  if (ret == 0) {
-    LOG_TRACE << "Thread " << tid << " pinned to CPU core " << core_id;
-  } else {
-    LOG_WARN << "Failed to pin thread " << tid << " to core " << core_id
-             << " (errno: " << errno << ")";
-  }
-}
-
-// Auto-assign thread to next available CPU core
-void PinThreadToNextAvailableCore() {
-  // Get current number of CPUs available
-  int num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
-  if (num_cpus <= 0) {
-    LOG_WARN << "Failed to get number of CPUs, defaulting to 8";
-    num_cpus = 8;
-  }
-
-  // Atomically increment counter and assign core
+static void PinThreadToNextAvailableCore() {
+  int num_cpus = morphling::GetOnlineCoreCount();
   int core_id =
-      g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) % num_cpus;
-
-  PinThreadToCore(core_id);
+      g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) %
+      num_cpus;
+  morphling::PinThreadToCore(core_id);
 }
 
 /*********************************ProxySvrHandle***********************************/
@@ -87,6 +54,12 @@ void ProxySvrHandle::ThreadInit(uevent::UeventLoop* loop) {
   PinThreadToNextAvailableCore();
 }
 
+// Helper for zero-copy send cleanup of SerializationBuffer (registration msgs)
+static void SerializationBufferSendCleanup(const void* /*data*/, size_t /*len*/,
+                                           void* arg) {
+  delete static_cast<SerializationBufferPtr*>(arg);
+}
+
 void ProxySvrHandle::RequestWriteCb(const uevent::ConnectionUeventPtr& conn) {
   size_t readable = conn->ReadableLength();
   LOG_DEBUG << "RequestWriteCb readable: " << readable;
@@ -103,8 +76,10 @@ void ProxySvrHandle::SendRegisterRequest(const ConnectionUeventPtr& conn) {
             << BinaryToHex(static_cast<const uint8_t*>(buffer->GetBuffer()),
                            buffer->GetSize());
 
-  // Send the serialized request
-  int ret = conn->SendData(buffer->GetBuffer(), buffer->GetSize());
+  // Zero-copy send: buffer ref-count prevents deallocation until libevent done
+  auto* ref = new SerializationBufferPtr(buffer);
+  int ret = conn->SendDataZeroCopy(buffer->GetBuffer(), buffer->GetSize(),
+                                   SerializationBufferSendCleanup, ref);
   if (ret < 0) {
     LOG_ERROR << "Failed to send registration request";
     conn->ForceClose();
@@ -673,15 +648,19 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
   for (auto& partition : partitions) {
     partition->oid = mm_count_;
     partition->gemm_id = gemm_id_count_;  // assign global gemm_id
+    partition->dev_id =
+        -1;  // Mark as unassigned, will be assigned by scheduling policy
 
-    // Add partition to tracker with ownership (automatically marked as IDLE)
-    PARTITION_TRACKER.AddPartition(
-        partition->dev_id, partition->GetPartitionKey(), mm_count_, partition);
+    // Add partition to tracker with dev_id=-1 (unassigned, to be scheduled)
+    // The tracker will use owner_device_id=-1 until scheduling assigns a real
+    // device
+    PARTITION_TRACKER.AddPartition(-1, partition->GetPartitionKey(), mm_count_,
+                                   partition);
 
     LOG_DEBUG << "[DispatchMatMulAsync] Created IDLE partition key="
               << partition->GetPartitionKey()
-              << ", dev_id=" << partition->dev_id << ", oid=" << mm_count_
-              << ", gemm_id=" << partition->gemm_id;
+              << ", dev_id=" << partition->dev_id << " (unassigned)"
+              << ", oid=" << mm_count_ << ", gemm_id=" << partition->gemm_id;
   }
   auto end = std::chrono::high_resolution_clock::now();
   LOG_INFO << "[DispatchMatMulAsync] Created " << partitions.size()
@@ -710,6 +689,104 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
       LOG_WARN << "[WaitMatMul] Still waiting for oid=" << oid
                << ", rsp_cb_counts_[oid]=" << rsp_cb_counts_[oid]
                << ", poll_count=" << poll_count * 100 << "ms";
+
+      // Diagnose partition states across all devices
+      auto connected_devices = DEVICE_TRACKER.GetConnectedDevices();
+      LOG_WARN << "[WaitMatMul] Connected devices: "
+               << connected_devices.size();
+
+      size_t total_idle = 0, total_running = 0, total_finished = 0;
+      size_t devices_with_partitions = 0;
+      std::vector<int64_t> devices_with_oid;
+
+      for (int64_t device_id : connected_devices) {
+        auto stats = PARTITION_TRACKER.GetDeviceOidStats(device_id, oid);
+        size_t device_total =
+            stats.idle_count + stats.running_count + stats.finished_count;
+
+        if (device_total > 0) {
+          devices_with_partitions++;
+          devices_with_oid.push_back(device_id);
+          bool is_connected = DEVICE_TRACKER.IsDeviceConnected(device_id);
+          total_idle += stats.idle_count;
+          total_running += stats.running_count;
+          total_finished += stats.finished_count;
+
+          LOG_WARN << "[WaitMatMul]   Device " << device_id
+                   << " (connected=" << (is_connected ? "YES" : "NO") << ")"
+                   << ": IDLE=" << stats.idle_count
+                   << ", RUNNING=" << stats.running_count
+                   << ", FINISHED=" << stats.finished_count
+                   << ", Total=" << device_total;
+
+          // Show first few partition keys for debugging (only for first 3
+          // devices)
+          if (devices_with_partitions <= 3) {
+            if (!stats.partition_keys.empty() &&
+                stats.partition_keys.size() <= 5) {
+              std::string keys_str;
+              for (const auto& key : stats.partition_keys) {
+                if (!keys_str.empty()) keys_str += ", ";
+                keys_str += key;
+              }
+              LOG_WARN << "[WaitMatMul]     Partition keys: " << keys_str;
+            } else if (stats.partition_keys.size() > 5) {
+              LOG_WARN << "[WaitMatMul]     First partition key: "
+                       << stats.partition_keys[0] << " (+ "
+                       << (stats.partition_keys.size() - 1) << " more)";
+            }
+          }
+        }
+      }
+
+      // Summary with device distribution info
+      LOG_WARN << "[WaitMatMul] Summary for oid=" << oid
+               << ": Devices with partitions=" << devices_with_partitions << "/"
+               << connected_devices.size() << ", Total IDLE=" << total_idle
+               << ", RUNNING=" << total_running
+               << ", FINISHED=" << total_finished
+               << ", Expected remaining=" << rsp_cb_counts_[oid];
+
+      // Critical: if only 1 device has all partitions, this is a scheduling
+      // problem!
+      if (devices_with_partitions == 1 && connected_devices.size() > 1) {
+        LOG_ERROR << "[WaitMatMul] ⚠️  SCHEDULING ISSUE: All "
+                  << (total_idle + total_running + total_finished)
+                  << " partitions assigned to single device "
+                  << devices_with_oid[0] << " while "
+                  << (connected_devices.size() - 1)
+                  << " other devices are idle!";
+      } else if (devices_with_partitions > 0 && devices_with_partitions <= 10) {
+        std::string device_list;
+        for (auto dev_id : devices_with_oid) {
+          if (!device_list.empty()) device_list += ", ";
+          device_list += std::to_string(dev_id);
+        }
+        LOG_WARN << "[WaitMatMul] Devices with oid=" << oid << ": ["
+                 << device_list << "]";
+      }
+
+      // Check if partitions are stuck in RUNNING state
+      if (total_running > 0 && total_running == rsp_cb_counts_[oid] &&
+          total_idle == 0) {
+        LOG_ERROR << "[WaitMatMul] ⚠️  STUCK PARTITIONS: All " << total_running
+                  << " partitions stuck in RUNNING state for "
+                  << poll_count * 100 << "ms";
+        LOG_ERROR << "[WaitMatMul] Possible causes: 1) Devices not responding "
+                     "2) Network issues 3) Devices processing too slowly";
+
+        // Sample a few devices to check connection quality
+        size_t check_count = std::min(size_t(5), devices_with_oid.size());
+        for (size_t i = 0; i < check_count; ++i) {
+          int64_t dev_id = devices_with_oid[i];
+          auto conn = DEVICE_TRACKER.GetDeviceConnection(dev_id);
+          bool has_conn = (conn != nullptr);
+          bool conn_closed = has_conn ? conn->IsClosed() : true;
+          LOG_ERROR << "[WaitMatMul]   Sample device " << dev_id
+                    << ": has_connection=" << (has_conn ? "YES" : "NO")
+                    << ", connection_closed=" << (conn_closed ? "YES" : "NO");
+        }
+      }
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
@@ -836,6 +913,9 @@ void ProxySvrHandle::SendIdlePartitions() {
     return;
   }
 
+  LOG_INFO << "[SendIdlePartitions] Found " << idle_partitions.size()
+           << " IDLE partitions, running scheduling policy";
+
   auto redistributed =
       ctx_.sched_policy->RedistributePartitions(idle_partitions);
 
@@ -844,33 +924,49 @@ void ProxySvrHandle::SendIdlePartitions() {
     return;
   }
 
-  LOG_INFO << "[SendIdlePartitions] Sending " << idle_partitions.size()
-           << " IDLE partitions to devices";
+  LOG_INFO << "[SendIdlePartitions] Scheduling complete, moving partitions to "
+              "assigned devices";
 
+  // IMPORTANT: After scheduling, partitions' owner_device_id has been updated
+  // We need to move them from device -1 to their assigned devices in tracker
+  // Do this BEFORE marking as RUNNING to avoid race conditions
   for (const auto& part_info : idle_partitions) {
-    // Mark partition as RUNNING before sent
-    PARTITION_TRACKER.MarkPartitionRunning(
-        part_info->partition->GetPartitionKey());
-  }
+    int64_t old_device =
+        part_info
+            ->owner_device_id;  // This might be wrong due to scheduling update
+    // Find old device from partition_to_device_ map
 
-  // Send each IDLE partition
-  for (const auto& part_info : idle_partitions) {
+    LOG_DEBUG << "[SendIdlePartitions] Moving partition " << part_info->key
+              << " (oid=" << part_info->oid << ") to device "
+              << part_info->owner_device_id;
+
+    // Remove from old location and add to new location
+    PARTITION_TRACKER.RemovePartitionByKey(part_info->key);
+    PARTITION_TRACKER.AddPartition(part_info->owner_device_id, part_info->key,
+                                   part_info->oid, part_info->partition);
+
     // Update partition's dev_id to match the assigned device
     part_info->partition->dev_id = part_info->owner_device_id;
 
+    // Mark partition as RUNNING after it's in the correct device list
+    PARTITION_TRACKER.MarkPartitionRunning(part_info->key);
+  }
+
+  LOG_INFO << "[SendIdlePartitions] Sending " << idle_partitions.size()
+           << " partitions to devices";
+
+  // Send each partition
+  for (const auto& part_info : idle_partitions) {
     LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
-              << " (oid=" << part_info->oid << ") to device "
-              << part_info->owner_device_id;
-    // if (part_info->state != PartitionState::RUNNING) {
-    //   LOG_ERROR << "[SendIdlePartitions] Partition " << part_info->key
-    //             << " not in RUNNING state before sending!";
-    //   continue;
-    // }
+              << " to device " << part_info->owner_device_id;
+
     auto target_conn =
         DEVICE_TRACKER.GetDeviceConnection(part_info->owner_device_id);
     if (!target_conn) {
       LOG_ERROR << "[SendIdlePartitions] No connection for device "
                 << part_info->owner_device_id;
+      // Mark as IDLE again so it can be rescheduled
+      PARTITION_TRACKER.MarkPartitionIdle(part_info->key);
       continue;
     }
     auto* loop = target_conn->GetLoop();

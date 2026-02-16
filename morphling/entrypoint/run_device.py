@@ -179,7 +179,7 @@ def main():
                 return
 
         worker = AutoWorker.from_name(args.backend)
-        worker.initialize(args.cfg)
+        worker.initialize(args.cfg, args.id)
         worker.start()
         while True:
             time.sleep(1)

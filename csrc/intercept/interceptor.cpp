@@ -62,25 +62,7 @@ void TaskExecution(const GemmArgsPtr& args) {
   kCachingAllocator->Free(task_buffer);
 }
 
-std::tuple<size_t, size_t, size_t> CalculateTaskSizes(const GemmArgs* args) {
-  // LOG_DEBUG("Calculating task sizes");
-  if (args->group_size == 1) {
-    auto size_a = (args->transa[0] == 'N' || args->transa[0] == 'n')
-                      ? (args->lda[0]) * (args->k[0]) * sizeof(float)
-                      : (args->lda[0]) * (args->m[0]) * sizeof(float);
-    auto size_b = (args->transb[0] == 'N' || args->transb[0] == 'n')
-                      ? (args->ldb[0]) * (args->n[0]) * sizeof(float)
-                      : (args->ldb[0]) * (args->k[0]) * sizeof(float);
-    auto size_c = (args->ldc[0]) * (args->n[0]) * sizeof(float);
-    LOG_FATAL_IF(size_a == 0 || size_b == 0 || size_c == 0)
-        << "Invalid task sizes: A: " << size_a << ", B: " << size_b
-        << ", C: " << size_c;
-    return {size_a, size_b, size_c};
-  }
-  LOG_FATAL << "Grouped gemm not supported yet, group size: "
-            << args->group_size;
-  return {0, 0, 0};
-}
+// CalculateTaskSizes is now inline in interceptor.h
 
 // bool CheckBufferOffloaded(const void* buffer, size_t size) {
 //   // when the buffer is offloaded, the first and last uint32_t is the same

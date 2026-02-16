@@ -27,6 +27,7 @@ struct ProxyEnvCfg {
   int64_t block_size;
   int64_t num_device;
   int max_inflight;
+  std::string pool_mode;  // "gpu", "cpu", or "both"
 
   // log
   std::string log_path;

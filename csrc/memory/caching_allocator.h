@@ -91,7 +91,7 @@ class CachingAllocator : public noncopyable {
 
 extern std::once_flag kInitCachingAllocatorFlag;
 
-static void InitCachingAllocator(MemoryType type, int device_id = -1) {
+static inline void InitCachingAllocator(MemoryType type, int device_id = -1) {
   std::call_once(kInitCachingAllocatorFlag, [&]() {
     size_t bytes = 0;
     LOG_DEBUG << "InitCachingAllocator: type: " << MemoryTypeToString(type)

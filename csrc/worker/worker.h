@@ -31,32 +31,6 @@
 #define EXECUTING 4
 #define COMPLETE 5
 
-#define CHECK_CUBLAS_ERROR(call)                                      \
-  {                                                                   \
-    cublasStatus_t err = (call);                                      \
-    if (err != CUBLAS_STATUS_SUCCESS) {                               \
-      char log_buffer[256];                                           \
-      snprintf(log_buffer, sizeof(log_buffer),                        \
-               "CUBLAS error in file '%s' in line %i: %s.", __FILE__, \
-               __LINE__, cublasGetErrorString(err));                  \
-      log_message(log_buffer);                                        \
-      exit(EXIT_FAILURE);                                             \
-    }                                                                 \
-  }
-
-#define CHECK_CUDA_ERROR(call)                                                \
-  {                                                                           \
-    cudaError_t err = (call);                                                 \
-    if (err != cudaSuccess) {                                                 \
-      char log_buffer[256];                                                   \
-      snprintf(log_buffer, sizeof(log_buffer),                                \
-               "CUDA error in file '%s' in line %i: %s.", __FILE__, __LINE__, \
-               cudaGetErrorString(err));                                      \
-      log_message(log_buffer);                                                \
-      exit(EXIT_FAILURE);                                                     \
-    }                                                                         \
-  }
-
 const char* cublasGetErrorString(cublasStatus_t error);
 
 typedef struct {
