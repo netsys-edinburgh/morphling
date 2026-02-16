@@ -131,6 +131,12 @@ class XtGemmWorkerPool : public noncopyable {
 
   size_t GetWorkerCount() const { return workers_.size(); }
 
+  int GetPendingTaskCount() const {
+    int total = 0;
+    for (const auto& w : workers_) total += w->GetTaskCount();
+    return total;
+  }
+
  private:
   std::vector<std::shared_ptr<XtGemmWorker>> workers_;
   std::unique_ptr<SchedulingPolicy> scheduler_;
