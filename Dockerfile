@@ -61,6 +61,9 @@ RUN pip install --no-cache -r /app/requirements.txt
 # Copy the rest of the project files
 COPY . /app/
 
+# Remove old .so files that would shadow the newly built package
+RUN rm -f /app/morphling/*.so
+
 # ccache: persist compiler cache across Docker builds (requires BuildKit)
 ARG USE_CCACHE=1
 ENV CCACHE_DIR=/ccache
@@ -89,3 +92,4 @@ EXPOSE 39000
 # 设置环境变量用于运行时
 ENV SPDLOG_LEVEL=debug
 ENV MORPHLING_HOME=/app
+ENV PYTHONPATH=/opt/conda/lib/python3.11/site-packages
