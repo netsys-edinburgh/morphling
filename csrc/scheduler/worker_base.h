@@ -132,6 +132,10 @@ class WorkerBase : public noncopyable {
     }
   }
 
+  int GetTaskCount() const {
+    return task_count_.load(std::memory_order_relaxed);
+  }
+
   void WaitTaskDone() {
     std::unique_lock<std::mutex> lock(mutex_);
     cv_.wait(lock,

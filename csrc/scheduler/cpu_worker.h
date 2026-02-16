@@ -138,6 +138,13 @@ class CpuWorkerPool : public noncopyable {
   void Wait(const std::string& task_id);
 
   size_t GetWorkerCount() const { return workers_.size(); }
+
+  int GetPendingTaskCount() const {
+    int total = 0;
+    for (const auto& w : workers_) total += w->GetTaskCount();
+    return total;
+  }
+
   std::shared_ptr<CpuWorker> GetWorker(size_t idx) {
     return workers_.at(idx);
   }

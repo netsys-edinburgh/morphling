@@ -10,6 +10,7 @@
 #include "network/connector_libevent.h"
 #include "network/uevent.h"
 #include "network/ueventloop_thread.h"
+#include "scheduler/sliding_window_tracker.h"
 #include "server_base.h"
 
 // ============================================================================
@@ -119,20 +120,26 @@ class ProxyCliHandle : public uevent::LoopHandle {
                        const MatrixPartition& partition);
 
  private:
+  bool ShouldUseGpu() const;
+
   void SubmitToGpuPool(const uevent::ConnectionUeventPtr& conn,
                        const MatrixPartition& partition,
                        float* out_ptr, int64_t out_bytes,
                        const float* row_ptr, int64_t row_size,
                        const float* col_ptr, int64_t col_size,
                        int64_t h_dim, uint64_t vt_compute_start,
-                       bool is_host_alloc);
+                       bool is_host_alloc,
+                       SlidingWindowDurationTracker<>::TimePoint
+                           task_enqueue_time);
   void SubmitToCpuPool(const uevent::ConnectionUeventPtr& conn,
                        const MatrixPartition& partition,
                        float* out_ptr, int64_t out_bytes,
                        const float* row_ptr, int64_t row_size,
                        const float* col_ptr, int64_t col_size,
                        int64_t h_dim, uint64_t vt_compute_start,
-                       bool is_host_alloc);
+                       bool is_host_alloc,
+                       SlidingWindowDurationTracker<>::TimePoint
+                           task_enqueue_time);
   static std::shared_ptr<GemmArgs> BuildGemmArgs(
       const float* col_ptr, int64_t col_size,
       const float* row_ptr, int64_t row_size,
@@ -141,7 +148,9 @@ class ProxyCliHandle : public uevent::LoopHandle {
                          const MatrixPartition& partition,
                          float* out_ptr, int64_t out_bytes,
                          int64_t col_size, uint64_t vt_compute_start,
-                         bool is_host_alloc);
+                         bool is_host_alloc, bool is_gpu_task,
+                         SlidingWindowDurationTracker<>::TimePoint
+                             task_enqueue_time);
 
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
@@ -149,6 +158,10 @@ class ProxyCliHandle : public uevent::LoopHandle {
   XtGemmWorkerPool* gpu_pool_;
   CpuWorkerPool* cpu_pool_;
   std::atomic<uint64_t> task_counter_{0};
+
+  // Sliding window trackers for dispatch estimation
+  SlidingWindowDurationTracker<64> gpu_duration_tracker_{1000};  // 1ms default
+  SlidingWindowDurationTracker<64> cpu_duration_tracker_{5000};  // 5ms default
 };
 
 struct CachedTensor {

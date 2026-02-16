@@ -191,6 +191,25 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
             << client_addr << ", size: " << size;
 }
 
+bool ProxyCliHandle::ShouldUseGpu() const {
+  if (!gpu_pool_) return false;
+  if (!cpu_pool_) return true;
+  // Both pools: compare estimated wait = depth * avg_duration
+  int64_t gpu_wait = static_cast<int64_t>(gpu_pool_->GetPendingTaskCount())
+                   * gpu_duration_tracker_.GetAverageDurationUs();
+  int64_t cpu_wait = static_cast<int64_t>(cpu_pool_->GetPendingTaskCount())
+                   * cpu_duration_tracker_.GetAverageDurationUs();
+  LOG_DEBUG << "[PoolDispatch] gpu_depth="
+            << gpu_pool_->GetPendingTaskCount()
+            << " gpu_avg=" << gpu_duration_tracker_.GetAverageDurationUs()
+            << "us gpu_wait=" << gpu_wait
+            << "us | cpu_depth="
+            << cpu_pool_->GetPendingTaskCount()
+            << " cpu_avg=" << cpu_duration_tracker_.GetAverageDurationUs()
+            << "us cpu_wait=" << cpu_wait << "us";
+  return gpu_wait <= cpu_wait;  // prefer GPU on tie
+}
+
 void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
                                      const MatrixPartition& partition) {
   auto part_key = partition.GetPartitionKey();
@@ -220,7 +239,9 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
       static_cast<size_t>(row_size) * static_cast<size_t>(col_size);
   int64_t out_bytes = static_cast<int64_t>(out_elems * sizeof(float));
 
-  if (gpu_pool_) {
+  auto task_enqueue_time = SlidingWindowDurationTracker<>::Now();
+
+  if (ShouldUseGpu()) {
     float* out_ptr = nullptr;
     if (!LogCudaError(cudaMallocManaged(&out_ptr, out_bytes),
                       "cudaMallocManaged(output)")) {
@@ -229,7 +250,7 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
     SubmitToGpuPool(conn, partition, out_ptr, out_bytes,
                     row_ptr, row_size, col_ptr, col_size,
                     partition.h_dim, vt_compute_start,
-                    /*is_host_alloc=*/false);
+                    /*is_host_alloc=*/false, task_enqueue_time);
     return;
   }
 
@@ -242,7 +263,7 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
     SubmitToCpuPool(conn, partition, out_ptr, out_bytes,
                     row_ptr, row_size, col_ptr, col_size,
                     partition.h_dim, vt_compute_start,
-                    /*is_host_alloc=*/true);
+                    /*is_host_alloc=*/true, task_enqueue_time);
     return;
   }
 
@@ -278,7 +299,8 @@ void ProxyCliHandle::SubmitToGpuPool(
     const float* row_ptr, int64_t row_size,
     const float* col_ptr, int64_t col_size,
     int64_t h_dim, uint64_t vt_compute_start,
-    bool is_host_alloc) {
+    bool is_host_alloc,
+    SlidingWindowDurationTracker<>::TimePoint task_enqueue_time) {
   auto args = BuildGemmArgs(col_ptr, col_size, row_ptr, row_size,
                             h_dim, out_ptr);
 
@@ -290,11 +312,13 @@ void ProxyCliHandle::SubmitToGpuPool(
 
   TaskCallback callback = [this, conn, part_copy, out_ptr, out_bytes,
                            col_size, vt_compute_start,
-                           is_host_alloc](const std::string&) {
+                           is_host_alloc, task_enqueue_time](const std::string&) {
     loop_->RunInLoop([this, conn, part_copy, out_ptr, out_bytes,
-                      col_size, vt_compute_start, is_host_alloc]() {
+                      col_size, vt_compute_start, is_host_alloc,
+                      task_enqueue_time]() {
       OnComputeComplete(conn, part_copy, out_ptr, out_bytes,
-                        col_size, vt_compute_start, is_host_alloc);
+                        col_size, vt_compute_start, is_host_alloc,
+                        /*is_gpu_task=*/true, task_enqueue_time);
     });
   };
 
@@ -310,7 +334,8 @@ void ProxyCliHandle::SubmitToCpuPool(
     const float* row_ptr, int64_t row_size,
     const float* col_ptr, int64_t col_size,
     int64_t h_dim, uint64_t vt_compute_start,
-    bool is_host_alloc) {
+    bool is_host_alloc,
+    SlidingWindowDurationTracker<>::TimePoint task_enqueue_time) {
   auto args = BuildGemmArgs(col_ptr, col_size, row_ptr, row_size,
                             h_dim, out_ptr);
 
@@ -322,11 +347,13 @@ void ProxyCliHandle::SubmitToCpuPool(
 
   TaskCallback callback = [this, conn, part_copy, out_ptr, out_bytes,
                            col_size, vt_compute_start,
-                           is_host_alloc](const std::string&) {
+                           is_host_alloc, task_enqueue_time](const std::string&) {
     loop_->RunInLoop([this, conn, part_copy, out_ptr, out_bytes,
-                      col_size, vt_compute_start, is_host_alloc]() {
+                      col_size, vt_compute_start, is_host_alloc,
+                      task_enqueue_time]() {
       OnComputeComplete(conn, part_copy, out_ptr, out_bytes,
-                        col_size, vt_compute_start, is_host_alloc);
+                        col_size, vt_compute_start, is_host_alloc,
+                        /*is_gpu_task=*/false, task_enqueue_time);
     });
   };
 
@@ -340,7 +367,18 @@ void ProxyCliHandle::OnComputeComplete(
     const MatrixPartition& partition,
     float* out_ptr, int64_t out_bytes,
     int64_t col_size, uint64_t vt_compute_start,
-    bool is_host_alloc) {
+    bool is_host_alloc, bool is_gpu_task,
+    SlidingWindowDurationTracker<>::TimePoint task_enqueue_time) {
+  // Record task turnaround duration for dispatch estimation
+  int64_t duration_us =
+      SlidingWindowDurationTracker<>::ElapsedUs(task_enqueue_time);
+  if (is_gpu_task)
+    gpu_duration_tracker_.RecordDuration(duration_us);
+  else
+    cpu_duration_tracker_.RecordDuration(duration_us);
+  LOG_DEBUG << "[PoolDispatch] " << (is_gpu_task ? "GPU" : "CPU")
+            << " task done in " << duration_us << "us";
+
   // Record COMPUTE end time (virtual time)
   uint64_t vt_compute_end = VirtualClockNow();
   LOG_INFO << DEV_TAG(device_id_, partition.gemm_id)
