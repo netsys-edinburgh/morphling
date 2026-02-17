@@ -8,6 +8,10 @@ Compares original and synchronized logs to show:
 - Timeline visualization for each GEMM operation
 
 Usage: python3 analyze_sync.py <original_log> <synced_log>
+
+Examples:
+  python3 scripts/analyze_sync.py perf_merged.log perf_merged_synced.log
+  python3 scripts/analyze_sync.py logs/original.log logs/synced.log
 """
 
 import sys

@@ -26,16 +26,16 @@ int main() {
   // assert(partitions.size() == 6);
   for (auto& partition : partitions) {
     fprintf(stderr, "row: %ld, col: %ld, pivot: %ld, h_dim: %ld\n",
-            partition.row, partition.col, partition.pivot, partition.h_dim);
+            partition->row, partition->col, partition->pivot, partition->h_dim);
     // create tensor from partition
-    auto [r_ptr, r_size] = partition.mat[0];
-    auto [c_ptr, c_size] = partition.mat[1];
+    auto [r_ptr, r_size] = partition->mat[0];
+    auto [c_ptr, c_size] = partition->mat[1];
 
-    int64_t row_size = r_size / partition.h_dim / sizeof(float);
-    int64_t col_size = c_size / partition.h_dim / sizeof(float);
+    int64_t row_size = r_size / partition->h_dim / sizeof(float);
+    int64_t col_size = c_size / partition->h_dim / sizeof(float);
 
-    assert(row_size * partition.h_dim * sizeof(float) == r_size);
-    assert(col_size * partition.h_dim * sizeof(float) == c_size);
+    assert(row_size * partition->h_dim * sizeof(float) == r_size);
+    assert(col_size * partition->h_dim * sizeof(float) == c_size);
 
     fprintf(stderr, "row_size: %ld, col_size: %ld\n", row_size, col_size);
     fprintf(stderr, "r_ptr: %p, c_ptr: %p\n", r_ptr, c_ptr);
@@ -51,9 +51,9 @@ int main() {
     memcpy(c_ptr_cpy, c_ptr, c_size);
 
     auto row =
-        torch::from_blob(r_ptr_cpy, {row_size, partition.h_dim}, options);
+        torch::from_blob(r_ptr_cpy, {row_size, partition->h_dim}, options);
     auto col =
-        torch::from_blob(c_ptr_cpy, {col_size, partition.h_dim}, options);
+        torch::from_blob(c_ptr_cpy, {col_size, partition->h_dim}, options);
 
     std::cout << "row " << row << std::endl;
     std::cout << "col " << col << std::endl;
@@ -61,8 +61,8 @@ int main() {
     auto result = torch::mm(row, col.transpose(0, 1));
     std::cout << "result " << result << std::endl;
 
-    UpdateMatrixBlock(output, result, partition.row, partition.col,
-                      partition.pivot, 2);
+    UpdateMatrixBlock(output, result, partition->row, partition->col,
+                      partition->pivot, 2);
   }
 
   // output should be same as ref

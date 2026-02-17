@@ -8,6 +8,7 @@ processes — it only starts the server and waits for connections.
 
 Example:
   python3 scripts/run_server.py --backend proxy --model_name facebook/opt-125m
+  python3 scripts/run_server.py --backend proxy --model_name facebook/opt-125m --cfg ./config/proxy/svr.ini
 """
 
 import argparse
@@ -16,6 +17,7 @@ import os
 import signal
 import sys
 import time
+from typing import Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -35,6 +37,12 @@ def parse_args():
         type=str,
         default="proxy",
         help="Backend to use: proxy, mqtt, rabbitmq, amqp",
+    )
+    parser.add_argument(
+        "--cfg",
+        type=str,
+        default=None,
+        help="Config file path for proxy backend (default: config/proxy/svr.ini)",
     )
     parser.add_argument(
         "--model_name",
@@ -92,7 +100,10 @@ async def start_backend_async(backend_name: str, block_size: int):
 
 
 def start_backend_sync(
-    backend_name: str, block_size: int, enable_cache: bool = False
+    backend_name: str,
+    block_size: int,
+    enable_cache: bool = False,
+    cfg_path: Optional[str] = None,
 ):
     # Some backends (like mqtt/proxy) may use synchronous initialization
     backend = None
@@ -104,29 +115,30 @@ def start_backend_sync(
                 # ProxySvr.initialize() expects a config file path and optional cache flag
                 import os
 
-                config_path = os.path.join(
+                default_config_path = os.path.join(
                     os.path.dirname(os.path.dirname(__file__)),
                     "config",
                     "proxy",
                     "svr.ini",
                 )
+                config_path = cfg_path or default_config_path
 
                 # Check if initialize accepts cache parameter
                 if enable_cache and hasattr(backend, "set_cache_enabled"):
-                    backend.set_cache_enabled(True)
+                    backend.set_cache_enabled(True)  # type: ignore[attr-defined]
                     print(f"✓ Client-side caching ENABLED")
                 else:
                     print(f"Client-side caching disabled")
 
-                backend.initialize(config_path)
+                backend.initialize(config_path)  # type: ignore[attr-defined]
             else:
                 try:
-                    backend.initialize()
+                    backend.initialize()  # type: ignore[attr-defined]
                 except TypeError:
                     # initialize may accept args in some versions; ignore
-                    backend.initialize(None)
+                    backend.initialize(None)  # type: ignore[attr-defined]
         if hasattr(backend, "start"):
-            backend.start()
+            backend.start()  # type: ignore[attr-defined]
     else:
         # Use asyncio for rabbitmq/amqp style backends
         loop = asyncio.get_event_loop()
@@ -134,6 +146,13 @@ def start_backend_sync(
             start_backend_async(backend_name, block_size)
         )
     return backend
+
+
+def get_connection_count_safe(backend) -> int:
+    """Safely get connection count if backend supports it."""
+    if hasattr(backend, "get_connection_count"):
+        return backend.get_connection_count()  # type: ignore[attr-defined]
+    return 0
 
 
 def wait_for_devices(
@@ -149,11 +168,7 @@ def wait_for_devices(
     """
     if no_wait:
         print("No-wait mode: Starting immediately without waiting for devices")
-        return (
-            backend.get_connection_count()
-            if hasattr(backend, "get_connection_count")
-            else 0
-        )
+        return get_connection_count_safe(backend)
 
     print(
         f"Waiting for at least {min_devices} device(s) to connect (timeout: {timeout}s)..."
@@ -163,7 +178,7 @@ def wait_for_devices(
     while time.time() - start_time < timeout:
         try:
             if hasattr(backend, "get_connection_count"):
-                connection_count = backend.get_connection_count()
+                connection_count = get_connection_count_safe(backend)
                 elapsed = int(time.time() - start_time)
                 print(
                     f"[{elapsed}s] Connected devices: {connection_count}/{min_devices}"
@@ -181,11 +196,7 @@ def wait_for_devices(
             print(f"Error checking connection count: {e}")
             time.sleep(2)
 
-    final_count = (
-        backend.get_connection_count()
-        if hasattr(backend, "get_connection_count")
-        else 0
-    )
+    final_count = get_connection_count_safe(backend)
     print(
         f"Timeout after {timeout}s. Connected: {final_count}/{min_devices} devices"
     )
@@ -213,7 +224,7 @@ def main():
     # Initialize backend
     print("Initializing backend...")
     backend = start_backend_sync(
-        args.backend, args.block_size, args.enable_cache
+        args.backend, args.block_size, args.enable_cache, args.cfg
     )
     print("Backend started. Server is now listening for device connections.")
 
@@ -241,7 +252,7 @@ def main():
         print("\n=== Running Text Generation Inference ===")
         # Print current device status
         current_devices = (
-            backend.get_connection_count()
+            get_connection_count_safe(backend)
             if hasattr(backend, "get_connection_count")
             else connected
         )
@@ -289,7 +300,7 @@ def main():
 
         # Print device info during inference
         final_devices = (
-            backend.get_connection_count()
+            get_connection_count_safe(backend)
             if hasattr(backend, "get_connection_count")
             else current_devices
         )
@@ -336,11 +347,11 @@ def main():
         print("Stopping backend...")
         try:
             if hasattr(backend, "stop"):
-                backend.stop()
+                backend.stop()  # type: ignore[attr-defined]
             if hasattr(backend, "disconnect"):
                 # async disconnect if available
                 loop = asyncio.get_event_loop()
-                loop.run_until_complete(backend.disconnect())
+                loop.run_until_complete(backend.disconnect())  # type: ignore[attr-defined]
         except Exception as e:
             print("Error while stopping backend:", e)
         print("Server shutdown complete.")

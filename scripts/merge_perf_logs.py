@@ -2,6 +2,10 @@
 """
 Merge separate performance logs from Server and Devices into a single sorted log
 Usage: python3 merge_perf_logs.py <log_dir> [output_file]
+
+Examples:
+  python3 scripts/merge_perf_logs.py ./logs
+  python3 scripts/merge_perf_logs.py ./logs ./perf_merged.log
 """
 
 import os

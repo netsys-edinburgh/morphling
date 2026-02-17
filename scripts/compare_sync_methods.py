@@ -7,6 +7,9 @@ Shows:
 2. The actual differences in offsets
 3. Which devices get advanced/delayed with each method
 4. Trade-offs and recommendations
+
+Usage:
+  python3 scripts/compare_sync_methods.py perf_merged.log
 """
 
 import sys

@@ -2,6 +2,10 @@
 """
 Performance log analyzer - parses perf.log and provides statistics
 Correctly calculates server-level throughput and aligns timestamps across devices
+
+Usage:
+  python3 scripts/analyze_perf.py ./perf.log --skip-warmup 5 --devices 0,1
+  python3 scripts/analyze_perf.py ./perf.log --direction upload --output perf_summary.json
 """
 
 import argparse
@@ -382,6 +386,7 @@ def analyze_perf_log(
                     f"  Average TP: {server_download_tp / 1024 / 1024:.2f} MB/s"
                 )
 
+            server_total_tp = 0.0
             if total_bytes > 0:
                 server_total_tp = total_bytes / global_duration_s
                 print(f"\nTotal (Upload + Download):")

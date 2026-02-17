@@ -4,6 +4,10 @@ Virtual Time Log Parser and Analyzer
 
 Parses perf.log and extracts virtual time events for analysis.
 Displays duration with appropriate units (microseconds or milliseconds).
+
+Usage:
+  python3 scripts/analyze_vtime_log.py ./perf.log
+  python3 scripts/analyze_vtime_log.py ./logs/perf_merged.log
 """
 
 import sys

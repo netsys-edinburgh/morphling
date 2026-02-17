@@ -9,6 +9,10 @@ Example:
   # Start server with 2 fake devices, wait for 1 real device to connect manually
   python3 scripts/run_mixed_devices.py --num_devices 3 --num_fake_devices 2 --backend proxy
 
+Usage:
+  python3 scripts/run_mixed_devices.py --num_devices 3 --num_fake_devices 2 --backend proxy \
+    --fake-device-host 127.0.0.1 --fake-device-port 50051
+
   # Then in another terminal, manually connect the real device:
   # morphling_device --id 2 --flops 1e12 --memory 8G --ul_bw 100M --dl_bw 100M --ul_lat 10 --dl_lat 10 --backend proxy --cfg config/proxy/cli.ini
 """
@@ -30,7 +34,7 @@ import morphling
 from morphling.backend import AutoBackend
 from morphling.hooks import apply_hooks
 
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(True)  # type: ignore[attr-defined]
 
 
 def parse_args():
@@ -50,6 +54,18 @@ def parse_args():
         type=int,
         default=2,
         help="Number of fake devices (rest will be real)",
+    )
+    parser.add_argument(
+        "--fake-device-host",
+        type=str,
+        default="127.0.0.1",
+        help="Host for fake devices to connect to",
+    )
+    parser.add_argument(
+        "--fake-device-port",
+        type=int,
+        default=50051,
+        help="Port for fake devices to connect to",
     )
 
     # Backend configuration
@@ -165,6 +181,8 @@ class FakeDevice:
         while self.running:
             try:
                 # Receive task size
+                if self.socket is None:
+                    break
                 size_data = self.socket.recv(8)
                 if not size_data:
                     break
@@ -271,6 +289,9 @@ def main():
     print(f"Fake devices: {args.num_fake_devices}")
     print(f"Real devices: {num_real_devices}")
     print(f"Backend: {args.backend}")
+    print(
+        f"Fake device endpoint: {args.fake_device_host}:{args.fake_device_port}"
+    )
     print(f"Model: {args.model_name}")
     print("=" * 40)
 
@@ -309,7 +330,7 @@ def main():
         )
     elif args.backend == "mqtt":
         backend = AutoBackend.from_name(args.backend, args.block_size)
-        backend.start()
+        backend.start()  # type: ignore[attr-defined]
     elif args.backend == "proxy":
         backend = AutoBackend.from_name(args.backend)
         cfg_path = args.cfg or os.path.join(
@@ -318,8 +339,8 @@ def main():
             "proxy",
             "svr.ini",
         )
-        backend.initialize(cfg_path)
-        backend.start()
+        backend.initialize(cfg_path)  # type: ignore[attr-defined]
+        backend.start()  # type: ignore[attr-defined]
     else:
         print(f"Unknown backend: {args.backend}")
         sys.exit(1)
@@ -335,7 +356,11 @@ def main():
     if args.num_fake_devices > 0:
         print(f"\nStarting {args.num_fake_devices} fake device(s)...")
         for i in range(args.num_fake_devices):
-            fake_dev = FakeDevice(device_id=i, host="127.0.0.1", port=50051)
+            fake_dev = FakeDevice(
+                device_id=i,
+                host=args.fake_device_host,
+                port=args.fake_device_port,
+            )
             if fake_dev.start():
                 fake_devices.append(fake_dev)
                 print(f"✓ Fake device {i} started")
@@ -370,7 +395,7 @@ def main():
 
         while time.time() - start_time < timeout:
             try:
-                connection_count = backend.get_connection_count()
+                connection_count = backend.get_connection_count()  # type: ignore[attr-defined]
 
                 # Only print if count changed
                 if connection_count != last_count:
@@ -397,7 +422,7 @@ def main():
                 time.sleep(3)
         else:
             connected = (
-                backend.get_connection_count()
+                backend.get_connection_count()  # type: ignore[attr-defined]
                 if hasattr(backend, "get_connection_count")
                 else 0
             )

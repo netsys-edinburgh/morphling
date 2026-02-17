@@ -3,6 +3,10 @@
 Visualize virtual time timeline for devices.
 Shows COMPUTE, DOWNLOAD, UPLOAD events as horizontal bars.
 Supports both real time (timestamp_us) and virtual time (vt_start_us, vt_end_us).
+
+Usage:
+  python3 scripts/timeline_plot_backup.py perf_merged.log . --gemm-range 0:4
+  python3 scripts/timeline_plot_backup.py perf_merged_synced.log output_dir
 """
 
 import sys

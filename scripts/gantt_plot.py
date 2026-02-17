@@ -3,6 +3,10 @@
 Generate Gantt charts for device event timeline visualization.
 Each device gets its own chart, with events displayed as horizontal bars.
 X-axis: virtual time, Y-axis: event phases
+
+Usage:
+  python3 scripts/gantt_plot.py perf_merged.log . --gemm-range 0:3
+  python3 scripts/gantt_plot.py perf_merged_synced.log output_dir
 """
 
 import matplotlib

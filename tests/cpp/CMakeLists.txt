@@ -155,6 +155,26 @@ if(ENABLE_XTGEMM_TESTS)
       benchmark::benchmark_main
       ${XTGEMM_COMMON_LIBS}
     )
+
+    # Pool dispatch benchmarks (GPU vs CPU vs Hybrid) (bench/cuda/)
+    set(POOL_DISPATCH_DEPS
+      ${XTGEMM_TEST_DEPS}
+      ${PROJECT_ROOT}/csrc/scheduler/cpu_worker.cpp
+    )
+
+    add_executable(bench_pool_dispatch
+      bench/cuda/bench_pool_dispatch.cpp
+      ${POOL_DISPATCH_DEPS}
+    )
+    target_include_directories(bench_pool_dispatch PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+    )
+    target_link_libraries(bench_pool_dispatch PRIVATE
+      benchmark::benchmark
+      benchmark::benchmark_main
+      ${XTGEMM_COMMON_LIBS}
+      openblas
+    )
   else()
     message(WARNING "CUDAToolkit or CUDA driver API not found; XtGemm tests skipped.")
   endif()
@@ -224,4 +244,7 @@ if(ENABLE_ZEROCOPY_TESTS)
     IMPORT_DIRS "${PROTO_SRC_DIR}"
   )
   add_custom_target(generate_proto_files ALL DEPENDS ${PROTO_SRCS})
+
+  add_subdirectory(unit/zerocopy)
+  add_subdirectory(bench/zerocopy)
 endif()

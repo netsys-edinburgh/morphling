@@ -144,6 +144,13 @@ export LD_LIBRARY_PATH="/path/to/rttr/install/lib:$LD_LIBRARY_PATH"
 export LD_LIBRARY_PATH="/path/to/emulator/build/lib.linux-x86_64-cpython-310/morphling:$LD_LIBRARY_PATH"
 ```
 
+## C++ Tests
+
+See `tests/cpp/README.md` for the full C++ test and benchmark catalog (unit,
+CUDA/cuBLAS, XtGemm/worker, zerocopy, and benchmarks) plus run instructions.
+The Docker image builds **all** C++ test categories, including the optional
+XtGemm and zerocopy suites.
+
 ## Further Documentation
 
 - `DEV_README.md`

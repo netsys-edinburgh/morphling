@@ -74,10 +74,13 @@ RUN --mount=type=cache,target=/ccache \
     if [ "$USE_CCACHE" = "1" ]; then export PATH="/usr/lib/ccache:$PATH"; fi && \
     pip install --no-build-isolation --verbose ./
 
-# Build standalone C++ tests
+# Build standalone C++ tests (enable all optional suites)
 RUN --mount=type=cache,target=/ccache \
     if [ "$USE_CCACHE" = "1" ]; then export PATH="/usr/lib/ccache:$PATH"; fi && \
-    cmake -S tests/cpp -B tests/cpp/build && \
+    cmake -S tests/cpp -B tests/cpp/build \
+    -DENABLE_CUDA_TESTS=ON \
+    -DENABLE_XTGEMM_TESTS=ON \
+    -DENABLE_ZEROCOPY_TESTS=ON && \
     cmake --build tests/cpp/build -j
 
 # 创建必要的目录

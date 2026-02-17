@@ -1,4 +1,12 @@
-# python run_devices.py --num_devices 4
+"""
+Run server and device emulator processes with a configured backend.
+
+Usage:
+  python3 scripts/run_devices.py --num_devices 4 --model_name facebook/opt-125m \
+    --backend proxy --seq_length 128 --batch_size 1 --cfg config/proxy/svr.ini
+  python3 scripts/run_devices.py --num_devices 2 --model_name facebook/opt-125m \
+    --backend proxy --enable-hooks
+"""
 
 import asyncio
 import os
@@ -17,7 +25,7 @@ from morphling.backend import AutoBackend
 from morphling.entrypoint import DeviceConfigArguments, ModelConfigArguments
 from morphling.hooks import apply_hooks
 
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(True)  # type: ignore[attr-defined]
 
 # # if SIGINT is received, kill all the devices
 # def signal_handler(sig, frame):
