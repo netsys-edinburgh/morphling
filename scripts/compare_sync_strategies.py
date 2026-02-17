@@ -6,6 +6,9 @@
 1. "最早对齐" vs "最慢对齐" 有什么区别？
 2. 哪种方式更合适？
 3. 对性能分析有什么影响？
+
+用法:
+  python3 scripts/compare_sync_strategies.py perf_merged.log
 """
 
 import sys

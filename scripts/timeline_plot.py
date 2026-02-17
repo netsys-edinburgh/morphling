@@ -3,6 +3,10 @@
 Visualize virtual time timeline for devices - SIMPLIFIED VERSION
 Shows COMPUTE, DOWNLOAD, UPLOAD events as horizontal bars.
 Supports both real time (timestamp_us) and virtual time (vt_start_us, vt_end_us).
+
+Usage:
+  python3 scripts/timeline_plot.py perf_merged.log . --gemm-range 0:2
+  python3 scripts/timeline_plot.py perf_merged_synced.log output_dir
 """
 
 import matplotlib
@@ -819,7 +823,7 @@ def main():
         filename=vtime_file,
         time_range=vtime_range,
         gemm_range=gemm_range,
-        offset_time=min_start_vtime,
+        offset_time=int(min_start_vtime),
     )
 
     # Plot gantt chart for virtual time
@@ -833,7 +837,7 @@ def main():
         filename=gantt_vtime_file,
         time_range=vtime_range,
         gemm_range=gemm_range,
-        offset_time=min_start_vtime,
+        offset_time=int(min_start_vtime),
     )
 
     # Plot real time - start from 0
@@ -847,7 +851,7 @@ def main():
         filename=realtime_file,
         time_range=realtime_range,
         gemm_range=gemm_range,
-        offset_time=min_start_realtime,
+        offset_time=int(min_start_realtime),
     )
 
     # Plot gantt chart for real time - start from 0
@@ -861,7 +865,7 @@ def main():
         filename=gantt_realtime_file,
         time_range=realtime_range,
         gemm_range=gemm_range,
-        offset_time=min_start_realtime,
+        offset_time=int(min_start_realtime),
     )
 
     print("\n✓ Done!")

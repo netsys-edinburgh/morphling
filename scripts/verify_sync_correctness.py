@@ -2,8 +2,13 @@
 """
 Verify synchronization correctness by comparing before/after virtual times.
 Shows detailed examples for each GEMM operation.
+
+Usage:
+  python3 scripts/verify_sync_correctness.py --before perf_merged.log --after perf_merged_synced.log
+  python3 scripts/verify_sync_correctness.py perf_merged.log perf_merged_synced.log
 """
 
+import argparse
 import re
 from collections import defaultdict
 
@@ -120,13 +125,46 @@ def analyze_gemm(before_events, after_events, gemm_id):
             )
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Verify virtual time synchronization correctness"
+    )
+    parser.add_argument(
+        "before",
+        nargs="?",
+        default="perf_merged.log",
+        help="Path to original merged log (default: perf_merged.log)",
+    )
+    parser.add_argument(
+        "after",
+        nargs="?",
+        default="perf_merged_synced.log",
+        help="Path to synchronized log (default: perf_merged_synced.log)",
+    )
+    parser.add_argument(
+        "--before",
+        dest="before_flag",
+        help="Path to original merged log",
+    )
+    parser.add_argument(
+        "--after",
+        dest="after_flag",
+        help="Path to synchronized log",
+    )
+    return parser.parse_args()
+
+
 def main():
     print("\n" + "=" * 100)
     print("虚拟时间同步验证分析")
     print("=" * 100)
 
-    before = read_log("perf_merged.log")
-    after = read_log("perf_merged_synced.log")
+    args = parse_args()
+    before_path = args.before_flag or args.before
+    after_path = args.after_flag or args.after
+
+    before = read_log(before_path)
+    after = read_log(after_path)
 
     print(f"\n原始日志: {len(before)} 个 GEMM 操作")
     print(f"同步日志: {len(after)} 个 GEMM 操作")

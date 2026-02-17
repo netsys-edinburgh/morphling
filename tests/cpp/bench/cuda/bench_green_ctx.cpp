@@ -731,11 +731,12 @@ class MultiGreenCtxCoexist : public benchmark::Fixture {
 
   void TearDown(benchmark::State&) override {
     for (auto& s : slots_) {
-      if (s.cublas_handle) cublasDestroy(s.cublas_handle);
-      if (s.stream) {
+      if (s.cuda_ctx) {
         CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
-        cudaStreamDestroy(s.stream);
       }
+      if (s.stream) cudaStreamSynchronize(s.stream);
+      if (s.cublas_handle) cublasDestroy(s.cublas_handle);
+      if (s.stream) cudaStreamDestroy(s.stream);
       if (s.d_A) cudaFree(s.d_A);
       if (s.d_B) cudaFree(s.d_B);
       if (s.d_C) cudaFree(s.d_C);
@@ -989,11 +990,12 @@ class RoundRobinGreenCtxStreams : public benchmark::Fixture {
 
   void TearDown(benchmark::State&) override {
     for (auto& s : slots_) {
-      if (s.cublas_handle) cublasDestroy(s.cublas_handle);
-      if (s.stream) {
+      if (s.cuda_ctx) {
         CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
-        cudaStreamDestroy(s.stream);
       }
+      if (s.stream) cudaStreamSynchronize(s.stream);
+      if (s.cublas_handle) cublasDestroy(s.cublas_handle);
+      if (s.stream) cudaStreamDestroy(s.stream);
       if (s.d_A) cudaFree(s.d_A);
       if (s.d_B) cudaFree(s.d_B);
       if (s.d_C) cudaFree(s.d_C);
@@ -1049,4 +1051,266 @@ BENCHMARK_REGISTER_F(RoundRobinGreenCtxStreams, RoundRobin)
     ->Args({1024, 16})
     ->Args({2048, 8})
     ->Args({2048, 16})
+    ->Unit(benchmark::kMicrosecond);
+
+// ============================================================================
+// Group 4: Green Context Memory Consumption
+// ============================================================================
+// Measures GPU memory consumed per green context at three resource levels:
+//   - Bare:   green ctx + CUDA ctx only
+//   - Stream: + CUDA stream
+//   - Full:   + CUDA stream + cuBLAS handle  (matches ContextSlot)
+//
+// arg(0) = number of contexts to create simultaneously.
+// Memory delta is sampled with cuMemGetInfo_v2 from a stable primary
+// context to avoid per-context accounting skew.
+
+class GreenCtxMemory : public benchmark::Fixture {
+ public:
+  void SetUp(benchmark::State& state) override {
+    EnsureLoggerInit();
+    EnsureDriverInit();
+    CHECK_CU_RESULT(cuDeviceGet(&dev_, 0));
+
+    sm_count_ = GetSmCount();
+    num_ctx_ = state.range(0);
+
+    // Create a primary CUDA context that stays alive for memory queries
+    CHECK_CU_RESULT(cuCtxCreate(&primary_ctx_, 0, dev_));
+    CHECK_CU_RESULT(cuCtxSetCurrent(primary_ctx_));
+
+    // Prime cuBLAS + stream runtime in the primary context so lazy init
+    // doesn't pollute measurements
+    {
+      cublasHandle_t h;
+      CHECK_CUBLAS_ERROR(cublasCreate(&h));
+      cudaStream_t s;
+      cudaStreamCreate(&s);
+      cudaStreamDestroy(s);
+      cublasDestroy(h);
+    }
+
+    // Split SMs into finest groups (minCount=2)
+    CUdevResource device_sm = {};
+    CHECK_CU_RESULT(
+        cuDeviceGetDevResource(dev_, &device_sm, CU_DEV_RESOURCE_TYPE_SM));
+    unsigned int nb = 0;
+    CHECK_CU_RESULT(cuDevSmResourceSplitByCount(
+        nullptr, &nb, &device_sm, nullptr,
+        CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING, 2));
+    if (nb == 0) {
+      state.SkipWithMessage("GPU does not support SM splitting");
+      return;
+    }
+    groups_.resize(nb);
+    CUdevResource rem = {};
+    CHECK_CU_RESULT(cuDevSmResourceSplitByCount(
+        groups_.data(), &nb, &device_sm, &rem,
+        CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING, 2));
+    group_sm_ = groups_[0].sm.smCount;
+
+    if (static_cast<unsigned int>(num_ctx_) > nb) {
+      state.SkipWithMessage(
+          "Requested " + std::to_string(num_ctx_) + " contexts but only " +
+          std::to_string(nb) + " SM groups available");
+      return;
+    }
+
+    // Pre-build one descriptor per context (each gets 1 SM group)
+    descs_.resize(num_ctx_);
+    for (int i = 0; i < num_ctx_; i++) {
+      CHECK_CU_RESULT(
+          cuDevResourceGenerateDesc(&descs_[i], &groups_[i], 1));
+    }
+
+    // Warmup: one green ctx create/destroy cycle
+    WarmupGreenCtxLifecycle(dev_, 2);
+
+    // Stabilize
+    CHECK_CU_RESULT(cuCtxSetCurrent(primary_ctx_));
+    cudaDeviceSynchronize();
+  }
+
+  void TearDown(benchmark::State&) override {
+    if (primary_ctx_) {
+      cuCtxDestroy(primary_ctx_);
+      primary_ctx_ = nullptr;
+    }
+  }
+
+ protected:
+  // Query device free memory from the primary context
+  size_t QueryFreeBytes() {
+    CHECK_CU_RESULT(cuCtxSetCurrent(primary_ctx_));
+    cudaDeviceSynchronize();
+    size_t free_bytes = 0, total_bytes = 0;
+    cuMemGetInfo_v2(&free_bytes, &total_bytes);
+    return free_bytes;
+  }
+
+  CUdevice dev_ = 0;
+  CUcontext primary_ctx_ = nullptr;
+  int sm_count_ = 0;
+  int num_ctx_ = 0;
+  unsigned int group_sm_ = 0;
+  std::vector<CUdevResource> groups_;
+  std::vector<CUdevResourceDesc> descs_;
+};
+
+// --- Bare: green ctx + CUDA ctx only ---
+BENCHMARK_DEFINE_F(GreenCtxMemory, BareCtx)(benchmark::State& state) {
+  for (auto _ : state) {
+    state.PauseTiming();
+    size_t free_before = QueryFreeBytes();
+    state.ResumeTiming();
+
+    std::vector<CUgreenCtx> gcs(num_ctx_);
+    std::vector<CUcontext> ctxs(num_ctx_);
+    for (int i = 0; i < num_ctx_; i++) {
+      CHECK_CU_RESULT(cuGreenCtxCreate(&gcs[i], descs_[i], dev_,
+                                       CU_GREEN_CTX_DEFAULT_STREAM));
+      CHECK_CU_RESULT(cuCtxFromGreenCtx(&ctxs[i], gcs[i]));
+    }
+
+    state.PauseTiming();
+    size_t free_after = QueryFreeBytes();
+    int64_t consumed = static_cast<int64_t>(free_before) -
+                       static_cast<int64_t>(free_after);
+    state.counters["total_MB"] =
+        static_cast<double>(consumed) / (1024.0 * 1024.0);
+    state.counters["per_ctx_KB"] =
+        static_cast<double>(consumed) / (1024.0 * num_ctx_);
+
+    for (int i = num_ctx_ - 1; i >= 0; i--) {
+      cuCtxDestroy(ctxs[i]);
+      cuGreenCtxDestroy(gcs[i]);
+    }
+    CHECK_CU_RESULT(cuCtxSetCurrent(primary_ctx_));
+    cudaDeviceSynchronize();
+    state.ResumeTiming();
+  }
+
+  state.counters["num_contexts"] = num_ctx_;
+  state.counters["SMs_per_ctx"] = static_cast<double>(group_sm_);
+}
+
+BENCHMARK_REGISTER_F(GreenCtxMemory, BareCtx)
+    ->Arg(1)
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16)
+    ->Iterations(5)
+    ->Unit(benchmark::kMicrosecond);
+
+// --- With stream: green ctx + CUDA ctx + stream ---
+BENCHMARK_DEFINE_F(GreenCtxMemory, WithStream)(benchmark::State& state) {
+  for (auto _ : state) {
+    state.PauseTiming();
+    size_t free_before = QueryFreeBytes();
+    state.ResumeTiming();
+
+    std::vector<CUgreenCtx> gcs(num_ctx_);
+    std::vector<CUcontext> ctxs(num_ctx_);
+    std::vector<cudaStream_t> streams(num_ctx_);
+    for (int i = 0; i < num_ctx_; i++) {
+      CHECK_CU_RESULT(cuGreenCtxCreate(&gcs[i], descs_[i], dev_,
+                                       CU_GREEN_CTX_DEFAULT_STREAM));
+      CHECK_CU_RESULT(cuCtxFromGreenCtx(&ctxs[i], gcs[i]));
+      CHECK_CU_RESULT(cuCtxSetCurrent(ctxs[i]));
+      CUstream s;
+      CHECK_CU_RESULT(cuGreenCtxStreamCreate(
+          &s, gcs[i], CU_STREAM_NON_BLOCKING, 0));
+      streams[i] = s;
+    }
+
+    state.PauseTiming();
+    size_t free_after = QueryFreeBytes();
+    int64_t consumed = static_cast<int64_t>(free_before) -
+                       static_cast<int64_t>(free_after);
+    state.counters["total_MB"] =
+        static_cast<double>(consumed) / (1024.0 * 1024.0);
+    state.counters["per_ctx_KB"] =
+        static_cast<double>(consumed) / (1024.0 * num_ctx_);
+
+    for (int i = num_ctx_ - 1; i >= 0; i--) {
+      CHECK_CU_RESULT(cuCtxSetCurrent(ctxs[i]));
+      cudaStreamDestroy(streams[i]);
+      cuCtxDestroy(ctxs[i]);
+      cuGreenCtxDestroy(gcs[i]);
+    }
+    CHECK_CU_RESULT(cuCtxSetCurrent(primary_ctx_));
+    cudaDeviceSynchronize();
+    state.ResumeTiming();
+  }
+
+  state.counters["num_contexts"] = num_ctx_;
+  state.counters["SMs_per_ctx"] = static_cast<double>(group_sm_);
+}
+
+BENCHMARK_REGISTER_F(GreenCtxMemory, WithStream)
+    ->Arg(1)
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16)
+    ->Iterations(5)
+    ->Unit(benchmark::kMicrosecond);
+
+// --- Full ContextSlot: green ctx + CUDA ctx + stream + cuBLAS handle ---
+BENCHMARK_DEFINE_F(GreenCtxMemory, FullSlot)(benchmark::State& state) {
+  for (auto _ : state) {
+    state.PauseTiming();
+    size_t free_before = QueryFreeBytes();
+    state.ResumeTiming();
+
+    std::vector<CUgreenCtx> gcs(num_ctx_);
+    std::vector<CUcontext> ctxs(num_ctx_);
+    std::vector<cudaStream_t> streams(num_ctx_);
+    std::vector<cublasHandle_t> handles(num_ctx_);
+    for (int i = 0; i < num_ctx_; i++) {
+      CHECK_CU_RESULT(cuGreenCtxCreate(&gcs[i], descs_[i], dev_,
+                                       CU_GREEN_CTX_DEFAULT_STREAM));
+      CHECK_CU_RESULT(cuCtxFromGreenCtx(&ctxs[i], gcs[i]));
+      CHECK_CU_RESULT(cuCtxSetCurrent(ctxs[i]));
+      CUstream s;
+      CHECK_CU_RESULT(cuGreenCtxStreamCreate(
+          &s, gcs[i], CU_STREAM_NON_BLOCKING, 0));
+      streams[i] = s;
+      CHECK_CUBLAS_ERROR(cublasCreate(&handles[i]));
+      CHECK_CUBLAS_ERROR(cublasSetStream(handles[i], streams[i]));
+    }
+
+    state.PauseTiming();
+    size_t free_after = QueryFreeBytes();
+    int64_t consumed = static_cast<int64_t>(free_before) -
+                       static_cast<int64_t>(free_after);
+    state.counters["total_MB"] =
+        static_cast<double>(consumed) / (1024.0 * 1024.0);
+    state.counters["per_ctx_KB"] =
+        static_cast<double>(consumed) / (1024.0 * num_ctx_);
+
+    for (int i = num_ctx_ - 1; i >= 0; i--) {
+      CHECK_CU_RESULT(cuCtxSetCurrent(ctxs[i]));
+      cublasDestroy(handles[i]);
+      cudaStreamDestroy(streams[i]);
+      cuCtxDestroy(ctxs[i]);
+      cuGreenCtxDestroy(gcs[i]);
+    }
+    CHECK_CU_RESULT(cuCtxSetCurrent(primary_ctx_));
+    cudaDeviceSynchronize();
+    state.ResumeTiming();
+  }
+
+  state.counters["num_contexts"] = num_ctx_;
+  state.counters["SMs_per_ctx"] = static_cast<double>(group_sm_);
+}
+
+BENCHMARK_REGISTER_F(GreenCtxMemory, FullSlot)
+    ->Arg(1)
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16)
+    ->Iterations(5)
     ->Unit(benchmark::kMicrosecond);

@@ -1,3 +1,10 @@
+"""
+Parse emulator logs for real/logical time and partition counts.
+
+Usage:
+  python3 scripts/log_parser.py --log_file ./logs/device_0.log
+"""
+
 import argparse
 import re
 

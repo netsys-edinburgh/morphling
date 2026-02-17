@@ -1,5 +1,11 @@
 #!/bin/bash
 # 开发模式下的快速构建脚本
+#
+# Usage: ./scripts/dev_build.sh
+#
+# Examples:
+#   ./scripts/dev_build.sh
+#   PYTHON_EXECUTABLE=/usr/bin/python3.11 ./scripts/dev_build.sh
 
 set -e
 
@@ -13,15 +19,21 @@ if [ ! -f /.dockerenv ]; then
 fi
 
 # 设置环境变量
-export Python3_ROOT_DIR=/usr
-export Python3_EXECUTABLE=/usr/bin/python3.10
-export MORPHLING_PYTHON_EXECUTABLE=/usr/bin/python3.10
+PYTHON_ROOT_DIR=${PYTHON_ROOT_DIR:-/usr}
+PYTHON_EXECUTABLE=${PYTHON_EXECUTABLE:-/usr/bin/python3.10}
+PYTHON_INCLUDE_DIR=${PYTHON_INCLUDE_DIR:-/usr/include/python3.10}
+PYTHON_LIBRARY=${PYTHON_LIBRARY:-/usr/lib/x86_64-linux-gnu/libpython3.10.so}
+
+export Python3_ROOT_DIR="${PYTHON_ROOT_DIR}"
+export Python3_EXECUTABLE="${PYTHON_EXECUTABLE}"
+export MORPHLING_PYTHON_EXECUTABLE="${PYTHON_EXECUTABLE}"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
-export CPPFLAGS="-I/usr/include/python3.10"
-export CMAKE_ARGS="-DPython3_EXECUTABLE=/usr/bin/python3.10 -DPython3_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so -DPython3_INCLUDE_DIR=/usr/include/python3.10 -DCMAKE_PREFIX_PATH=/usr"
+export CPPFLAGS="-I${PYTHON_INCLUDE_DIR}"
+export CMAKE_ARGS="-DPython3_EXECUTABLE=${PYTHON_EXECUTABLE} -DPython3_LIBRARY=${PYTHON_LIBRARY} -DPython3_INCLUDE_DIR=${PYTHON_INCLUDE_DIR} -DCMAKE_PREFIX_PATH=${PYTHON_ROOT_DIR}"
 
 # 进入项目目录
-cd /app
+PROJECT_ROOT=${PROJECT_ROOT:-/app}
+cd "${PROJECT_ROOT}"
 
 echo "=== Building morphling in development mode ==="
 

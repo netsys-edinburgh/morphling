@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Generate offline CUDA Driver/Runtime API references from headers."""
+"""Generate offline CUDA Driver/Runtime API references from headers.
+
+Usage:
+  python3 scripts/generate_cuda_api_docs.py --cuda-include /usr/local/cuda/include --out docs/cuda
+"""
 
 from __future__ import annotations
 

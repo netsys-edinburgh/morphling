@@ -7,10 +7,25 @@
 #   ./start_multiple_devices.sh 4           # Start 4 devices with default 5s interval
 #   ./start_multiple_devices.sh 4 3         # Start 4 devices with 3s interval
 #   ./start_multiple_devices.sh 8 5 2       # Start 8 devices in batches of 2, with 5s interval between batches
+#   DEVICE_BACKEND=proxy DEVICE_PROXY_HOST=127.0.0.1:39000 ./start_multiple_devices.sh 6 2 3
 
-NUM_DEVICES=${1:-4}           # Default: 4 devices
-INTERVAL=${2:-5}              # Default: 5 seconds between launches
-BATCH_SIZE=${3:-1}            # Default: 1 device per batch (original sequential behavior)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+NUM_DEVICES=${1:-${NUM_DEVICES:-4}}           # Default: 4 devices
+INTERVAL=${2:-${INTERVAL:-5}}                 # Default: 5 seconds between launches
+BATCH_SIZE=${3:-${BATCH_SIZE:-1}}             # Default: 1 device per batch (original sequential behavior)
+
+DEVICE_FLOPS=${DEVICE_FLOPS:-1T}
+DEVICE_MEMORY=${DEVICE_MEMORY:-8G}
+DEVICE_UL_BW=${DEVICE_UL_BW:-100M}
+DEVICE_DL_BW=${DEVICE_DL_BW:-100M}
+DEVICE_UL_LAT=${DEVICE_UL_LAT:-10}
+DEVICE_DL_LAT=${DEVICE_DL_LAT:-10}
+DEVICE_BACKEND=${DEVICE_BACKEND:-proxy}
+DEVICE_CFG=${DEVICE_CFG:-"${ROOT_DIR}/config/proxy/cli.ini"}
+DEVICE_PROXY_HOST=${DEVICE_PROXY_HOST:-127.0.0.1:39000}
+LOG_DIR=${LOG_DIR:-"${ROOT_DIR}/logs"}
 
 # Validate input
 if ! [[ "$NUM_DEVICES" =~ ^[0-9]+$ ]] || [ "$NUM_DEVICES" -lt 1 ]; then
@@ -31,7 +46,12 @@ fi
 echo "Starting $NUM_DEVICES device(s)..."
 echo "Interval: ${INTERVAL}s"
 echo "Batch size: $BATCH_SIZE"
+echo "Backend: ${DEVICE_BACKEND}"
+echo "Config: ${DEVICE_CFG}"
+echo "Log dir: ${LOG_DIR}"
 echo ""
+
+mkdir -p "${LOG_DIR}"
 
 # Array to store PIDs of launched devices
 pids=()
@@ -51,15 +71,15 @@ for i in $(seq 0 $((NUM_DEVICES - 1))); do
 
     morphling_device \
       --id "$DEVICE_ID" \
-      --flops 1T \
-      --memory 8G \
-      --ul_bw 100M \
-      --dl_bw 100M \
-      --ul_lat 10 \
-      --dl_lat 10 \
-      --backend proxy \
-      --cfg config/proxy/cli.ini \
-      --proxy_host 10.203.53.10:39000 | tee logs/device_$DEVICE_ID.log &
+      --flops "$DEVICE_FLOPS" \
+      --memory "$DEVICE_MEMORY" \
+      --ul_bw "$DEVICE_UL_BW" \
+      --dl_bw "$DEVICE_DL_BW" \
+      --ul_lat "$DEVICE_UL_LAT" \
+      --dl_lat "$DEVICE_DL_LAT" \
+      --backend "$DEVICE_BACKEND" \
+      --cfg "$DEVICE_CFG" \
+      --proxy_host "$DEVICE_PROXY_HOST" | tee "${LOG_DIR}/device_${DEVICE_ID}.log" &
     
     # Save the PID
     pids+=($!)

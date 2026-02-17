@@ -3,6 +3,9 @@
 EARLIEST vs LATEST 可视化对比
 
 这个脚本生成两种同步策略的可视化对比图
+
+Usage:
+  python3 scripts/generate_sync_visual.py
 """
 
 import sys

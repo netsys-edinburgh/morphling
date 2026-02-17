@@ -22,14 +22,14 @@ size_t ResolvePoolBytes(size_t buffer_size) {
 // ---------------------------------------------------------------------------
 
 ContextSlot::~ContextSlot() {
+  if (cuda_ctx) {
+    cuCtxSetCurrent(cuda_ctx);
+  }
   if (xt_handle) {
     cublasXtDestroy(xt_handle);
     xt_handle = nullptr;
   }
   if (stream) {
-    if (cuda_ctx) {
-      cuCtxSetCurrent(cuda_ctx);
-    }
     cudaStreamDestroy(stream);
     stream = nullptr;
   }
@@ -96,8 +96,13 @@ XtGemmWorker::XtGemmWorker(int gpu_id, int num_partitions, int partition_idx,
 }
 
 XtGemmWorker::~XtGemmWorker() {
+  if (worker_.joinable()) {
+    Stop();
+  }
   active_slot_ = nullptr;
-  context_slots_.clear();  // ContextSlot RAII handles cleanup
+  allocator_.reset();       // Free CUDA memory while contexts still exist
+  context_slots_.clear();   // Then destroy contexts
+  cudaSetDevice(gpu_id_);   // Restore primary context after green ctx cleanup
   LOG_DEBUG << "XtGemmWorker destroyed: gpu=" << gpu_id_
             << " partition=" << partition_idx_;
 }

@@ -9,6 +9,10 @@ The virtual times are then normalized to start from 0 for easier analysis.
 
 Usage: python3 sync_virtual_time.py <perf_merged.log> [--method earliest|latest]
 
+Examples:
+  python3 scripts/sync_virtual_time.py perf_merged.log --method earliest
+  python3 scripts/sync_virtual_time.py perf_merged.log --method latest --output perf_merged_synced.log
+
 Synchronization strategy:
 - latest: Use the latest (slowest) COMPUTE START time as baseline, advance others (default, ensures no device lags)
 - earliest: Use the earliest (fastest) COMPUTE START time as baseline, delay others (conservative approach)
@@ -464,7 +468,7 @@ def main():
 
     print(f"Writing synchronized log to: {output_file}")
     write_synchronized_log(
-        output_file,
+        str(output_file),
         other_lines,
         synced_vtime_lines,
         synced_throughput_lines,
