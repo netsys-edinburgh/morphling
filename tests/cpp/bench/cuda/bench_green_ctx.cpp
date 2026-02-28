@@ -6,118 +6,7 @@
 #include <thread>
 #include <vector>
 
-#include "common/types_and_defs.h"
-#include "scheduler/gpu_worker.h"
-#include "utils/cuda_utils.h"
-#include "utils/logger.h"
-
-// ============================================================================
-// Shared utilities
-// ============================================================================
-
-static void EnsureLoggerInit() {
-  static std::once_flag flag;
-  std::call_once(flag, []() { InitLogger(); });
-}
-
-static void EnsureDriverInit() {
-  static std::once_flag flag;
-  std::call_once(flag, []() { cuInit(0); });
-}
-
-static int GetSmCount() {
-  EnsureDriverInit();
-  CUdevice dev;
-  cuDeviceGet(&dev, 0);
-  int sm_count = 0;
-  cuDeviceGetAttribute(&sm_count, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
-                       dev);
-  return sm_count;
-}
-
-// Pinned host memory RAII wrapper
-struct PinnedBuffer {
-  float* ptr = nullptr;
-  size_t bytes = 0;
-
-  PinnedBuffer() = default;
-
-  explicit PinnedBuffer(size_t elems) : bytes(elems * sizeof(float)) {
-    if (elems > 0) {
-      cudaHostAlloc(reinterpret_cast<void**>(&ptr), bytes,
-                    cudaHostAllocDefault);
-      for (size_t i = 0; i < elems; i++) {
-        ptr[i] = static_cast<float>(i % 1000) * 0.001f;
-      }
-    }
-  }
-  ~PinnedBuffer() {
-    if (ptr) cudaFreeHost(ptr);
-  }
-  PinnedBuffer(const PinnedBuffer&) = delete;
-  PinnedBuffer& operator=(const PinnedBuffer&) = delete;
-  PinnedBuffer(PinnedBuffer&& o) noexcept : ptr(o.ptr), bytes(o.bytes) {
-    o.ptr = nullptr;
-    o.bytes = 0;
-  }
-  PinnedBuffer& operator=(PinnedBuffer&& o) noexcept {
-    if (this != &o) {
-      if (ptr) cudaFreeHost(ptr);
-      ptr = o.ptr;
-      bytes = o.bytes;
-      o.ptr = nullptr;
-      o.bytes = 0;
-    }
-    return *this;
-  }
-};
-
-static std::shared_ptr<GemmArgs> MakeNNGemmArgs(int m, int n, int k, float* a,
-                                                float* b, float* c) {
-  auto args = std::make_shared<GemmArgs>();
-  args->group_size = 1;
-  args->transa[0] = 'N';
-  args->transb[0] = 'N';
-  args->m[0] = m;
-  args->n[0] = n;
-  args->k[0] = k;
-  args->alpha[0] = 1.0f;
-  args->a[0] = a;
-  args->lda[0] = m;
-  args->b[0] = b;
-  args->ldb[0] = k;
-  args->beta[0] = 0.0f;
-  args->c[0] = c;
-  args->ldc[0] = m;
-  return args;
-}
-
-// Run H2D + cublasSgemm + D2H on pre-allocated device buffers.
-// Does NOT synchronize — caller must sync the stream.
-static void RunGemmDirect(cublasHandle_t handle, cudaStream_t stream,
-                          float* d_A, float* d_B, float* d_C,
-                          const GemmArgs* args) {
-  // H2D: copy A
-  CUDA_MEMCPY_ASYNC_LOOP(args->transa[0], d_A, args->a[0], args->lda[0],
-                         args->m[0], args->k[0], cudaMemcpyHostToDevice,
-                         stream);
-  // H2D: copy B
-  CUDA_MEMCPY_ASYNC_LOOP(args->transb[0], d_B, args->b[0], args->ldb[0],
-                         args->k[0], args->n[0], cudaMemcpyHostToDevice,
-                         stream);
-
-  cublasOperation_t transa = CUDA_TRANS_OP(args->transa[0]);
-  cublasOperation_t transb = CUDA_TRANS_OP(args->transb[0]);
-
-  CHECK_CUBLAS_ERROR(cublasSgemm_v2(handle, transa, transb, args->m[0],
-                                    args->n[0], args->k[0], args->alpha, d_A,
-                                    args->lda[0], d_B, args->ldb[0], args->beta,
-                                    d_C, args->ldc[0]));
-
-  // D2H: copy C
-  CUDA_MEMCPY_ASYNC_LOOP('N', args->c[0], d_C, args->ldc[0], args->m[0],
-                         args->n[0], cudaMemcpyDeviceToHost, stream);
-}
+#include "bench_cuda_utils.h"
 
 // Helper: run one full green context lifecycle (split -> create -> destroy)
 static void WarmupGreenCtxLifecycle(CUdevice dev, unsigned int min_sm) {
@@ -596,63 +485,11 @@ BENCHMARK_REGISTER_F(GreenCtxGemmScaling, GemmScaling)
 // Group 3: Non-Uniform SM Split Benchmarks
 // ============================================================================
 
-// Helper: split device SMs into the smallest possible groups (minCount=2).
-// All experiments in Group 3 use this to build non-uniform allocations.
-struct NonUniformSplit {
-  CUdevice dev = 0;
-  std::vector<CUdevResource> all_groups;
-  CUdevResource remainder = {};
-  unsigned int nb_groups = 0;
-  unsigned int group_sm_count = 0;  // actual SMs per group (may be >2)
-
-  // Returns false if the GPU doesn't support fine-grained splitting.
-  bool Init() {
-    EnsureDriverInit();
-    CHECK_CU_RESULT(cuDeviceGet(&dev, 0));
-
-    CUdevResource device_sm = {};
-    CHECK_CU_RESULT(
-        cuDeviceGetDevResource(dev, &device_sm, CU_DEV_RESOURCE_TYPE_SM));
-
-    // Query how many groups we get with minCount=2
-    nb_groups = 0;
-    CHECK_CU_RESULT(cuDevSmResourceSplitByCount(
-        nullptr, &nb_groups, &device_sm, nullptr,
-        CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING, 2));
-    if (nb_groups == 0) return false;
-
-    all_groups.resize(nb_groups);
-    remainder = {};
-    CHECK_CU_RESULT(cuDevSmResourceSplitByCount(
-        all_groups.data(), &nb_groups, &device_sm, &remainder,
-        CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING, 2));
-
-    group_sm_count = all_groups[0].sm.smCount;
-    return true;
-  }
-};
+// NonUniformSplit and GreenCtxSlot are defined in bench_cuda_utils.h
 
 // --- Experiment 1: MultiGreenCtxCoexist ---
 // Create multiple green contexts simultaneously with different SM counts
 // (geometric: 1, 2, 4, 8 base groups) and run concurrent GEMMs.
-
-struct GreenCtxSlot {
-  int num_groups = 0;
-  int sm_count = 0;
-  CUdevResourceDesc desc = nullptr;
-  CUgreenCtx green_ctx = nullptr;
-  CUcontext cuda_ctx = nullptr;
-  CUstream cu_stream = nullptr;
-  cudaStream_t stream = nullptr;
-  cublasHandle_t cublas_handle = nullptr;
-  float* d_A = nullptr;
-  float* d_B = nullptr;
-  float* d_C = nullptr;
-  PinnedBuffer h_A{0};
-  PinnedBuffer h_B{0};
-  PinnedBuffer h_C{0};
-  std::shared_ptr<GemmArgs> args;
-};
 
 class MultiGreenCtxCoexist : public benchmark::Fixture {
  public:
@@ -1313,4 +1150,196 @@ BENCHMARK_REGISTER_F(GreenCtxMemory, FullSlot)
     ->Arg(8)
     ->Arg(16)
     ->Iterations(5)
+    ->Unit(benchmark::kMicrosecond);
+
+// ============================================================================
+// Group 5: Green Context Stream Switch + Kernel Launch Overhead
+// ============================================================================
+// Answers: if launching a GEMM on green ctx A's stream takes X µs, does
+// launching the same GEMM on green ctx B's stream (after cuCtxSetCurrent
+// switch) have the same latency, or more?
+//
+// Three benchmarks, all use cublasSgemm (not cublasXt) so the measurement
+// captures H2D + compute + D2H on the green ctx stream:
+//
+//   SameCtx:        launch+sync on ctx A every iteration          (baseline)
+//   AlternateCtx:   alternate A→B→A→B… each iteration             (2-ctx switch)
+//   RoundRobinCtx:  round-robin across N contexts (arg = N)       (N-ctx switch)
+//
+// arg(0) = GEMM dim (M=N=K), arg(1) = num_contexts (ignored for SameCtx)
+
+class GreenCtxKernelSwitch : public benchmark::Fixture {
+ public:
+  void SetUp(benchmark::State& state) override {
+    EnsureLoggerInit();
+    dim_ = state.range(0);
+    num_ctx_ = state.range(1);
+    size_t elems = static_cast<size_t>(dim_) * dim_;
+    size_t bytes = elems * sizeof(float);
+
+    if (!split_.Init()) {
+      state.SkipWithMessage("NonUniformSplit failed");
+      return;
+    }
+
+    // Each context gets 1 SM group (equal-sized partitions)
+    if (static_cast<unsigned int>(num_ctx_) > split_.nb_groups) {
+      state.SkipWithMessage(
+          "Not enough SM groups (" + std::to_string(split_.nb_groups) +
+          ") for " + std::to_string(num_ctx_) + " contexts");
+      return;
+    }
+
+    slots_.resize(num_ctx_);
+    for (int i = 0; i < num_ctx_; i++) {
+      auto& s = slots_[i];
+      s.num_groups = 1;
+      s.sm_count = static_cast<int>(split_.group_sm_count);
+
+      CHECK_CU_RESULT(cuDevResourceGenerateDesc(
+          &s.desc, &split_.all_groups[i], 1));
+      CHECK_CU_RESULT(cuGreenCtxCreate(&s.green_ctx, s.desc, split_.dev,
+                                       CU_GREEN_CTX_DEFAULT_STREAM));
+      CHECK_CU_RESULT(cuCtxFromGreenCtx(&s.cuda_ctx, s.green_ctx));
+
+      CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
+      CHECK_CU_RESULT(cuGreenCtxStreamCreate(&s.cu_stream, s.green_ctx,
+                                             CU_STREAM_NON_BLOCKING, 0));
+      s.stream = s.cu_stream;
+
+      CHECK_CUBLAS_ERROR(cublasCreate(&s.cublas_handle));
+      CHECK_CUBLAS_ERROR(cublasSetStream(s.cublas_handle, s.stream));
+
+      CHECK_CUDA_ERROR(
+          cudaMalloc(reinterpret_cast<void**>(&s.d_A), bytes));
+      CHECK_CUDA_ERROR(
+          cudaMalloc(reinterpret_cast<void**>(&s.d_B), bytes));
+      CHECK_CUDA_ERROR(
+          cudaMalloc(reinterpret_cast<void**>(&s.d_C), bytes));
+
+      s.h_A = PinnedBuffer(elems);
+      s.h_B = PinnedBuffer(elems);
+      s.h_C = PinnedBuffer(elems);
+
+      s.args = MakeNNGemmArgs(dim_, dim_, dim_,
+                              s.h_A.ptr, s.h_B.ptr, s.h_C.ptr);
+    }
+
+    // Warmup: run one GEMM per slot
+    for (auto& s : slots_) {
+      CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
+      RunGemmDirect(s.cublas_handle, s.stream, s.d_A, s.d_B, s.d_C,
+                    s.args.get());
+      CHECK_CUDA_ERROR(cudaStreamSynchronize(s.stream));
+    }
+  }
+
+  void TearDown(benchmark::State&) override {
+    for (auto& s : slots_) {
+      if (s.cuda_ctx) {
+        CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
+      }
+      if (s.stream) cudaStreamSynchronize(s.stream);
+      if (s.cublas_handle) cublasDestroy(s.cublas_handle);
+      if (s.stream) cudaStreamDestroy(s.stream);
+      if (s.d_A) cudaFree(s.d_A);
+      if (s.d_B) cudaFree(s.d_B);
+      if (s.d_C) cudaFree(s.d_C);
+      if (s.cuda_ctx) cuCtxDestroy(s.cuda_ctx);
+      if (s.green_ctx) cuGreenCtxDestroy(s.green_ctx);
+    }
+    slots_.clear();
+  }
+
+ protected:
+  int dim_ = 0;
+  int num_ctx_ = 1;
+  NonUniformSplit split_;
+  std::vector<GreenCtxSlot> slots_;
+};
+
+// Baseline: always launch on context 0, never switch
+BENCHMARK_DEFINE_F(GreenCtxKernelSwitch, SameCtx)
+(benchmark::State& state) {
+  auto& s = slots_[0];
+  CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
+
+  for (auto _ : state) {
+    RunGemmDirect(s.cublas_handle, s.stream, s.d_A, s.d_B, s.d_C,
+                  s.args.get());
+    CHECK_CUDA_ERROR(cudaStreamSynchronize(s.stream));
+  }
+
+  double flops = 2.0 * dim_ * dim_ * dim_;
+  state.counters["GFLOPS"] =
+      benchmark::Counter(flops, benchmark::Counter::kIsIterationInvariantRate,
+                         benchmark::Counter::kIs1000);
+  state.counters["SMs"] = slots_[0].sm_count;
+}
+
+BENCHMARK_REGISTER_F(GreenCtxKernelSwitch, SameCtx)
+    ->Args({512, 1})
+    ->Args({1024, 1})
+    ->Args({2048, 1})
+    ->Unit(benchmark::kMicrosecond);
+
+// Alternate between ctx 0 and ctx 1 every iteration
+BENCHMARK_DEFINE_F(GreenCtxKernelSwitch, AlternateCtx)
+(benchmark::State& state) {
+  int idx = 0;
+  for (auto _ : state) {
+    auto& s = slots_[idx];
+    CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
+    RunGemmDirect(s.cublas_handle, s.stream, s.d_A, s.d_B, s.d_C,
+                  s.args.get());
+    CHECK_CUDA_ERROR(cudaStreamSynchronize(s.stream));
+    idx = 1 - idx;
+  }
+
+  double flops = 2.0 * dim_ * dim_ * dim_;
+  state.counters["GFLOPS"] =
+      benchmark::Counter(flops, benchmark::Counter::kIsIterationInvariantRate,
+                         benchmark::Counter::kIs1000);
+  state.counters["SMs_per_ctx"] = slots_[0].sm_count;
+  state.counters["num_contexts"] = 2;
+}
+
+BENCHMARK_REGISTER_F(GreenCtxKernelSwitch, AlternateCtx)
+    ->Args({512, 2})
+    ->Args({1024, 2})
+    ->Args({2048, 2})
+    ->Unit(benchmark::kMicrosecond);
+
+// Round-robin across N contexts
+BENCHMARK_DEFINE_F(GreenCtxKernelSwitch, RoundRobinCtx)
+(benchmark::State& state) {
+  int n = static_cast<int>(slots_.size());
+  int idx = 0;
+  for (auto _ : state) {
+    auto& s = slots_[idx];
+    CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
+    RunGemmDirect(s.cublas_handle, s.stream, s.d_A, s.d_B, s.d_C,
+                  s.args.get());
+    CHECK_CUDA_ERROR(cudaStreamSynchronize(s.stream));
+    idx = (idx + 1) % n;
+  }
+
+  double flops = 2.0 * dim_ * dim_ * dim_;
+  state.counters["GFLOPS"] =
+      benchmark::Counter(flops, benchmark::Counter::kIsIterationInvariantRate,
+                         benchmark::Counter::kIs1000);
+  state.counters["SMs_per_ctx"] = slots_[0].sm_count;
+  state.counters["num_contexts"] = n;
+}
+
+BENCHMARK_REGISTER_F(GreenCtxKernelSwitch, RoundRobinCtx)
+    ->Args({512, 2})
+    ->Args({512, 4})
+    ->Args({512, 8})
+    ->Args({1024, 2})
+    ->Args({1024, 4})
+    ->Args({1024, 8})
+    ->Args({2048, 2})
+    ->Args({2048, 4})
+    ->Args({2048, 8})
     ->Unit(benchmark::kMicrosecond);

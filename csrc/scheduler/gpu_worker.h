@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -17,6 +18,13 @@
 #include "scheduling_policy.h"
 #include "utils/cuda_utils.h"
 #include "worker_base.h"
+
+// One entry in an SM switching schedule file.
+struct SmScheduleEntry {
+  int64_t time_offset_us;
+  int num_sms;
+  int64_t duration_us;
+};
 
 #define CUDA_MEMCPY_ASYNC_LOOP(trans, dst, src, ld, m, k, mode, stream)      \
   for (int col = 0; col < ((trans == 'N' || trans == 'n') ? k : m); col++) { \
@@ -87,6 +95,19 @@ class XtGemmWorker : public WorkerBase,
     return allocator_.get();
   }
 
+  // Load an SM switching schedule from a text file.
+  // Returns false on parse error or invalid SM counts.
+  // Must be called after contexts are initialized (use warmup task pattern).
+  bool LoadSmSchedule(const std::string& path);
+
+  // Execute the loaded schedule synchronously (blocking).
+  // Must run on the worker thread — enqueue via AddTask().
+  void RunSmSchedule();
+
+  const std::vector<SmScheduleEntry>& GetSmSchedule() const {
+    return sm_schedule_;
+  }
+
  private:
   void Run() override;  // Thread entry: set device, init contexts, run loop
   void InitAllContexts();
@@ -109,6 +130,9 @@ class XtGemmWorker : public WorkerBase,
 
   // Per-worker CUDA memory pool
   std::unique_ptr<CachingAllocator> allocator_;
+
+  // SM switching schedule (loaded from file)
+  std::vector<SmScheduleEntry> sm_schedule_;
 };
 
 // Pool of XtGemmWorkers, potentially multiple per GPU
