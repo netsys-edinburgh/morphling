@@ -12,6 +12,7 @@
 # Examples:
 #   bash baselines/scripts/launch_torchrun.sh 4 dtfm
 #   bash baselines/scripts/launch_torchrun.sh 8 asteroid
+#   bash baselines/scripts/launch_torchrun.sh 4 dtfm --enable-mps
 
 set -euo pipefail
 

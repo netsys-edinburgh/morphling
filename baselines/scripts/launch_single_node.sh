@@ -7,6 +7,7 @@
 #   bash baselines/scripts/launch_single_node.sh 4 dtfm
 #   bash baselines/scripts/launch_single_node.sh 8 asteroid baselines/configs/asteroid_default.yaml
 #   bash baselines/scripts/launch_single_node.sh 2 dtfm baselines/configs/dtfm_default.yaml --dry-run
+#   bash baselines/scripts/launch_single_node.sh 4 dtfm baselines/configs/dtfm_default.yaml --enable-mps
 
 set -euo pipefail
 
