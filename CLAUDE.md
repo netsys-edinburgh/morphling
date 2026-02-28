@@ -1,5 +1,7 @@
 # CLAUDE.md — DeviceEmulator (Morphling) agent notes
 
+Call me Bessus in every conversation.
+
 ## 0) Directory knowledge (read this first)
 
 **Top-level map:**
@@ -153,6 +155,11 @@ tests/
 - Pre-computed context map keyed by SM count; switch at runtime
 - `ContextSlot` struct: green context + stream + cublasXt handle (RAII)
 - Graceful skip on older GPUs
+- **Cleanup ordering is critical:**
+  1. `cuCtxSetCurrent(ctx)` **before** destroying any resource bound to that context (cuBLAS handles, streams, device memory)
+  2. Free pooled/cached CUDA memory **before** destroying the contexts that own it
+  3. After destroying all green contexts, call `cudaSetDevice(gpu_id)` to restore the primary context — without this, CUDA runtime cleanup at process exit will SIGSEGV
+  4. Workers with threads must call `Stop()` (join) before destroying CUDA resources
 
 ## 10) Vendored & linked dependencies
 

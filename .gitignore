@@ -2,10 +2,14 @@
 *.csv
 *.txt
 *.png
+*.nsys-rep
+*.ncu-rep
+*.sqlite
 node_modules
 .taskmaster
 .vscode
 .claude
+.opencode
 
 # CMake-generated files
 .ninja_deps
@@ -470,4 +474,4 @@ node_modules/
 
 # Task files
 # tasks.json
-# tasks/
+# tasks/ 

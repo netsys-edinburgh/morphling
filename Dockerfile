@@ -12,6 +12,11 @@ RUN apt-get install -y \
     build-essential \
     pkg-config
 
+# Install Nsight Systems (nsys) and Nsight Compute (ncu)
+RUN apt-get update && apt-get install -y \
+    nsight-systems-2025.5.2 \
+    nsight-compute-2025.4.1
+
 RUN apt-get install -y \
     cmake \
     ninja-build \
