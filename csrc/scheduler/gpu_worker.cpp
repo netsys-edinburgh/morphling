@@ -2,7 +2,12 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <thread>
 
+#include "sliding_window_tracker.h"
 #include "utils/logger.h"
 
 namespace {
@@ -265,6 +270,82 @@ void XtGemmWorker::RunXtGemm(std::shared_ptr<GemmArgs> args) {
 
   LOG_DEBUG << "RunXtGemm completed on gpu=" << gpu_id_
             << " partition=" << partition_idx_;
+}
+
+bool XtGemmWorker::LoadSmSchedule(const std::string& path) {
+  std::ifstream file(path);
+  if (!file.is_open()) {
+    LOG_ERROR << "Cannot open SM schedule file: " << path;
+    return false;
+  }
+
+  std::vector<SmScheduleEntry> schedule;
+  std::string line;
+  int line_num = 0;
+  while (std::getline(file, line)) {
+    line_num++;
+    // Skip comments and blank lines
+    size_t first = line.find_first_not_of(" \t");
+    if (first == std::string::npos || line[first] == '#') continue;
+
+    std::istringstream iss(line);
+    SmScheduleEntry entry;
+    if (!(iss >> entry.time_offset_us >> entry.num_sms >> entry.duration_us)) {
+      LOG_ERROR << "Parse error at line " << line_num << ": " << line;
+      return false;
+    }
+
+    // Validate monotonic time offsets
+    if (!schedule.empty() &&
+        entry.time_offset_us < schedule.back().time_offset_us) {
+      LOG_ERROR << "Non-monotonic time_offset_us at line " << line_num
+                << ": " << entry.time_offset_us
+                << " < " << schedule.back().time_offset_us;
+      return false;
+    }
+
+    // Validate SM count exists
+    if (context_slots_.find(entry.num_sms) == context_slots_.end()) {
+      LOG_ERROR << "Invalid num_sms=" << entry.num_sms << " at line "
+                << line_num << " (not in context_slots_)";
+      return false;
+    }
+
+    schedule.push_back(entry);
+  }
+
+  sm_schedule_ = std::move(schedule);
+  LOG_INFO << "Loaded SM schedule: " << sm_schedule_.size()
+           << " entries from " << path;
+  return true;
+}
+
+void XtGemmWorker::RunSmSchedule() {
+  if (sm_schedule_.empty()) return;
+
+  auto start = SlidingWindowDurationTracker<>::Now();
+
+  for (const auto& entry : sm_schedule_) {
+    // Spin-wait until this entry's time offset
+    while (SlidingWindowDurationTracker<>::ElapsedUs(start) <
+           entry.time_offset_us) {
+      std::this_thread::yield();
+    }
+
+    SwitchContext(entry.num_sms);
+    LOG_DEBUG << "SM schedule: switched to " << entry.num_sms << " SMs at t="
+              << SlidingWindowDurationTracker<>::ElapsedUs(start) << "us";
+  }
+
+  // Hold until last entry's duration expires
+  const auto& last = sm_schedule_.back();
+  int64_t end_us = last.time_offset_us + last.duration_us;
+  while (SlidingWindowDurationTracker<>::ElapsedUs(start) < end_us) {
+    std::this_thread::yield();
+  }
+
+  LOG_DEBUG << "SM schedule completed: total "
+            << SlidingWindowDurationTracker<>::ElapsedUs(start) << "us";
 }
 
 // ---------------------------------------------------------------------------

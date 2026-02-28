@@ -149,6 +149,7 @@ if(ENABLE_XTGEMM_TESTS)
     )
     target_include_directories(bench_green_ctx PRIVATE
       ${XTGEMM_INCLUDE_DIRS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/bench/cuda
     )
     target_link_libraries(bench_green_ctx PRIVATE
       benchmark::benchmark
