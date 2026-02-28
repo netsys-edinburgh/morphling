@@ -35,3 +35,7 @@ ignore = [
     # Loop control variable not used within loop body
     "B007"
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
