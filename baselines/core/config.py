@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import cast
 
 
 @dataclass
@@ -24,9 +25,12 @@ class DeviceConfig:
     def validate(self) -> None:
         """Validate MPS configuration fields."""
         if not (1 <= self.mps_active_thread_percentage <= 100):
+            msg = (
+                "mps_active_thread_percentage must be 1-100, got "
+                + str(self.mps_active_thread_percentage)
+            )
             raise ValueError(
-                "mps_active_thread_percentage must be 1-100,"
-                f" got {self.mps_active_thread_percentage}"
+                msg
             )
 
 
@@ -138,6 +142,94 @@ class ParallelismPlan:
     micro_batch_alloc: dict[int, dict[int, int]] = field(default_factory=dict)
     schedule_type: str = "gpipe"
     estimated_latency_ms: float = float("inf")
+    node_mapping: dict[int, NodeInfo] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, object]:
+        """Serialize to JSON-compatible dict for hpp_plan.json."""
+        return {
+            "partition_points": self.partition_points,
+            "device_groups": {
+                str(k): v
+                for k, v in self.device_groups.items()
+            },
+            "micro_batch_alloc": {
+                str(s): {
+                    str(d): n
+                    for d, n in alloc.items()
+                }
+                for s, alloc in self.micro_batch_alloc.items()
+            },
+            "schedule_type": self.schedule_type,
+            "estimated_latency_ms": self.estimated_latency_ms,
+            "node_mapping": {
+                str(k): v.to_dict()
+                for k, v in self.node_mapping.items()
+            },
+            "num_stages": len(self.partition_points) + 1,
+            "world_size": sum(
+                len(devs)
+                for devs in self.device_groups.values()
+            ),
+        }
+
+    @classmethod
+    def from_json(
+        cls, data: dict[str, object],
+    ) -> ParallelismPlan:
+        """Deserialize from hpp_plan.json dict."""
+        node_mapping: dict[int, NodeInfo] = {}
+
+        raw_node_mapping = data.get("node_mapping", {})
+        if isinstance(raw_node_mapping, dict):
+            for k, v in raw_node_mapping.items():
+                if isinstance(v, dict):
+                    node_mapping[int(k)] = NodeInfo.from_dict(
+                        {
+                            str(field_name): field_value
+                            for field_name, field_value in v.items()
+                        }
+                    )
+
+        partition_points_raw = data.get("partition_points", [])
+        partition_points = (
+            cast(list[int], partition_points_raw)
+            if isinstance(partition_points_raw, list)
+            else []
+        )
+
+        device_groups: dict[int, list[int]] = {}
+        raw_device_groups = data.get("device_groups", {})
+        if isinstance(raw_device_groups, dict):
+            for k, v in raw_device_groups.items():
+                if isinstance(v, list):
+                    device_groups[int(k)] = [int(device) for device in v]
+
+        micro_batch_alloc: dict[int, dict[int, int]] = {}
+        raw_micro_batch_alloc = data.get("micro_batch_alloc", {})
+        if isinstance(raw_micro_batch_alloc, dict):
+            for stage, alloc in raw_micro_batch_alloc.items():
+                if not isinstance(alloc, dict):
+                    continue
+                micro_batch_alloc[int(stage)] = {
+                    int(device): int(batch_count)
+                    for device, batch_count in alloc.items()
+                }
+
+        schedule_type = str(data.get("schedule_type", "gpipe"))
+        estimated_raw = data.get("estimated_latency_ms", float("inf"))
+        if isinstance(estimated_raw, (int, float)):
+            estimated_latency_ms = float(estimated_raw)
+        else:
+            estimated_latency_ms = float("inf")
+
+        return cls(
+            partition_points=partition_points,
+            device_groups=device_groups,
+            micro_batch_alloc=micro_batch_alloc,
+            schedule_type=schedule_type,
+            estimated_latency_ms=estimated_latency_ms,
+            node_mapping=node_mapping,
+        )
 
 
 @dataclass
@@ -147,6 +239,54 @@ class DeviceTopology:
     device_specs: list[DeviceConfig] = field(default_factory=list)
     bandwidths: dict[tuple[int, int], float] = field(default_factory=dict)
     latencies: dict[tuple[int, int], float] = field(default_factory=dict)
+
+
+@dataclass
+class NodeInfo:
+    """Physical node information for K8s deployment."""
+
+    hostname: str = "localhost"
+    ip: str = "127.0.0.1"
+    nic: str = "eth0"
+    gpu_id: int = 0
+    memory_mb: int = 4096
+    architecture: str = "x86_64"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "hostname": self.hostname,
+            "ip": self.ip,
+            "nic": self.nic,
+            "gpu_id": self.gpu_id,
+            "memory_mb": self.memory_mb,
+            "architecture": self.architecture,
+        }
+
+    @classmethod
+    def from_dict(
+        cls, data: dict[str, object],
+    ) -> NodeInfo:
+        gpu_id_raw = data.get("gpu_id", 0)
+        memory_mb_raw = data.get("memory_mb", 4096)
+
+        if isinstance(gpu_id_raw, (int, float, str)):
+            gpu_id = int(gpu_id_raw)
+        else:
+            gpu_id = 0
+
+        if isinstance(memory_mb_raw, (int, float, str)):
+            memory_mb = int(memory_mb_raw)
+        else:
+            memory_mb = 4096
+
+        return cls(
+            hostname=str(data.get("hostname", "localhost")),
+            ip=str(data.get("ip", "127.0.0.1")),
+            nic=str(data.get("nic", "eth0")),
+            gpu_id=gpu_id,
+            memory_mb=memory_mb,
+            architecture=str(data.get("architecture", "x86_64")),
+        )
 
 
 @dataclass
@@ -167,7 +307,7 @@ class GreenCtxConfig:
 
 @dataclass
 class BaseConfig:
-    """Unified baseline config combining model, training, and runtime settings."""
+    """Unified baseline config combining model/training/runtime settings."""
 
     device: DeviceConfig = field(default_factory=DeviceConfig)
     distributed: DistributedConfig = field(default_factory=DistributedConfig)
@@ -195,5 +335,6 @@ __all__ = [
     "FaultToleranceConfig",
     "ParallelismPlan",
     "DeviceTopology",
+    "NodeInfo",
     "GreenCtxConfig",
 ]

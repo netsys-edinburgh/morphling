@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: asteroid-master
+  namespace: {{ namespace | default('default') }}
+  labels:
+    app: asteroid
+    component: master-service
+spec:
+  clusterIP: None
+  selector:
+    app: asteroid
+    rank: "0"
+  ports:
+    - name: torch-dist
+      port: {{ master_port | default(29500) }}
+      targetPort: {{ master_port | default(29500) }}
+      protocol: TCP

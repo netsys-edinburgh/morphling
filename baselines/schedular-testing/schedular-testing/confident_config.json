@@ -1,0 +1,304 @@
+{
+    "num_layers": 32,
+    "num_devices": 16,
+    "simulated_hardware": [
+        "Rockchip RK3588 (IoT) (Node 0)",
+        "Snapdragon 680 (IoT) (Node 1)",
+        "Nvidia Tegra X1 (IoT) (Node 2)",
+        "Snapdragon 8 Elite Gen 5 (Node 3)",
+        "Snapdragon 680 (IoT) (Node 4)",
+        "Rockchip RK3588 (IoT) (Node 5)",
+        "Rockchip RK3588 (IoT) (Node 6)",
+        "Rockchip RK3588 (IoT) (Node 7)",
+        "Nvidia Tegra X1 (IoT) (Node 8)",
+        "Nvidia Tegra X1 (IoT) (Node 9)",
+        "Snapdragon 680 (IoT) (Node 10)",
+        "Snapdragon 680 (IoT) (Node 11)",
+        "Rockchip RK3588 (IoT) (Node 12)",
+        "Rockchip RK3588 (IoT) (Node 13)",
+        "Rockchip RK3588 (IoT) (Node 14)",
+        "Nvidia Tegra X1 (IoT) (Node 15)"
+    ],
+    "computing_capacities": [
+        0.014791076050782694,
+        0.00585480093676815,
+        0.0036977690126956736,
+        1.0,
+        0.00585480093676815,
+        0.014791076050782694,
+        0.014791076050782694,
+        0.014791076050782694,
+        0.0036977690126956736,
+        0.0036977690126956736,
+        0.00585480093676815,
+        0.00585480093676815,
+        0.014791076050782694,
+        0.014791076050782694,
+        0.014791076050782694,
+        0.0036977690126956736
+    ],
+    "bandwidths": [
+        1.400048182210005,
+        0.5967895215409694,
+        0.2289743474231839,
+        0.35444839433521763,
+        0.7406601961905596,
+        0.45217885138262537,
+        0.22065172407561065,
+        8.508196514423076,
+        1.9976112530048078,
+        1.400048182210005,
+        6.134071772333921,
+        0.1273455217686415,
+        0.22677663730119527,
+        0.22476244063313108,
+        0.4447832491734,
+        0.6129111452435146
+    ],
+    "available_memory": [
+        2.0,
+        2.0,
+        2.0,
+        12.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.0
+    ],
+    "output_sizes": [
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0,
+        3.0
+    ],
+    "layer_profiles": [
+        {
+            "layer_idx": 0,
+            "forward_ms": 12.0,
+            "backward_ms": 24.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 1,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 2,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 3,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 4,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 5,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 6,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 7,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 8,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 9,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 10,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 11,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 12,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 13,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 14,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 15,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 16,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 17,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 18,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 19,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 20,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 21,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 22,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 23,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 24,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 25,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 26,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 27,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 28,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 29,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 30,
+            "forward_ms": 10.0,
+            "backward_ms": 20.0,
+            "memory_mb": 1500.0
+        },
+        {
+            "layer_idx": 31,
+            "forward_ms": 12.0,
+            "backward_ms": 24.0,
+            "memory_mb": 1500.0
+        }
+    ]
+}

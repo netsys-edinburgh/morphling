@@ -4,6 +4,13 @@ import importlib
 import logging
 from typing import Any, cast
 
+from .nccl_functional import (
+    functional_allreduce,
+    functional_recv,
+    functional_send,
+    has_cupy_nccl,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -120,7 +127,7 @@ class NCCLBackend:
         dst_rank: int,
         stream: object | None = None,
     ) -> None:
-        if self.pp_nccl_comm is None:
+        if has_cupy_nccl() and self.pp_nccl_comm is None:
             raise RuntimeError("PP communicator is not initialized.")
 
         tensor_any = cast(Any, tensor)
@@ -129,16 +136,12 @@ class NCCLBackend:
         if not tensor_any.is_contiguous():
             tensor_any = tensor_any.contiguous()
 
-        cupy = _import_cupy()
-        cuda_stream = cast(Any, self._resolve_stream(tensor_any, stream))
-        cupy_stream = cupy.cuda.ExternalStream(cuda_stream.cuda_stream)
-        comm = cast(Any, self.pp_nccl_comm)
-        comm.send(
-            tensor_any.data_ptr(),
-            tensor_any.numel(),
-            _type_torch_to_nccl(tensor_any.dtype),
+        stream_resolved = self._resolve_stream(tensor_any, stream)
+        functional_send(
+            tensor_any,
             dst_rank,
-            cupy_stream.ptr,
+            self.pp_nccl_comm,
+            stream_resolved,
         )
 
     def recv(
@@ -147,7 +150,7 @@ class NCCLBackend:
         src_rank: int,
         stream: object | None = None,
     ) -> None:
-        if self.pp_nccl_comm is None:
+        if has_cupy_nccl() and self.pp_nccl_comm is None:
             raise RuntimeError("PP communicator is not initialized.")
 
         tensor_any = cast(Any, tensor)
@@ -156,16 +159,12 @@ class NCCLBackend:
         if not tensor_any.is_contiguous():
             tensor_any = tensor_any.contiguous()
 
-        cupy = _import_cupy()
-        cuda_stream = cast(Any, self._resolve_stream(tensor_any, stream))
-        cupy_stream = cupy.cuda.ExternalStream(cuda_stream.cuda_stream)
-        comm = cast(Any, self.pp_nccl_comm)
-        comm.recv(
-            tensor_any.data_ptr(),
-            tensor_any.numel(),
-            _type_torch_to_nccl(tensor_any.dtype),
+        stream_resolved = self._resolve_stream(tensor_any, stream)
+        functional_recv(
+            tensor_any,
             src_rank,
-            cupy_stream.ptr,
+            self.pp_nccl_comm,
+            stream_resolved,
         )
 
     def allreduce(
@@ -174,7 +173,7 @@ class NCCLBackend:
         stream: object | None = None,
     ) -> None:
         nccl_comm = self.dp_nccl_comm or self.pp_nccl_comm
-        if nccl_comm is None:
+        if has_cupy_nccl() and nccl_comm is None:
             raise RuntimeError("No NCCL communicator is initialized.")
 
         tensor_any = cast(Any, tensor)
@@ -183,17 +182,11 @@ class NCCLBackend:
         if not tensor_any.is_contiguous():
             tensor_any = tensor_any.contiguous()
 
-        cupy = _import_cupy()
-        cuda_stream = cast(Any, self._resolve_stream(tensor_any, stream))
-        cupy_stream = cupy.cuda.ExternalStream(cuda_stream.cuda_stream)
-        comm = cast(Any, nccl_comm)
-        comm.allReduce(
-            tensor_any.data_ptr(),
-            tensor_any.data_ptr(),
-            tensor_any.numel(),
-            _type_torch_to_nccl(tensor_any.dtype),
-            _import_nccl().NCCL_SUM,
-            cupy_stream.ptr,
+        stream_resolved = self._resolve_stream(tensor_any, stream)
+        functional_allreduce(
+            tensor_any,
+            nccl_comm,
+            stream_resolved,
         )
 
     def setup_communicators(
@@ -203,9 +196,32 @@ class NCCLBackend:
         pp_size: int,
         dp_size: int,
         dist_store: object | None,
+        pp_size_override: int | None = None,
+        dp_size_override: int | None = None,
     ) -> tuple[object, object | None]:
         dist = _import_dist()
+        effective_pp_size = (
+            pp_size_override
+            if pp_size_override is not None
+            else pp_size
+        )
+        effective_dp_size = (
+            dp_size_override
+            if dp_size_override is not None
+            else dp_size
+        )
+
+        if not has_cupy_nccl():
+            self.pp_nccl_comm = None
+            self.dp_nccl_comm = None
+            logger.warning(
+                "CuPy NCCL unavailable; using torch.distributed "
+                "fallback path.",
+            )
+            return self.pp_nccl_comm, self.dp_nccl_comm
+
         cupy = _import_cupy()
+        nccl = _import_nccl()
         cupy.cuda.Device(self.cuda_id).use()
 
         store = dist_store
@@ -214,7 +230,7 @@ class NCCLBackend:
         store_any = cast(Any, store)
 
         pp_comm_name = f"baseline_pp_{dp_rank}"
-        pp_uid_raw = _import_nccl().get_unique_id()
+        pp_uid_raw = nccl.get_unique_id()
         if pp_rank == 0:
             uid_bytes = _uid_to_bytes(pp_uid_raw)
             store_any.set(
@@ -226,16 +242,16 @@ class NCCLBackend:
             uid_data = store_any.get(f"group-{pp_comm_name}-uid")
             raw = uid_data if isinstance(uid_data, bytes) else bytes(uid_data)
             pp_uid_raw = _bytes_to_uid(raw)
-        self.pp_nccl_comm = _import_nccl().NcclCommunicator(
-            pp_size,
+        self.pp_nccl_comm = nccl.NcclCommunicator(
+            effective_pp_size,
             pp_uid_raw,
             pp_rank,
         )
 
         self.dp_nccl_comm = None
-        if dp_size > 1:
+        if effective_dp_size > 1:
             dp_comm_name = f"baseline_dp_{pp_rank}"
-            dp_uid_raw = _import_nccl().get_unique_id()
+            dp_uid_raw = nccl.get_unique_id()
             if dp_rank == 0:
                 uid_dp_bytes = _uid_to_bytes(dp_uid_raw)
                 store_any.set(
@@ -245,10 +261,14 @@ class NCCLBackend:
             self._barrier()
             if dp_rank != 0:
                 uid_dp_data = store_any.get(f"group-{dp_comm_name}-uid")
-                raw_dp = uid_dp_data if isinstance(uid_dp_data, bytes) else bytes(uid_dp_data)
+                raw_dp = (
+                    uid_dp_data
+                    if isinstance(uid_dp_data, bytes)
+                    else bytes(uid_dp_data)
+                )
                 dp_uid_raw = _bytes_to_uid(raw_dp)
-            self.dp_nccl_comm = _import_nccl().NcclCommunicator(
-                dp_size,
+            self.dp_nccl_comm = nccl.NcclCommunicator(
+                effective_dp_size,
                 dp_uid_raw,
                 dp_rank,
             )
@@ -256,8 +276,8 @@ class NCCLBackend:
         logger.debug(
             "NCCL communicators initialized: rank=%s pp=%s dp=%s",
             self.rank,
-            pp_size,
-            dp_size,
+            effective_pp_size,
+            effective_dp_size,
         )
         return self.pp_nccl_comm, self.dp_nccl_comm
 

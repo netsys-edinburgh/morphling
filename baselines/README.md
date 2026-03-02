@@ -296,5 +296,5 @@ stages = adapter.split_into_stages(num_stages=4)
 
 The original monolithic baselines are preserved as reference:
 - `baselines/dtfm_gpt2_train copy (1).py` — DT-FM (3177 lines)
-- `baselines/astroid (1).py` — Asteroid (2144 lines)
+- `baselines/asteroid (1).py` — Asteroid (2144 lines)
 - `baselines/Confident-production-FIXED (1) copy 2 (1).ipynb` — Confident

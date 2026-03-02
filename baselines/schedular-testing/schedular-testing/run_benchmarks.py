@@ -59,7 +59,7 @@ def main():
     # 2. Define the exact paths to your three schedulers
     schedulers = [
         ("Confidant", ["python3", "confident/confident-schedular-test.py"]),
-        ("Asteroid", ["python3", "astroid/simulate_asteroid_scheduler.py"]),
+        ("Asteroid", ["python3", "asteroid/simulate_asteroid_scheduler.py"]),
         ("DT-FM", ["python3", "dtfm/simulate_dtfm_scheduler.py"])
     ]
 
