@@ -151,7 +151,7 @@ tests/
 - RAII + move semantics for all resource wrappers
 
 ### CUDA green contexts
-- SM partitioning via `cuGreenCtxCreate` (requires SM 9.0+ / Hopper)
+- SM partitioning via `cuGreenCtxCreate` (requires CUDA driver 12.5+; CC 8.x step=2 SMs, CC 9.0+ step=8 SMs)
 - Pre-computed context map keyed by SM count; switch at runtime
 - `ContextSlot` struct: green context + stream + cublasXt handle (RAII)
 - Graceful skip on older GPUs

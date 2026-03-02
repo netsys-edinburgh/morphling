@@ -86,7 +86,7 @@ message(STATUS "Python version: ${Python_VERSION}")
 
 # Supported python versions.  These versions will be searched in order, the
 # first match will be selected.  These should be kept in sync with setup.py.
-set(PYTHON_SUPPORTED_VERSIONS "3.8" "3.9" "3.10" "3.11")
+set(PYTHON_SUPPORTED_VERSIONS "3.8" "3.9" "3.10" "3.11" "3.12")
 
 if(MORPHLING_PYTHON_EXECUTABLE)
   find_python_from_executable(${MORPHLING_PYTHON_EXECUTABLE} "${PYTHON_SUPPORTED_VERSIONS}")
@@ -353,6 +353,34 @@ define_gpu_extension_target(
   ARCHITECTURES ${MORPHLING_GPU_ARCHES}
   LIBRARIES ${MORPHLING_EXT_LIB}
   # INCLUDE_DIRECTORIES ${MORPHLING_EXT_INCLUDE_DIRS}
+  WITH_SOABI
+)
+
+#
+# _GreenCtx extension (green context runtime for dynamic SM partitioning)
+#
+set(MORPHLING_GREENCTX_SRC
+  ${BASE_SRC}
+  "csrc/scheduler/green_context_runtime.cpp"
+  "csrc/scheduler/green_trace_parser.cpp"
+  "csrc/python/green_ctx_py.cpp"
+  "csrc/utils/logger.cpp"
+  "csrc/utils/cuda_utils.cpp"
+)
+set(MORPHLING_GREENCTX_LIB
+  torch ${torch_python_LIBRARY}
+  uuid Threads::Threads fmt
+  CUDA::cuda_driver
+)
+
+define_gpu_extension_target(
+  _GreenCtx
+  DESTINATION morphling
+  LANGUAGE ${MORPHLING_GPU_LANG}
+  SOURCES ${MORPHLING_GREENCTX_SRC}
+  COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+  ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+  LIBRARIES ${MORPHLING_GREENCTX_LIB}
   WITH_SOABI
 )
 
