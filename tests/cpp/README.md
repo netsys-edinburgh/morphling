@@ -47,7 +47,7 @@ cmake --build tests/cpp/build -j
 
 - **CUDA tests**: require CUDA toolkit + runtime.
 - **XtGemm tests/benchmarks**: require CUDA driver API availability and
-  compatible GPU support (green contexts / compute capability 9.0+).
+  compatible GPU support (CUDA driver 12.5+ (green contexts supported on CC 8.x and above)).
 - **Zerocopy tests/benchmarks**: require protobuf generation, Torch, and CUDA
   for the pinned-pool test.
 

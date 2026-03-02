@@ -33,6 +33,7 @@ from baselines.core.config import (
     BaseConfig,
     DeviceConfig,
     DeviceTopology,
+    GreenCtxConfig,
     ParallelismPlan,
 )
 from baselines.models import PipelineStage
@@ -144,6 +145,36 @@ def _worker_impl(
         f" cuda:{cuda_id}",
         flush=True,
     )
+
+    # ── Step 3b: Green context controller ───────────────
+    gc_controller = None
+    if cfg.greenctx.enabled:
+        from morphling.runtime.green_context import (
+            GreenContextConfig,
+            GreenContextController,
+        )
+        gc_cfg = GreenContextConfig(
+            enabled=True,
+            backend=cfg.greenctx.backend,
+            trace_path=cfg.greenctx.trace_path,
+            clock_mode=cfg.greenctx.clock_mode,
+            strict=cfg.greenctx.strict,
+            switch_sync=cfg.greenctx.switch_sync,
+            num_partitions=cfg.greenctx.num_partitions,
+            partition_idx=cfg.greenctx.partition_idx,
+            stream_priority=cfg.greenctx.stream_priority,
+        )
+        gc_controller = (
+            GreenContextController.from_config(
+                device_id=cuda_id, cfg=gc_cfg,
+            )
+        )
+        print(
+            f"[RANK {rank}] GreenCtx: "
+            f"supported={gc_controller.is_supported}"
+            f" sms={gc_controller.available_sm_counts()}",
+            flush=True,
+        )
 
     # ── Step 4: Stage boundaries ─────────────────────────
     is_first = pp_rank == 0
@@ -273,18 +304,27 @@ def _worker_impl(
     )
 
     # ── Step 13: CUDA streams ────────────────────────────
-    comp_stream = torch.cuda.default_stream(device=device)
-    recv_stream = torch.cuda.Stream(
-        device=device, priority=-1
-    )
-    send_stream = torch.cuda.Stream(
-        device=device, priority=-1
-    )
-    dp_stream: torch.cuda.Stream | None = None
-    if dp_size > 1:
-        dp_stream = torch.cuda.Stream(
+    if gc_controller and gc_controller.is_supported:
+        gc_bundle = gc_controller.get_default_bundle()
+        comp_stream = gc_bundle.comp
+        recv_stream = gc_bundle.recv
+        send_stream = gc_bundle.send
+        dp_stream = gc_bundle.dp if dp_size > 1 else None
+    else:
+        comp_stream = torch.cuda.default_stream(
+            device=device
+        )
+        recv_stream = torch.cuda.Stream(
             device=device, priority=-1
         )
+        send_stream = torch.cuda.Stream(
+            device=device, priority=-1
+        )
+        dp_stream = None
+        if dp_size > 1:
+            dp_stream = torch.cuda.Stream(
+                device=device, priority=-1
+            )
 
     # ── Step 14: Pre-allocate activation buffers ─────────
     num_micro = cfg.training.num_microbatches
@@ -343,6 +383,23 @@ def _worker_impl(
     for iter_num in range(cfg.training.max_iters):
         dist.barrier()
         iter_start = time.time()
+
+        # Green context: update streams for this step
+        _gc_prev_sm = None
+        if gc_controller and gc_controller.is_supported:
+            _gc_sm, _gc_gen = (
+                gc_controller.backend.activate_for_step(
+                    iter_num
+                )
+            )
+            _gc_prev_sm = _gc_sm
+            _gc_b = gc_controller._bundles.get(_gc_sm)
+            if _gc_b is not None:
+                comp_stream = _gc_b.comp
+                recv_stream = _gc_b.recv
+                send_stream = _gc_b.send
+                if dp_size > 1:
+                    dp_stream = _gc_b.dp
 
         lr = get_lr(iter_num, cfg)
         for pg in optimizer.param_groups:
@@ -484,6 +541,13 @@ def _worker_impl(
         torch.cuda.synchronize()
         dist.barrier()
 
+        # Green context: deactivate for this step
+        if _gc_prev_sm is not None and gc_controller:
+            gc_controller.backend.deactivate(
+                _gc_prev_sm
+            )
+            _gc_prev_sm = None
+
         # ── Logging ──────────────────────────────────────
         t1 = time.time()
         dt = t1 - t0
@@ -514,6 +578,11 @@ def _worker_impl(
             _save_checkpoint(
                 model, optimizer, iter_num, rank, args
             )
+
+    # ── Green context cleanup (before process group) ──
+    if gc_controller is not None:
+        gc_controller.close()
+        gc_controller = None
 
     # ── Cleanup ──────────────────────────────────────────
     dist.barrier()
@@ -949,6 +1018,34 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="MPS active thread percentage (1-100)",
     )
+    # ── Green context args ─────────────────────────────
+    p.add_argument(
+        "--greenctx-enabled",
+        action="store_true",
+        help="Enable green context SM partitioning",
+    )
+    p.add_argument(
+        "--greenctx-backend",
+        type=str,
+        choices=["auto", "cpp", "torch_native", "off"],
+        default="auto",
+    )
+    p.add_argument(
+        "--greenctx-trace",
+        type=str,
+        default=None,
+        help="Path to green context trace file",
+    )
+    p.add_argument(
+        "--greenctx-clock-mode",
+        type=str,
+        choices=["wall", "step"],
+        default="step",
+    )
+    p.add_argument(
+        "--greenctx-strict",
+        action="store_true",
+    )
     return p.parse_args()
 
 
@@ -978,6 +1075,17 @@ def main() -> None:
     if cfg.device.mps_enabled:
         cfg.device.validate()
 
+    # ── Green context CLI overrides ────────────────────
+    if args.greenctx_enabled:
+        cfg.greenctx.enabled = True
+    if args.greenctx_backend:
+        cfg.greenctx.backend = args.greenctx_backend
+    if args.greenctx_trace:
+        cfg.greenctx.trace_path = args.greenctx_trace
+    if args.greenctx_clock_mode:
+        cfg.greenctx.clock_mode = args.greenctx_clock_mode
+    if args.greenctx_strict:
+        cfg.greenctx.strict = True
     # ── Resolve world_size ───────────────────────────────
     if args.spawn:
         world_size = args.num_gpus

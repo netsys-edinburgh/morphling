@@ -10,6 +10,7 @@ from baselines.core.config import (
     DeviceConfig,
     DistributedConfig,
     FaultToleranceConfig,
+    GreenCtxConfig,
     ModelConfig,
     ParallelConfig,
     TrainingConfig,
@@ -49,8 +50,11 @@ def _parse_config(raw: dict[str, object]) -> BaseConfig:
             FaultToleranceConfig,
             raw.get("fault_tolerance", {}),
         ),
+        greenctx=_build_dataclass(
+            GreenCtxConfig,
+            raw.get("greenctx", {}),
+        ),
     )
-
 
 def _build_dataclass(
     cls: type[_DataclassT],

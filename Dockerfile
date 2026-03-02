@@ -1,5 +1,5 @@
 # DeviceEmulator Dockerfile
-FROM pytorch/pytorch:2.9.1-cuda12.8-cudnn9-devel
+FROM pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel
 
 RUN sed -i 's|http://security.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list || true
 
@@ -56,6 +56,10 @@ RUN apt-get install -y \
 
 RUN apt-get install -y libopenblas-dev
 
+# PyTorch 2.10 image uses PEP 668 EXTERNALLY-MANAGED.
+# Safe to remove in a Docker container.
+RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED
+
 # 创建工作目录
 WORKDIR /app
 
@@ -85,7 +89,8 @@ RUN --mount=type=cache,target=/ccache \
     cmake -S tests/cpp -B tests/cpp/build \
     -DENABLE_CUDA_TESTS=ON \
     -DENABLE_XTGEMM_TESTS=ON \
-    -DENABLE_ZEROCOPY_TESTS=ON && \
+    -DENABLE_ZEROCOPY_TESTS=ON \
+    -DENABLE_GREEN_CTX_TESTS=ON && \
     cmake --build tests/cpp/build -j
 
 # 创建必要的目录
@@ -100,4 +105,4 @@ EXPOSE 39000
 # 设置环境变量用于运行时
 ENV SPDLOG_LEVEL=debug
 ENV MORPHLING_HOME=/app
-ENV PYTHONPATH=/opt/conda/lib/python3.11/site-packages
+ENV PYTHONPATH=/usr/local/lib/python3.12/dist-packages

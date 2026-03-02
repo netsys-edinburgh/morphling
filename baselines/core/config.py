@@ -150,6 +150,22 @@ class DeviceTopology:
 
 
 @dataclass
+class GreenCtxConfig:
+    """Green context SM partitioning configuration."""
+
+    enabled: bool = False
+    backend: str = "auto"  # auto|cpp|torch_native|off
+    trace_path: str | None = None
+    clock_mode: str = "step"  # wall|step
+    strict: bool = False
+    switch_sync: str = "event_chain"
+    num_partitions: int = 1
+    partition_idx: int = 0
+    stream_priority: int = -1
+
+
+
+@dataclass
 class BaseConfig:
     """Unified baseline config combining model, training, and runtime settings."""
 
@@ -164,6 +180,9 @@ class BaseConfig:
     topology: DeviceTopology | None = None
     plan: ParallelismPlan | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+    greenctx: GreenCtxConfig = field(
+        default_factory=GreenCtxConfig,
+    )
 
 
 __all__ = [
@@ -176,4 +195,5 @@ __all__ = [
     "FaultToleranceConfig",
     "ParallelismPlan",
     "DeviceTopology",
+    "GreenCtxConfig",
 ]
