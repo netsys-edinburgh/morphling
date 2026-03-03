@@ -11,6 +11,9 @@ PLAN_FILE="${SCRIPT_DIR}/../hpp_plan.json"
 BASELINES_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${BASELINES_DIR}/.." && pwd)"
 
+ASTEROID_CONFIG="${BASELINES_DIR}/configs/asteroid_default.yaml"
+INVENTORY_TEMPLATE="${DEPLOY_DIR}/inventory.ini.template"
+
 IMAGE_NAME="baselines"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 IMAGE_FULL="${IMAGE_NAME}:${IMAGE_TAG}"
@@ -109,6 +112,92 @@ check_file() {
   fi
 }
 
+generate_inventory() {
+  # Auto-generate inventory.ini from asteroid_default.yaml cluster config
+  local config_file="$1"
+  local output_file="$2"
+
+  info "Generating ${output_file} from ${config_file}"
+
+  python3 - "${config_file}" "${output_file}" <<'PYEOF'
+import yaml, sys, os
+
+config_file = sys.argv[1]
+output_file = sys.argv[2]
+
+with open(config_file) as f:
+    cfg = yaml.safe_load(f)
+
+nodes = cfg.get('cluster', {}).get('nodes', [])
+if not nodes:
+    print('ERROR: No cluster.nodes found in config', file=sys.stderr)
+    sys.exit(1)
+
+master_nodes = [n for n in nodes if n.get('role') == 'master']
+worker_nodes = [n for n in nodes if n.get('role') != 'master']
+
+if not master_nodes:
+    # Fall back: treat rank-0 as master
+    master_nodes = [n for n in nodes if n.get('rank', -1) == 0]
+    worker_nodes = [n for n in nodes if n.get('rank', -1) != 0]
+
+lines = []
+lines.append(f'# Auto-generated from {config_file}')
+lines.append('# Do not edit — regenerate via deploy_asteroid.sh')
+lines.append('')
+lines.append('[master]')
+for n in master_nodes:
+    alias  = n.get('hostname', 'master_node')
+    ip     = n['ip']
+    rank   = n.get('rank', 0)
+    gpu_id = n.get('gpu_id', 0)
+    nic    = n.get('nic', 'eth0')
+    lines.append(
+        f"{alias} ansible_host={ip} ansible_user='ubuntu' "
+        f"rank={rank} gpu_id={gpu_id} nic={nic} hostname={alias}"
+    )
+
+lines.append('')
+lines.append('[workers]')
+for n in worker_nodes:
+    alias  = n.get('hostname', f"worker{n.get('rank', 0)}")
+    ip     = n['ip']
+    rank   = n.get('rank', 0)
+    gpu_id = n.get('gpu_id', 0)
+    nic    = n.get('nic', 'eth0')
+    lines.append(
+        f"{alias} ansible_host={ip} ansible_user='ubuntu' "
+        f"rank={rank} gpu_id={gpu_id} nic={nic} hostname={alias}"
+    )
+
+lines.append('')
+lines.append('[all:vars]')
+lines.append('ansible_python_interpreter=/usr/bin/python3')
+lines.append('')
+lines.append('[cluster:children]')
+lines.append('master')
+lines.append('workers')
+lines.append('')
+lines.append('[cluster:vars]')
+lines.append('ansible_python_interpreter=/usr/bin/python3')
+lines.append('baselines_venv=/opt/baselines/venv')
+lines.append('baselines_src=/opt/baselines/src')
+lines.append('')
+
+with open(output_file, 'w') as f:
+    f.write('\n'.join(lines))
+
+print(f'Generated inventory with {len(master_nodes)} master(s) and {len(worker_nodes)} worker(s)')
+PYEOF
+
+  if [[ $? -ne 0 ]]; then
+    err "Failed to generate inventory.ini"
+    exit 1
+  fi
+
+  log "inventory.ini written to ${output_file}"
+}
+
 check_prereqs() {
   header "PREREQUISITES"
 
@@ -132,6 +221,15 @@ check_prereqs() {
   fi
 
   check_file "${VAULT_PASSWORD_FILE}"
+
+  # Auto-generate inventory.ini from YAML config if missing
+  if [[ ! -f "${ANSIBLE_INVENTORY}" ]]; then
+    warn "inventory.ini not found — generating from asteroid config"
+    check_file "${ASTEROID_CONFIG}"
+    check_file "${INVENTORY_TEMPLATE}"
+    generate_inventory "${ASTEROID_CONFIG}" "${ANSIBLE_INVENTORY}"
+  fi
+
   check_file "${ANSIBLE_INVENTORY}"
   check_file "${ANSIBLE_SECRETS}"
 
