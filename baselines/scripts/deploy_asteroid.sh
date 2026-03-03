@@ -306,15 +306,13 @@ check_prereqs() {
     ok=false
   fi
 
-  # Auto-generate inventory.ini from YAML config if missing
-  if [[ ! -f "${ANSIBLE_INVENTORY}" ]]; then
-    warn "inventory.ini not found — generating from asteroid config"
-    if [[ -f "${ASTEROID_CONFIG}" && -f "${INVENTORY_TEMPLATE}" ]]; then
-      generate_inventory "${ASTEROID_CONFIG}" "${ANSIBLE_INVENTORY}"
-    else
-      err "Cannot generate inventory: missing ${ASTEROID_CONFIG} or ${INVENTORY_TEMPLATE}"
-      ok=false
-    fi
+  # Always regenerate inventory.ini from YAML config to stay in sync
+  if [[ -f "${ASTEROID_CONFIG}" ]]; then
+    info "Regenerating inventory.ini from ${ASTEROID_CONFIG}"
+    generate_inventory "${ASTEROID_CONFIG}" "${ANSIBLE_INVENTORY}"
+  else
+    err "Cannot generate inventory: missing ${ASTEROID_CONFIG}"
+    ok=false
   fi
 
   if [[ "$ok" == false ]]; then
@@ -1305,12 +1303,9 @@ main() {
   # Load YAML config (overrides image name/tag/strategy)
   load_yaml_config
 
-  # Generate inventory.ini from config if missing
-  if [[ ! -f "${ANSIBLE_INVENTORY}" ]]; then
-    warn "inventory.ini not found — generating from config"
-    if [[ -f "${ASTEROID_CONFIG}" ]]; then
-      generate_inventory "${ASTEROID_CONFIG}" "${ANSIBLE_INVENTORY}"
-    fi
+  # Always regenerate inventory.ini from config to stay in sync
+  if [[ -f "${ASTEROID_CONFIG}" ]]; then
+    generate_inventory "${ASTEROID_CONFIG}" "${ANSIBLE_INVENTORY}"
   fi
 
   # Check all prerequisites
