@@ -20,8 +20,10 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+# parents[2] = DeviceEmulator/ so "from baselines.core..." resolves
+# (parents[1] = baselines/ which would look for baselines/baselines/)
 sys.path.insert(
-    0, str(Path(__file__).resolve().parents[1])
+    0, str(Path(__file__).resolve().parents[2])
 )
 
 from baselines.core.config import (
@@ -275,22 +277,110 @@ def main() -> int:
         action="store_true",
         help="Generate synthetic plan only",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to asteroid YAML config "
+        "(overrides cluster.conf)",
+    )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default=None,
+        help="Parallelism strategy "
+        "(asteroid, uniform, etc.)",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
     print("BASELINES HPP PLANNER")
     print("=" * 60)
 
-    print(
-        f"\nLoading cluster config from "
-        f"{args.cluster_conf}"
-    )
-    cluster_nodes = parse_cluster_conf(
-        args.cluster_conf
-    )
-    print(
-        f"  Found {len(cluster_nodes)} node(s)"
-    )
+    # Load cluster configuration
+    # --config (YAML) takes precedence over --cluster-conf
+    if args.config and os.path.exists(args.config):
+        print(f"\nLoading config from {args.config}")
+        import yaml
+
+        with open(args.config) as f:
+            yaml_cfg = yaml.safe_load(f)
+        cluster_section = yaml_cfg.get("cluster", {})
+        nodes_list = cluster_section.get("nodes", [])
+        mps_global = yaml_cfg.get("mps", {})
+        cluster_nodes: Dict[str, Dict[str, Any]] = {}
+        for i, node in enumerate(nodes_list):
+            if isinstance(node, dict):
+                ip = node.get("ip", f"127.0.0.{i}")
+                node_mps = node.get("mps", {})
+                cluster_nodes[ip] = {
+                    "ip": ip,
+                    "nic": node.get("nic", "eth0"),
+                    "rank": node.get("rank", i),
+                    "gpu_id": node.get("gpu_id", 0),
+                    "hostname": node.get(
+                        "hostname", f"node-{i}"
+                    ),
+                    "memory_mb": node.get(
+                        "memory_mb", 4096
+                    ),
+                    "active_thread_pct": node_mps.get(
+                        "active_thread_percentage",
+                        mps_global.get(
+                            "active_thread_percentage",
+                            100,
+                        ),
+                    ),
+                    "memory_limit_mb": node_mps.get(
+                        "memory_limit_mb",
+                        node.get("memory_mb", 4096),
+                    ),
+                }
+            else:
+                ip = str(node)
+                cluster_nodes[ip] = {
+                    "ip": ip,
+                    "nic": "eth0",
+                    "rank": i,
+                    "gpu_id": 0,
+                    "hostname": f"node-{i}",
+                    "memory_mb": 4096,
+                    "active_thread_pct": 100,
+                    "memory_limit_mb": 4096,
+                }
+        print(f"  Found {len(cluster_nodes)} nodes")
+        # Override args from YAML config sections
+        model_cfg = yaml_cfg.get("model", {})
+        par_cfg = yaml_cfg.get("parallelism", {})
+        train_cfg = yaml_cfg.get("training", {})
+        if model_cfg.get("num_layers"):
+            args.num_layers = model_cfg["num_layers"]
+        if par_cfg.get("num_stages"):
+            args.num_stages = par_cfg["num_stages"]
+        if (
+            par_cfg.get("strategy")
+            and args.strategy is None
+        ):
+            args.strategy = par_cfg["strategy"]
+        if train_cfg.get("micro_batch_size"):
+            args.micro_batch_size = (
+                train_cfg["micro_batch_size"]
+            )
+        if train_cfg.get("global_batch_size"):
+            args.global_batch_size = (
+                train_cfg["global_batch_size"]
+            )
+    else:
+        print(
+            f"\nLoading cluster config from "
+            f"{args.cluster_conf}"
+        )
+        cluster_nodes = parse_cluster_conf(
+            args.cluster_conf
+        )
+        print(
+            f"  Found {len(cluster_nodes)} node(s)"
+        )
 
     print(
         f"\nLoading profiles from "
