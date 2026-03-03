@@ -415,6 +415,15 @@ phase_gpu() {
     fi
   fi
 
+  # Prefer Ansible playbook if it exists (matches asteroid_project)
+  if [[ -f "${DEPLOY_DIR}/setup_gpu.yaml" ]]; then
+    info "Running setup_gpu.yaml playbook..."
+    run_ansible_playbook setup_gpu.yaml -v
+    log "GPU setup via playbook complete"
+    return 0
+  fi
+
+  # Fallback: inline ad-hoc commands
   # Step 1: Install nvidia-container-toolkit on all nodes
   info "Installing nvidia-container-toolkit..."
   run_ansible_adhoc "cluster" -m shell \
