@@ -46,6 +46,11 @@ IMAGE_NAME="baselines"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 IMAGE_FULL="${IMAGE_NAME}:${IMAGE_TAG}"
 
+# Registry configuration
+REGISTRY_PORT="${REGISTRY_PORT:-5000}"
+REGISTRY_HOST=""  # auto-detected from master node IP
+REGISTRY_IMAGE=""  # set after REGISTRY_HOST is resolved
+
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/config}"
 export ANSIBLE_CONFIG="${DEPLOY_DIR}/ansible.cfg"
 
@@ -61,6 +66,7 @@ APP_LABEL="baselines-asteroid"
 
 # Phase control
 RUN_K3S=1
+RUN_REGISTRY=1
 RUN_GPU=1
 RUN_PROFILE=1
 RUN_PLAN=1
@@ -402,6 +408,157 @@ phase_k3s() {
   kubectl get nodes -o wide
 }
 
+# --------------------------------------------------------------------------
+# Resolve the master (rank-0) node IP from config YAML for registry address
+# --------------------------------------------------------------------------
+resolve_registry_host() {
+  if [[ -n "${REGISTRY_HOST}" ]]; then
+    return 0
+  fi
+  REGISTRY_HOST=$(
+    python3 - "${ASTEROID_CONFIG}" <<'PYEOF'
+import yaml, sys
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f)
+nodes = cfg.get('cluster', {}).get('nodes', [])
+master = [n for n in nodes if n.get('role') == 'master']
+if not master:
+    master = [n for n in nodes if n.get('rank', -1) == 0]
+if master:
+    print(master[0]['ip'])
+else:
+    print('')
+PYEOF
+  )
+  if [[ -z "${REGISTRY_HOST}" ]]; then
+    err "Cannot determine master node IP for registry"
+    exit 1
+  fi
+  REGISTRY_IMAGE="${REGISTRY_HOST}:${REGISTRY_PORT}/${IMAGE_NAME}:${IMAGE_TAG}"
+  log "Registry address: ${REGISTRY_HOST}:${REGISTRY_PORT}"
+}
+
+phase_registry() {
+  header "Phase 1b: Private Docker Registry"
+
+  resolve_registry_host
+  local reg_addr="${REGISTRY_HOST}:${REGISTRY_PORT}"
+
+  # ── Step 1: Start registry container on the master node ─────────────
+  info "Ensuring Docker registry on master (${reg_addr})..."
+  run_ansible_adhoc "master" -m shell \
+    -a "docker ps -q --filter name='^baselines-registry$' | grep -q . \
+         && echo RUNNING \
+         || docker run -d --restart=always \
+              --name baselines-registry \
+              -p ${REGISTRY_PORT}:5000 \
+              -v /opt/baselines/registry:/var/lib/registry \
+              registry:2" \
+    --become
+  log "Registry container running on master"
+
+  # ── Step 2: Health check ────────────────────────────────────────────
+  info "Waiting for registry health check..."
+  local retries=10
+  for i in $(seq 1 $retries); do
+    if run_ansible_adhoc "master" -m uri \
+        -a "url=http://localhost:${REGISTRY_PORT}/v2/ return_content=yes" \
+        --become &>/dev/null; then
+      log "Registry healthy"
+      break
+    fi
+    if [[ $i -eq $retries ]]; then
+      err "Registry not responding after ${retries} attempts"
+      exit 1
+    fi
+    sleep 2
+  done
+
+  # ── Step 3: Configure K3s containerd to trust the private registry ──
+  #   Creates /etc/rancher/k3s/registries.yaml on every node so that
+  #   containerd pulls from our insecure registry without TLS.
+  info "Configuring K3s containerd to use registry (${reg_addr})..."
+  local registries_yaml
+  registries_yaml=$(cat <<REGYAML
+mirrors:
+  "${reg_addr}":
+    endpoint:
+      - "http://${reg_addr}"
+configs:
+  "${reg_addr}":
+    tls:
+      insecure_skip_verify: true
+REGYAML
+  )
+  # Ensure the directory exists on all nodes before writing config
+  run_ansible_adhoc "cluster" -m file \
+    -a "path=/etc/rancher/k3s state=directory mode=0755" \
+    --become
+  run_ansible_adhoc "cluster" -m copy \
+    -a "content='${registries_yaml}' dest=/etc/rancher/k3s/registries.yaml mode=0644" \
+    --become
+  log "registries.yaml deployed to all nodes"
+
+  # ── Step 4: Restart K3s so containerd picks up new registry config ──
+  info "Restarting K3s services to apply registry config..."
+  run_ansible_adhoc "cluster" -m shell \
+    -a "systemctl restart k3s 2>/dev/null || systemctl restart k3s-agent 2>/dev/null || echo 'no k3s service found (will apply on next start)'" \
+    --become
+  sleep 10
+
+  # Wait for nodes to be Ready
+  local retries=12
+  for i in $(seq 1 $retries); do
+    if ! kubectl get nodes 2>/dev/null | grep -q "NotReady"; then
+      log "All nodes Ready after registry config"
+      break
+    fi
+    if [[ $i -eq $retries ]]; then
+      err "Nodes did not become Ready after restart"
+      kubectl get nodes
+      exit 1
+    fi
+    info "Waiting for nodes... (${i}/${retries})"
+    sleep 10
+  done
+
+  # ── Step 5: Ensure local Docker can push to the registry ────────────
+  #   The build machine (control node) also needs to be able to push
+  info "Configuring local Docker daemon for insecure registry..."
+  local daemon_json="/etc/docker/daemon.json"
+  if [[ -f "${daemon_json}" ]]; then
+    # Add our registry to existing insecure-registries if not already there
+    if ! grep -q "${reg_addr}" "${daemon_json}" 2>/dev/null; then
+      python3 - "${daemon_json}" "${reg_addr}" <<'PYEOF'
+import json, sys
+path, addr = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    cfg = {}
+cfg.setdefault('insecure-registries', [])
+if addr not in cfg['insecure-registries']:
+    cfg['insecure-registries'].append(addr)
+with open(path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+PYEOF
+      sudo systemctl restart docker
+      sleep 3
+      log "Local Docker restarted with insecure registry ${reg_addr}"
+    else
+      log "Local Docker already configured for ${reg_addr}"
+    fi
+  else
+    echo "{\"insecure-registries\": [\"${reg_addr}\"]}" | sudo tee "${daemon_json}" > /dev/null
+    sudo systemctl restart docker
+    sleep 3
+    log "Local Docker configured for insecure registry ${reg_addr}"
+  fi
+
+  log "Private registry ready at ${reg_addr}"
+}
+
 phase_gpu() {
   header "Phase 2: GPU & NVIDIA Runtime Setup"
 
@@ -541,50 +698,76 @@ PYEOF
 }
 
 phase_build() {
-  header "Phase 5: Build & Distribute Docker Image"
+  header "Phase 5: Build & Push Docker Image"
+
+  resolve_registry_host
+  local reg_addr="${REGISTRY_HOST}:${REGISTRY_PORT}"
+
+  # Step 0: Generate requirements.txt from pyproject.toml
+  info "Generating requirements.txt from pyproject.toml..."
+  python3 - "${BASELINES_DIR}/pyproject.toml" "${BASELINES_DIR}/requirements.txt" <<'PYEOF'
+import re, ast, sys
+
+toml_path, out_path = sys.argv[1], sys.argv[2]
+text = open(toml_path).read()
+m = re.search(r'dependencies\s*=\s*(\[.*?\])', text, re.DOTALL)
+if not m:
+    print("ERROR: No dependencies found in pyproject.toml", file=sys.stderr)
+    sys.exit(1)
+deps = ast.literal_eval(m.group(1))
+with open(out_path, 'w') as f:
+    f.write("# Auto-generated from pyproject.toml by deploy_asteroid.sh\n")
+    f.write("# Do not edit manually — update pyproject.toml instead.\n")
+    for dep in deps:
+        f.write(dep + "\n")
+print(f"Generated {out_path} with {len(deps)} dependencies")
+PYEOF
+  log "requirements.txt generated"
 
   # Step 1: Build the Docker image locally
   info "Building Docker image: ${IMAGE_FULL}"
   docker build -t "${IMAGE_FULL}" -f "${BASELINES_DIR}/Dockerfile" "${BASELINES_DIR}"
   log "Image built: ${IMAGE_FULL}"
 
-  # Step 2: Export to tarball
-  local tarball="/tmp/baselines_asteroid_image.tar"
-  info "Exporting image to ${tarball}..."
-  docker save "${IMAGE_FULL}" -o "${tarball}"
-  local size_mb
-  size_mb=$(du -m "${tarball}" | cut -f1)
-  log "Tarball exported: ${size_mb} MB"
+  # Step 2: Tag for registry and push
+  #   - Single push to registry (only changed layers are uploaded)
+  #   - All K3s nodes pull in parallel from the registry when pods start
+  #   - Layer-level deduplication: subsequent deploys push only changed layers
+  info "Tagging image for registry: ${REGISTRY_IMAGE}"
+  docker tag "${IMAGE_FULL}" "${REGISTRY_IMAGE}"
 
-  # Step 3: Remove old images from K3s containerd on all nodes
-  info "Removing old images from K3s containerd (parallel)..."
+  info "Pushing image to private registry (${reg_addr})..."
+  local push_start push_end push_sec
+  push_start=$(date +%s)
+  docker push "${REGISTRY_IMAGE}"
+  push_end=$(date +%s)
+  push_sec=$(( push_end - push_start ))
+  log "Image pushed to registry in ${push_sec}s"
+
+  # Step 3: Remove old images from K3s containerd cache (fire-and-forget)
+  info "Removing stale cached images on all nodes (async)..."
   run_ansible_adhoc "cluster" -m shell \
-    -a "k3s ctr images rm docker.io/library/${IMAGE_FULL} 2>/dev/null || true" \
+    -a "k3s ctr images rm ${REGISTRY_IMAGE} 2>/dev/null || true" \
     --become \
     -B 300 -P 0
-  sleep 5
+  sleep 2
 
-  # Step 4: Copy tarball to all nodes
-  info "Distributing image to all nodes in parallel (${size_mb} MB each)..."
-  run_ansible_adhoc "cluster" -m copy \
-    -a "src=${tarball} dest=/tmp/baselines_asteroid_image.tar" \
-    --become -f 10
-
-  # Step 5: Import into K3s containerd on all nodes
-  info "Importing image into K3s containerd on all nodes (parallel)..."
+  # Step 4: Pre-pull image on all nodes in parallel (optional but speeds up pod start)
+  #   Uses crictl pull which goes through containerd → registry.
+  #   Each node pulls only the layers it's missing (layer caching).
+  info "Pre-pulling image on all nodes (parallel, async)..."
   run_ansible_adhoc "cluster" -m shell \
-    -a "k3s ctr images import /tmp/baselines_asteroid_image.tar && rm -f /tmp/baselines_asteroid_image.tar" \
+    -a "k3s crictl pull ${REGISTRY_IMAGE}" \
     --become \
-    -B 600 -P 5
+    -B 600 -P 10
 
-  # Step 6: Verify
+  # Step 5: Verify image is available on all nodes
   info "Verifying image on all nodes..."
   run_ansible_adhoc "cluster" -m shell \
-    -a "k3s ctr images ls | grep ${IMAGE_NAME} | head -3" \
+    -a "k3s crictl images | grep ${IMAGE_NAME} | head -3" \
     --become
 
-  rm -f "${tarball}"
-  log "Image distributed to all nodes"
+  log "Image available on all nodes via registry (${reg_addr})"
 }
 
 phase_manifests() {
@@ -598,12 +781,17 @@ phase_manifests() {
 
   mkdir -p "${GENERATED_DIR}"
 
-  info "Generating manifests from HPP plan..."
+  # Use registry image reference if registry is configured
+  resolve_registry_host
+  local manifest_image="${REGISTRY_IMAGE:-${IMAGE_FULL}}"
+
+  info "Generating manifests from HPP plan (image: ${manifest_image})..."
   "${VENV_DIR}/bin/python" "${DEPLOY_DIR}/generate_manifests.py" \
     --plan "${PLAN_FILE}" \
-    --image "${IMAGE_FULL}" \
+    --image "${manifest_image}" \
     --namespace "${NAMESPACE}" \
     --master-port "${MASTER_PORT}" \
+    --image-pull-policy "Always" \
     --output-dir "${GENERATED_DIR}"
 
   # Verify NCCL_SOCKET_IFNAME is set to eth0 in manifests (K8s pods use eth0)
@@ -1148,11 +1336,12 @@ Run the full Baselines-Asteroid deployment pipeline or individual phases.
 
 Options:
   --phase PHASE       Run a single phase:
-                      k3s|gpu|profile|plan|build|manifests|deploy|
-                      monitor|tensorboard|mps
+                      k3s|registry|gpu|profile|plan|build|manifests|
+                      deploy|monitor|tensorboard|mps
   --strategy NAME     Override parallelism strategy: asteroid | confident | dtfm
   --config PATH       Path to config YAML (default: configs/asteroid_default.yaml)
   --skip-k3s          Skip K3s installation (already installed)
+  --skip-registry     Skip registry setup (already running)
   --skip-gpu          Skip GPU/NVIDIA setup (already configured)
   --skip-profile      Skip profiling (use existing profiles)
   --skip-plan         Skip HPP planning (use existing plan)
@@ -1167,16 +1356,17 @@ Options:
   -h, --help          Show this help message
 
 Phases (run in order):
-  1. k3s         Install K3s cluster
-  2. gpu         Setup NVIDIA runtime & device plugin
-  3. profile     Profile cluster hardware
-  4. plan        Run HPP optimizer
-  5. build       Build & distribute Docker image
-  6. manifests   Generate K8s job manifests
-  7. deploy      Apply manifests & start training
-  8. monitor     Live training dashboard
-  9. tensorboard Persistent TensorBoard dashboard
-  10. mps        Start NVIDIA MPS on all nodes (opt-in)
+  1.  k3s         Install K3s cluster
+  1b. registry    Setup private Docker registry on master
+  2.  gpu         Setup NVIDIA runtime & device plugin
+  3.  profile     Profile cluster hardware
+  4.  plan        Run HPP optimizer
+  5.  build       Build & push Docker image to registry
+  6.  manifests   Generate K8s job manifests
+  7.  deploy      Apply manifests & start training
+  8.  monitor     Live training dashboard
+  9.  tensorboard Persistent TensorBoard dashboard
+  10. mps         Start NVIDIA MPS on all nodes (opt-in)
 
 Examples:
   $(basename "$0")                              # Full deployment
@@ -1212,6 +1402,10 @@ parse_args() {
         ;;
       --skip-k3s)
         RUN_K3S=0
+        shift
+        ;;
+      --skip-registry)
+        RUN_REGISTRY=0
         shift
         ;;
       --skip-gpu)
@@ -1283,6 +1477,7 @@ parse_args() {
 run_phase_by_name() {
   case "$1" in
     k3s)         phase_k3s ;;
+    registry)    phase_registry ;;
     gpu)         phase_gpu ;;
     profile)     phase_profile ;;
     plan)        phase_plan ;;
@@ -1348,6 +1543,10 @@ main() {
 
   if [[ "${RUN_K3S}" -eq 1 ]]; then
     phase_k3s
+  fi
+
+  if [[ "${RUN_REGISTRY}" -eq 1 ]]; then
+    phase_registry
   fi
 
   if [[ "${RUN_GPU}" -eq 1 ]]; then
