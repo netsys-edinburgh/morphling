@@ -83,7 +83,7 @@ cluster:
         memory_limit_mb: 40960          # ~40 GB usable
 
     - ip: 10.203.54.10
-      hostname: master
+      hostname: worker2
       nic: ens33
       gpu_id: 0
       memory_mb: 46068
