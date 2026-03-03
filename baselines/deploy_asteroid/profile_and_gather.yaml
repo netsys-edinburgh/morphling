@@ -43,14 +43,17 @@
     profile_seq_len: 128
 
     # Build peer list dynamically from inventory (exclude self)
+    # Use hostvars[h].ansible_host with a safe default per host
     network_peers: >-
-      {{ groups['cluster']
-         | map('extract', hostvars, 'ansible_host')
-         | default(groups['cluster'])
-         | reject('equalto', inventory_hostname)
-         | reject('equalto', ansible_host | default(inventory_hostname))
-         | map('regex_replace', '$', ':5201')
-         | join(',') }}
+      {% set peers = [] -%}
+      {% for h in groups['cluster'] -%}
+        {% set peer_ip = hostvars[h].get('ansible_host', h) -%}
+        {% if peer_ip != (ansible_host | default(inventory_hostname))
+           and h != inventory_hostname -%}
+          {% if peers.append(peer_ip ~ ':5201') %}{% endif -%}
+        {% endif -%}
+      {% endfor -%}
+      {{ peers | join(',') }}
 
   tasks:
     # =========================================================================
@@ -76,6 +79,15 @@
             --exclude='baselines/deploy_asteroid/generated' \
             --exclude='*.egg-info' \
             --exclude='hpp_plan.json' \
+            --exclude='*.pt' \
+            --exclude='*.tar.gz' \
+            --exclude='*.log' \
+            --exclude='my_checkpoints*' \
+            --exclude='final_model' \
+            --exclude='checkpoints_collected' \
+            --exclude='tb_logs' \
+            --exclude='baselines_output' \
+            --exclude='node_modules' \
             -czf "{{ local_bundle_path }}" .
       delegate_to: localhost
       become: false
@@ -156,7 +168,19 @@
 
     - name: "INSTALL | Install baselines requirements"
       ansible.builtin.shell: |
-        /opt/baselines/venv/bin/pip install --no-cache-dir -r "{{ baselines_remote_src }}/baselines/requirements.txt"
+        set -e
+        PIP=/opt/baselines/venv/bin/pip
+        # Try the dedicated deploy requirements first (most complete)
+        if [ -f "{{ baselines_remote_src }}/baselines/requirements-deploy.txt" ]; then
+          $PIP install --no-cache-dir -r "{{ baselines_remote_src }}/baselines/requirements-deploy.txt"
+        elif [ -f "{{ baselines_remote_src }}/requirements-deploy.txt" ]; then
+          $PIP install --no-cache-dir -r "{{ baselines_remote_src }}/requirements-deploy.txt"
+        else
+          # Absolute fallback — install core deps manually
+          $PIP install --no-cache-dir torch torchvision torchaudio numpy \
+            pydantic pydantic-settings pyyaml tensorboard tqdm \
+            python-dotenv datasets transformers jinja2 scipy safetensors
+        fi
       become: true
       register: pip_install_result
       ignore_errors: true

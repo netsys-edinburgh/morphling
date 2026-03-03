@@ -11,7 +11,7 @@ metadata:
   name: asteroid-rank-{{ rank }}
   namespace: {{ namespace | default('default') }}
   labels:
-    app: asteroid
+    app: baselines-asteroid
     component: worker
     stage: "{{ stage }}"
     rank: "{{ rank }}"
@@ -27,7 +27,7 @@ spec:
   template:
     metadata:
       labels:
-        app: asteroid
+        app: baselines-asteroid
         component: worker
         stage: "{{ stage }}"
         rank: "{{ rank }}"
@@ -115,7 +115,7 @@ spec:
 
             # NCCL configuration
             - name: NCCL_SOCKET_IFNAME
-              value: "eth0"
+              value: "{{ nccl_ifname }}"
             - name: NCCL_DEBUG
               value: "{{ nccl_debug | default('WARN') }}"
             - name: NCCL_IB_DISABLE
@@ -171,6 +171,9 @@ spec:
             # TensorBoard logs (persistent on host)
             - name: tensorboard-logs
               mountPath: /tensorboard
+            # Checkpoints (persistent on host)
+            - name: checkpoint-volume
+              mountPath: /app/baselines_output/checkpoints
 
           # =========================================
           # Startup/liveness probes (optional)
@@ -215,6 +218,11 @@ spec:
         - name: tensorboard-logs
           hostPath:
             path: /var/lib/baselines/tensorboard
+            type: DirectoryOrCreate
+        # Checkpoints - hostPath persists across pod restarts
+        - name: checkpoint-volume
+          hostPath:
+            path: /var/lib/baselines/checkpoints/rank-{{ rank }}
             type: DirectoryOrCreate
 
       # DNS configuration for headless service resolution
