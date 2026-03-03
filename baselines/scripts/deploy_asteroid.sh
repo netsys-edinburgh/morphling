@@ -199,28 +199,32 @@ lines.append('')
 lines.append('[master]')
 lines.append('# Master node (Rank 0) — runs the rendezvous service')
 for n in master_nodes:
-    alias  = n.get('hostname', 'master_node')
+    hname  = n.get('hostname', 'master')
+    # Suffix with _node to avoid collision with [master] group name
+    alias  = hname + '_node'
     ip     = n['ip']
     rank   = n.get('rank', 0)
     gpu_id = n.get('gpu_id', 0)
     nic    = n.get('nic', 'eth0')
     lines.append(
         f"{alias} ansible_host={ip} ansible_user='ubuntu' "
-        f"rank={rank} gpu_id={gpu_id} nic={nic} hostname={alias}"
+        f"rank={rank} gpu_id={gpu_id} nic={nic} hostname={hname}"
     )
 
 lines.append('')
 lines.append('[workers]')
 lines.append('# Worker nodes')
 for n in worker_nodes:
-    alias  = n.get('hostname', f"worker{n.get('rank', 0)}")
+    hname  = n.get('hostname', f"worker{n.get('rank', 0)}")
+    # Suffix with _node to avoid collision with group names
+    alias  = hname + '_node'
     ip     = n['ip']
     rank   = n.get('rank', 0)
     gpu_id = n.get('gpu_id', 0)
     nic    = n.get('nic', 'eth0')
     lines.append(
         f"{alias} ansible_host={ip} ansible_user='ubuntu' "
-        f"rank={rank} gpu_id={gpu_id} nic={nic} hostname={alias}"
+        f"rank={rank} gpu_id={gpu_id} nic={nic} hostname={hname}"
     )
 
 lines.append('')
