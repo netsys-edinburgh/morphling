@@ -152,3 +152,20 @@ def test_confident_create_plan() -> None:
 
     assert isinstance(plan, ParallelismPlan)
     assert isinstance(plan.partition_points, list)
+
+
+def test_confident_uses_all_devices() -> None:
+    """ConfidentStrategy should partition across ALL available devices,
+    not just pp_size (matching notebook ConfidantScheduler)."""
+    # pp_size=2 but topology has 4 devices → should use 4 stages
+    strategy = ConfidentStrategy(pp_size=2, dp_size=1)
+    model_config = _make_model_config()  # 8 layers
+    topology = _make_topology(4)
+
+    plan = strategy.create_plan(model_config, topology)
+
+    assert isinstance(plan, ParallelismPlan)
+    # 4 stages → 3 partition points
+    assert len(plan.partition_points) == 3
+    # All 4 devices should be in device_groups
+    assert len(plan.device_groups) == 4
