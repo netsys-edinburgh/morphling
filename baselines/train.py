@@ -15,6 +15,7 @@ Based on DT-FM launch pattern:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import fcntl
 import os
@@ -46,6 +47,7 @@ from baselines.utils.config_loader import load_config
 from baselines.utils.flatten import flatten_params
 from baselines.utils.lr_schedule import get_lr
 from baselines.utils.seed import seed_everything
+from baselines.core.pipeline_schedule import build_schedule
 from baselines.utils.mps import (
     get_mps_client_env,
     start_mps,
@@ -128,7 +130,11 @@ def _worker_impl(
     torch.manual_seed(cfg.training.seed + pp_rank)
 
     # ── Step 3: GPU assignment ───────────────────────────
-    cuda_id = _resolve_cuda_id(rank, plan, pp_size)
+    if args.cuda_id >= 0:
+        # Explicit --cuda-id flag (K8s per-node scenario)
+        cuda_id = args.cuda_id
+    else:
+        cuda_id = _resolve_cuda_id(rank, plan, pp_size)
     device = torch.device("cuda", cuda_id)
 
     # Inject MPS client env before any CUDA call.
@@ -191,17 +197,40 @@ def _worker_impl(
 
     # ── Step 5: Init process group (gloo control plane) ──
     if not dist.is_initialized():
-        print(
-            f"[RANK {rank}] init_process_group(gloo)...",
-            flush=True,
-        )
-        dist.init_process_group(
-            backend="gloo",
-            init_method=cfg.distributed.dist_url,
-            world_size=world_size,
-            rank=rank,
-            timeout=timedelta(seconds=120),
-        )
+        # Detect K8s / multi-node: if MASTER_ADDR is set in
+        # the environment, use env:// init (like asteroid_project
+        # worker.py) so torch reads MASTER_ADDR, MASTER_PORT,
+        # RANK, WORLD_SIZE from env vars injected by the
+        # K8s manifests.
+        use_env_init = "MASTER_ADDR" in os.environ
+        if use_env_init:
+            init_method = "env://"
+            init_timeout = 300
+            print(
+                f"[RANK {rank}] init_process_group"
+                f"(gloo, env://, timeout={init_timeout}s)"
+                f" MASTER_ADDR={os.environ.get('MASTER_ADDR')}"
+                f":{os.environ.get('MASTER_PORT', '?')}",
+                flush=True,
+            )
+            dist.init_process_group(
+                backend="gloo",
+                init_method=init_method,
+                timeout=timedelta(seconds=init_timeout),
+            )
+        else:
+            print(
+                f"[RANK {rank}] init_process_group"
+                f"(gloo, {cfg.distributed.dist_url})...",
+                flush=True,
+            )
+            dist.init_process_group(
+                backend="gloo",
+                init_method=cfg.distributed.dist_url,
+                world_size=world_size,
+                rank=rank,
+                timeout=timedelta(seconds=120),
+            )
     print(
         f"[RANK {rank}] torch.distributed initialized",
         flush=True,
@@ -355,8 +384,21 @@ def _worker_impl(
         ]
 
     # ── Step 15: Pipeline neighbour ranks ────────────────
-    pp_prev = pp_rank - 1 if pp_rank > 0 else None
-    pp_next = (
+    # Map pp_rank offsets to global ranks via
+    # pp_ranks_in_group so send/recv targets the correct
+    # rank in multi-DP configurations (matching
+    # asteroid_project/worker.py).
+    def _pp_global(pp_r: int | None) -> int | None:
+        if pp_r is None:
+            return None
+        if pp_ranks_in_group:
+            return pp_ranks_in_group[pp_r]
+        return pp_r
+
+    pp_prev = _pp_global(
+        pp_rank - 1 if pp_rank > 0 else None
+    )
+    pp_next = _pp_global(
         pp_rank + 1 if pp_rank < pp_size - 1 else None
     )
 
@@ -375,7 +417,30 @@ def _worker_impl(
         flush=True,
     )
 
-    # ── Step 17: Training loop ───────────────────────────
+    # ── Step 17a: Resolve pipeline schedule ──────────────
+    use_1f1b = False
+    stage_ops: list[tuple[str, int]] | None = None
+
+    sched = plan.schedule_type or "gpipe"
+    sched_norm = (
+        sched.lower().replace("-", "").replace("_", "")
+    )
+    use_1f1b = sched_norm == "1f1b"
+
+    if not is_single and pp_size > 1:
+        timeline = build_schedule(
+            sched, pp_size, num_micro,
+        )
+        stage_ops = timeline[pp_rank]
+        sched_label = "1F1B" if use_1f1b else "GPipe"
+        print(
+            f"[RANK {rank}] Schedule: {sched_label}"
+            f" | {len(stage_ops)} ops for"
+            f" stage {pp_rank}",
+            flush=True,
+        )
+
+    # ── Step 17b: Training loop ──────────────────────────
     dist.barrier()
     model.train()
     t0 = time.time()
@@ -422,9 +487,12 @@ def _worker_impl(
             micro_inputs.append(x.to(device))
             micro_targets.append(y.to(device))
 
-        # ── GPipe FORWARD ────────────────────────────────
-        cached: list[torch.Tensor] = []
-        for m in range(num_micro):
+        # ── Pipeline Execution (schedule-driven) ────────────
+        cached: list[torch.Tensor] = [
+            torch.tensor(0.0)
+        ] * num_micro
+
+        def _do_forward(m: int) -> None:
             if is_single:
                 _fwd_single(
                     model,
@@ -435,23 +503,28 @@ def _worker_impl(
                     num_micro,
                     comp_stream,
                 )
+                # _fwd_single appends → fix slot
+                cached[m] = cached.pop()
             elif is_first:
+                out_list: list[torch.Tensor] = []
                 _fwd_first(
                     model,
                     micro_inputs[m],
-                    cached,
+                    out_list,
                     nccl,
                     pp_next,
                     comp_stream,
                     send_stream,
                 )
+                cached[m] = out_list[0]
             elif is_last:
                 assert input_buffers is not None
+                out_list2: list[torch.Tensor] = []
                 _fwd_last(
                     model,
                     input_buffers[m],
                     micro_targets[m],
-                    cached,
+                    out_list2,
                     micro_losses,
                     num_micro,
                     nccl,
@@ -459,12 +532,14 @@ def _worker_impl(
                     comp_stream,
                     recv_stream,
                 )
+                cached[m] = out_list2[0]
             else:
                 assert input_buffers is not None
+                out_list3: list[torch.Tensor] = []
                 _fwd_middle(
                     model,
                     input_buffers[m],
-                    cached,
+                    out_list3,
                     nccl,
                     pp_prev,
                     pp_next,
@@ -472,11 +547,9 @@ def _worker_impl(
                     recv_stream,
                     send_stream,
                 )
+                cached[m] = out_list3[0]
 
-        dist.barrier()
-
-        # ── GPipe BACKWARD (reversed) ────────────────────
-        for m in reversed(range(num_micro)):
+        def _do_backward(m: int) -> None:
             if is_single:
                 _bwd_single(cached[m], comp_stream)
             elif is_last:
@@ -514,20 +587,40 @@ def _worker_impl(
                     send_stream,
                 )
 
+        if use_1f1b and stage_ops is not None:
+            # ── 1F1B Interleaved Schedule ────────────────
+            for action, m in stage_ops:
+                if action == "F":
+                    _do_forward(m)
+                else:
+                    _do_backward(m)
+            # Drain any in-flight async sends before
+            # the optimizer step / DP allreduce.
+            nccl.flush_sends()
+        else:
+            # ── GPipe Schedule ───────────────────────────
+            for m in range(num_micro):
+                _do_forward(m)
+
+            dist.barrier()
+
+            for m in reversed(range(num_micro)):
+                _do_backward(m)
+
         # ── DP AllReduce ─────────────────────────────────
+        # Use torch.distributed.all_reduce with the DP
+        # process group directly (like asteroid_project).
+        # The nccl.allreduce() fallback path lacks a group
+        # parameter and would all-reduce across ALL ranks.
         if (
             dp_size > 1
             and flat_param is not None
-            and dp_stream is not None
+            and dp_process_group is not None
         ):
-            bwd_event = torch.cuda.Event()
-            comp_stream.record_event(bwd_event)
-            with torch.cuda.stream(dp_stream):
-                dp_stream.wait_event(bwd_event)
-                nccl.allreduce(
-                    flat_param.grad.data, dp_stream
-                )
-            comp_stream.wait_stream(dp_stream)
+            dist.all_reduce(
+                flat_param.grad.data,
+                group=dp_process_group,
+            )
             flat_param.grad.data.div_(dp_size)
 
         # ── Grad clip + optimizer step ───────────────────
@@ -896,7 +989,16 @@ def _build_strategy(
     pp = cfg.parallel.pp_size
     dp = cfg.parallel.dp_size
     if name == "dtfm":
-        return DTFMStrategy(pp_size=pp, dp_size=dp)
+        return DTFMStrategy(
+            pp_size=pp,
+            dp_size=dp,
+            global_batch_size=(
+                cfg.training.global_batch_size
+            ),
+            micro_batch_size=(
+                cfg.training.micro_batch_size
+            ),
+        )
     if name == "asteroid":
         return AsteroidStrategy(
             num_stages=pp,
@@ -1113,13 +1215,76 @@ def main() -> None:
             world_size,
         )
 
-    # ── Print banner ─────────────────────────────────────
+    # ── Create strategy + plan ───────────────────────────
+    # Prefer offline HPP plan (from deploy pipeline)
+    # over inline strategy auto-search.
+    hpp_plan_path = os.environ.get(
+        "HPP_PLAN_PATH", ""
+    )
+    plan: ParallelismPlan | None = None
+    if hpp_plan_path and os.path.isfile(hpp_plan_path):
+        try:
+            with open(hpp_plan_path) as f:
+                plan_data = json.load(f)
+            plan = ParallelismPlan.from_json(plan_data)
+            logger.info(
+                "Loaded offline plan from %s: "
+                "stages=%d partition=%s",
+                hpp_plan_path,
+                len(plan.partition_points) + 1,
+                plan.partition_points,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to load %s (%s), "
+                "falling back to inline plan",
+                hpp_plan_path,
+                exc,
+            )
+            plan = None
+
+    if plan is None:
+        strategy = _build_strategy(
+            args.strategy, cfg
+        )
+        topology = _build_topology(world_size)
+        plan = strategy.create_plan(
+            cfg.model, topology
+        )
+
+    # The auto-search may have chosen a different
+    # (pp, dp) factorisation.  Update config to match.
+    plan_pp = max(1, len(plan.device_groups))
+    plan_dp = max(1, world_size // plan_pp)
+    if (
+        plan_pp != cfg.parallel.pp_size
+        or plan_dp != cfg.parallel.dp_size
+    ):
+        cfg.parallel.pp_size = plan_pp
+        cfg.parallel.dp_size = plan_dp
+        cfg.parallel.num_stages = plan_pp
+        logger.info(
+            "Plan selected PP=%d DP=%d",
+            plan_pp,
+            plan_dp,
+        )
+
+    logger.info(
+        "Plan: partition=%s schedule=%s latency=%.2fms",
+        plan.partition_points,
+        plan.schedule_type,
+        plan.estimated_latency_ms,
+    )
+
+    # ── Print banner (after plan so PP/DP reflect
+    #    auto-search result) ──────────────────────────────
     print(f"\n{'=' * 56}")
     print("  Baselines Distributed Training")
     print(
         f"  strategy={args.strategy}"
         f"  world_size={world_size}"
-        f"  PP={pp} DP={dp}"
+        f"  PP={cfg.parallel.pp_size}"
+        f"  DP={cfg.parallel.dp_size}"
     )
     print(
         f"  model={cfg.model.model_type}"
@@ -1130,21 +1295,10 @@ def main() -> None:
         f"  micro_batch={cfg.training.micro_batch_size}"
         f"  num_micro={cfg.training.num_microbatches}"
     )
+    print(
+        f"  partition={plan.partition_points}"
+    )
     print(f"{'=' * 56}\n")
-
-    # ── Create strategy + plan ───────────────────────────
-    strategy = _build_strategy(
-        args.strategy, cfg
-    )
-    topology = _build_topology(world_size)
-    plan = strategy.create_plan(cfg.model, topology)
-
-    logger.info(
-        "Plan: partition=%s schedule=%s latency=%.2fms",
-        plan.partition_points,
-        plan.schedule_type,
-        plan.estimated_latency_ms,
-    )
 
     if args.dry_run:
         print("Dry-run complete. Plan:")

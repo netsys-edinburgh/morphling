@@ -34,19 +34,24 @@
       meta: end_host
       when: nvidia_check.rc != 0
 
+    - name: Remove conflicting nvidia-container-toolkit apt sources
+      shell: rm -f /etc/apt/sources.list.d/nvidia-container-toolkit*
+      changed_when: true
+
     - name: Add NVIDIA container toolkit GPG key
       ansible.builtin.apt_key:
         url: https://nvidia.github.io/libnvidia-container/gpgkey
         state: present
 
-    - name: Get distribution
-      command: bash -c '. /etc/os-release && echo $ID$VERSION_ID'
-      register: distro
-      changed_when: false
+    - name: Download NVIDIA GPG keyring
+      shell: |
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+          | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg --yes 2>/dev/null || true
+      changed_when: true
 
-    - name: Add NVIDIA container toolkit repository
+    - name: Add NVIDIA container toolkit repository (signed)
       ansible.builtin.apt_repository:
-        repo: "deb https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH) /"
+        repo: "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH) /"
         filename: nvidia-container-toolkit
         state: present
 
@@ -71,19 +76,23 @@
         dest: "{{ containerd_config_dir }}/config.toml.tmpl"
         mode: '0644'
 
-    - name: Restart k3s service (server)
-      systemd:
-        name: k3s
-        state: restarted
-      when: "'master' in group_names"
-      ignore_errors: true
+    - name: Detect k3s service name
+      shell: |
+        if systemctl list-unit-files k3s-agent.service | grep -q k3s-agent; then
+          echo k3s-agent
+        elif systemctl list-unit-files k3s.service | grep -q k3s; then
+          echo k3s
+        else
+          echo none
+        fi
+      register: k3s_svc_name
+      changed_when: false
 
-    - name: Restart k3s-agent service (workers)
+    - name: Restart detected k3s service
       systemd:
-        name: k3s-agent
+        name: "{{ k3s_svc_name.stdout }}"
         state: restarted
-      when: "'workers' in group_names"
-      ignore_errors: true
+      when: k3s_svc_name.stdout != "none"
 
     - name: Wait for k3s to be ready
       pause:
@@ -91,9 +100,9 @@
 
 - name: Install NVIDIA device plugin
   hosts: localhost
-  gather_facts: true
+  gather_facts: false
   vars:
-    kubeconfig: "{{ ansible_env.HOME }}/.kube/config"
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config"
 
   tasks:
     - name: Wait for nodes to be ready

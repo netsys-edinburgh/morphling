@@ -7,9 +7,15 @@ from __future__ import annotations
 
 import importlib
 import logging
+from collections import deque
 from typing import Any, cast
 
 logger = logging.getLogger(__name__)
+
+# ── Async-send bookkeeping (avoids send-send deadlocks) ──
+# Each entry is (Work, cpu_tensor) so the CPU buffer stays
+# alive until the non-blocking isend completes.
+_pending_send_ops: deque[tuple[Any, Any]] = deque()
 
 
 def _cupy_module_name() -> str:
@@ -155,16 +161,42 @@ def _dist_send(
     dst_rank: int,
     stream: object | None = None,
 ) -> None:
-    """P2P send via torch.distributed (fallback)."""
+    """P2P send via torch.distributed (fallback).
+
+    Uses non-blocking ``dist.isend`` to prevent send-send
+    deadlocks in 1F1B pipeline schedules where adjacent
+    stages simultaneously send to each other.
+    """
     _log_path_once(False)
     dist = _import_dist()
-    torch = _import_torch()
     t = cast(Any, tensor)
-    if stream is not None:
-        with torch.cuda.stream(cast(Any, stream)):
-            dist.send(t, dst=dst_rank)
+    # Gloo cannot send GPU tensors; move to CPU
+    if t.is_cuda:
+        cpu_t = t.data.cpu()
     else:
-        dist.send(t, dst=dst_rank)
+        cpu_t = t.clone()
+    # Non-blocking send — lets the caller proceed to recv
+    work = dist.isend(cpu_t, dst=dst_rank)
+    _pending_send_ops.append((work, cpu_t))
+    # Eagerly drain completed ops to bound memory
+    _drain_completed_sends()
+
+
+def _drain_completed_sends() -> None:
+    """Remove completed async sends to free CPU buffers."""
+    while _pending_send_ops:
+        work, _ = _pending_send_ops[0]
+        if work.is_completed():
+            _pending_send_ops.popleft()
+        else:
+            break
+
+
+def flush_all_sends() -> None:
+    """Block until every pending async send completes."""
+    while _pending_send_ops:
+        work, _ = _pending_send_ops.popleft()
+        work.wait()
 
 
 def _dist_recv(
@@ -177,11 +209,22 @@ def _dist_recv(
     dist = _import_dist()
     torch = _import_torch()
     t = cast(Any, tensor)
-    if stream is not None:
-        with torch.cuda.stream(cast(Any, stream)):
-            dist.recv(t, src=src_rank)
+    orig_device = t.device
+    # Gloo cannot recv into GPU tensors; use CPU buffer
+    if t.is_cuda:
+        cpu_buf = t.data.cpu()
+        if stream is not None:
+            with torch.cuda.stream(cast(Any, stream)):
+                dist.recv(cpu_buf, src=src_rank)
+        else:
+            dist.recv(cpu_buf, src=src_rank)
+        t.data.copy_(cpu_buf)
     else:
-        dist.recv(t, src=src_rank)
+        if stream is not None:
+            with torch.cuda.stream(cast(Any, stream)):
+                dist.recv(t, src=src_rank)
+        else:
+            dist.recv(t, src=src_rank)
 
 
 def _dist_allreduce(
@@ -193,11 +236,21 @@ def _dist_allreduce(
     dist = _import_dist()
     torch = _import_torch()
     t = cast(Any, tensor)
-    if stream is not None:
-        with torch.cuda.stream(cast(Any, stream)):
-            dist.all_reduce(t)
+    # Gloo cannot allreduce GPU tensors; use CPU buffer
+    if t.is_cuda:
+        cpu_buf = t.data.cpu()
+        if stream is not None:
+            with torch.cuda.stream(cast(Any, stream)):
+                dist.all_reduce(cpu_buf)
+        else:
+            dist.all_reduce(cpu_buf)
+        t.data.copy_(cpu_buf)
     else:
-        dist.all_reduce(t)
+        if stream is not None:
+            with torch.cuda.stream(cast(Any, stream)):
+                dist.all_reduce(t)
+        else:
+            dist.all_reduce(t)
 
 
 def functional_send(
@@ -247,5 +300,6 @@ __all__ = [
     "functional_send",
     "functional_recv",
     "functional_allreduce",
+    "flush_all_sends",
     "has_cupy_nccl",
 ]

@@ -86,6 +86,25 @@ spec:
           image: {{ image | default('baselines:latest') }}
           imagePullPolicy: {{ image_pull_policy | default('IfNotPresent') }}
 
+          # =========================================
+          # Training command
+          # =========================================
+          command: ["python", "-m", "baselines.train"]
+          args:
+            - "--config"
+            - "/workspace/baselines/configs/asteroid_default.yaml"
+            - "--strategy"
+            - "{{ strategy | default('asteroid') }}"
+            - "--rank"
+            - "{{ rank }}"
+            - "--world-size"
+            - "{{ world_size }}"
+            - "--cuda-id"
+            - "{{ gpu_id }}"
+            - "--output-dir"
+            - "/workspace/baselines_output"
+          workingDir: /workspace
+
           # Resource requests and limits from profiled hardware
           resources:
             requests:
@@ -173,7 +192,7 @@ spec:
               mountPath: /tensorboard
             # Checkpoints (persistent on host)
             - name: checkpoint-volume
-              mountPath: /app/baselines_output/checkpoints
+              mountPath: /workspace/baselines_output/checkpoints
 
           # =========================================
           # Startup/liveness probes (optional)
@@ -186,9 +205,6 @@ spec:
           #   initialDelaySeconds: 30
           #   periodSeconds: 10
           #   failureThreshold: 30
-
-          # Working directory
-          workingDir: /app
 
       # =========================================
       # Volumes

@@ -5,6 +5,7 @@ import logging
 from typing import Any, cast
 
 from .nccl_functional import (
+    flush_all_sends,
     functional_allreduce,
     functional_recv,
     functional_send,
@@ -188,6 +189,10 @@ class NCCLBackend:
             nccl_comm,
             stream_resolved,
         )
+
+    def flush_sends(self) -> None:
+        """Wait for all pending non-blocking sends to finish."""
+        flush_all_sends()
 
     def setup_communicators(
         self,
