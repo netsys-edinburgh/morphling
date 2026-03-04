@@ -1,0 +1,5 @@
+- Added adapter unit tests can avoid heavy top-level `morphling` imports by bootstrapping `morphling` and `morphling.runtime` modules in `sys.modules` before importing runtime modules.
+- For provided LDPC datasets, asserted row-count expectations using file line counts (including header), while validating v2 schema through `to_v2_dataframe()`.
+- `LdpcTraceAdapter` empty-input validation currently triggers on header-only CSV; this is the reliable way to exercise `ValueError` path for empty data.
+- New plotting scripts should load `morphling/runtime/ldpc_trace_adapter.py` directly (importlib path load) when running from a minimal env where top-level `morphling` import would require `torch`.
+- For publication-style plot generation, a shared rcParams profile (`pdf.fonttype=42`, `ps.fonttype=42`, 7-9pt fonts, Wong palette) keeps output paper-safe and consistent across all figures.
