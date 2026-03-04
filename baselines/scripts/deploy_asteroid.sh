@@ -396,6 +396,10 @@ phase_k3s() {
     node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
     log "K3s cluster already running with ${node_count} node(s)"
     kubectl get nodes
+
+    # --- Detect new nodes not yet in the K3s cluster ---
+    _detect_and_join_new_nodes
+
     return 0
   fi
 
@@ -405,6 +409,73 @@ phase_k3s() {
 
   # Verify
   sleep 5
+  kubectl get nodes -o wide
+}
+
+# --------------------------------------------------------------------------
+# Detect inventory nodes missing from the K3s cluster and join them
+# --------------------------------------------------------------------------
+_detect_and_join_new_nodes() {
+  # Get IPs of nodes currently in the K3s cluster
+  local cluster_ips
+  cluster_ips=$(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)
+
+  # Get IPs and ansible aliases from inventory (workers section)
+  local new_nodes=()
+  local new_node_names=()
+  while IFS= read -r line; do
+    # Parse: alias ansible_host=IP ...
+    local alias ip
+    alias=$(echo "$line" | awk '{print $1}')
+    ip=$(echo "$line" | grep -oP 'ansible_host=\K[0-9.]+')
+    [[ -z "$ip" ]] && continue
+
+    # Check if this IP is already in the cluster
+    if ! echo " ${cluster_ips} " | grep -qw "$ip"; then
+      new_nodes+=("$ip")
+      new_node_names+=("$alias")
+    fi
+  done < <(grep -E '^[a-zA-Z].*ansible_host=' "${ANSIBLE_INVENTORY}" | grep -v '^\[')
+
+  if [[ ${#new_nodes[@]} -eq 0 ]]; then
+    log "All inventory nodes are already in the K3s cluster"
+    return 0
+  fi
+
+  # Report detected new nodes
+  info "Detected ${#new_nodes[@]} new node(s) not in K3s cluster:"
+  for i in "${!new_nodes[@]}"; do
+    echo "    ${new_node_names[$i]} (${new_nodes[$i]})"
+  done
+
+  # Quick reachability check (TCP port 22)
+  local unreachable=()
+  for i in "${!new_nodes[@]}"; do
+    if ! timeout 5 bash -c "echo >/dev/tcp/${new_nodes[$i]}/22" 2>/dev/null; then
+      unreachable+=("${new_node_names[$i]} (${new_nodes[$i]})")
+    fi
+  done
+
+  if [[ ${#unreachable[@]} -gt 0 ]]; then
+    err "Cannot reach SSH on these nodes:"
+    for entry in "${unreachable[@]}"; do
+      echo "    ${entry}"
+    done
+    err "Ensure the nodes are powered on and SSH is running"
+    exit 2
+  fi
+
+  # Join new nodes using the join_new_workers playbook
+  # (ansible handles auth via vault secrets — no SSH key required)
+  local limit_arg
+  limit_arg="worker2_node,$(IFS=,; echo "${new_node_names[*]}")"
+
+  info "Joining new nodes to K3s cluster..."
+  run_ansible_playbook "join_new_workers.yaml" -v --limit "${limit_arg}"
+
+  # Verify
+  sleep 5
+  log "Updated cluster:"
   kubectl get nodes -o wide
 }
 
@@ -792,6 +863,7 @@ phase_manifests() {
     --namespace "${NAMESPACE}" \
     --master-port "${MASTER_PORT}" \
     --image-pull-policy "Always" \
+    --strategy "${STRATEGY:-asteroid}" \
     --output-dir "${GENERATED_DIR}"
 
   # Verify NCCL_SOCKET_IFNAME is set to eth0 in manifests (K8s pods use eth0)
@@ -1274,6 +1346,227 @@ REMOTE_CLEAN
 }
 
 # ============================================================================
+# Deep Clean (nuclear reset)
+# ============================================================================
+
+deep_clean() {
+  header "DEEP CLEAN — Complete Reset (All Nodes)"
+  echo ""
+  warn "This will destroy ALL pods, caches, images, MPS, shared memory, profiles, plans, and checkpoints."
+  echo ""
+
+  # ── Helper: read node IPs from config ──────────────────
+  local node_ips
+  node_ips=$("${VENV_DIR}/bin/python" - "${ASTEROID_CONFIG}" <<'PYEOF'
+import yaml, sys
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f)
+for n in cfg.get('cluster', {}).get('nodes', []):
+    print(n['ip'])
+PYEOF
+  ) 2>/dev/null || true
+
+  # ── 1. Kill ALL K8s resources ──────────────────────────
+  info "[1/9] Deleting ALL K8s resources (jobs, pods, services, configmaps)..."
+  kubectl delete jobs -n "${NAMESPACE}" --all --force --grace-period=0 2>/dev/null || true
+  kubectl delete pods -n "${NAMESPACE}" -l "app=${APP_LABEL}" --force --grace-period=0 2>/dev/null || true
+
+  # Catch anything with asteroid/rank in the name
+  local stuck
+  stuck=$(kubectl get pods -n "${NAMESPACE}" --no-headers 2>/dev/null | grep -i "asteroid\|rank-" | awk '{print $1}' || true)
+  if [[ -n "$stuck" ]]; then
+    echo "$stuck" | xargs kubectl delete pod -n "${NAMESPACE}" --force --grace-period=0 2>/dev/null || true
+  fi
+
+  kubectl delete service -n "${NAMESPACE}" "${APP_LABEL}-headless" --ignore-not-found=true 2>/dev/null || true
+  kubectl delete service -n "${NAMESPACE}" "asteroid-master" --ignore-not-found=true 2>/dev/null || true
+  kubectl delete configmap -n "${NAMESPACE}" "${APP_LABEL}-plan" --ignore-not-found=true 2>/dev/null || true
+  kubectl delete configmap -n "${NAMESPACE}" "asteroid-config" --ignore-not-found=true 2>/dev/null || true
+
+  for kind in deployment statefulset daemonset replicaset cronjob; do
+    kubectl delete "$kind" -n "${NAMESPACE}" -l "app=${APP_LABEL}" --ignore-not-found=true 2>/dev/null || true
+  done
+  log "[1/9] K8s resources deleted"
+
+  # ── 2. Wait for pods to fully terminate ────────────────
+  info "[2/9] Waiting for pods to terminate..."
+  for _ in $(seq 1 15); do
+    local remaining
+    remaining=$(kubectl get pods -n "${NAMESPACE}" --no-headers 2>/dev/null | grep -ci "asteroid\|rank-" || true)
+    [[ "$remaining" -eq 0 ]] && break
+    sleep 3
+  done
+  log "[2/9] All pods terminated"
+
+  # ── 3. Stop MPS on all nodes ───────────────────────────
+  info "[3/9] Stopping NVIDIA MPS on all nodes..."
+  if [[ -n "$node_ips" ]]; then
+    while IFS= read -r ip; do
+      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" bash -s 2>/dev/null <<'REMOTE_MPS'
+echo quit | sudo nvidia-cuda-mps-control 2>/dev/null || true
+sudo rm -rf /tmp/nvidia-mps* /tmp/nvidia-log* 2>/dev/null || true
+echo "  MPS stopped"
+REMOTE_MPS
+      log "  ${ip} — MPS stopped"
+    done <<< "$node_ips"
+  fi
+  log "[3/9] MPS stopped on all nodes"
+
+  # ── 4. Kill ALL GPU processes on all nodes ─────────────
+  info "[4/9] Killing GPU processes on all nodes..."
+  if [[ -n "$node_ips" ]]; then
+    while IFS= read -r ip; do
+      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" bash -s 2>/dev/null <<'REMOTE_GPU'
+# Kill every process on the GPU
+GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ')
+if [ -n "$GPU_PIDS" ]; then
+    echo "$GPU_PIDS" | xargs -r kill -9 2>/dev/null || true
+fi
+# Kill known training processes
+pkill -9 -f "worker.py" 2>/dev/null || true
+pkill -9 -f "train.py" 2>/dev/null || true
+pkill -9 -f "profile_node.py" 2>/dev/null || true
+pkill -9 -f "run_planner.py" 2>/dev/null || true
+# Clear shared memory
+sudo rm -f /dev/shm/nccl-* /dev/shm/torch_* /dev/shm/*nccl* 2>/dev/null || true
+# Reset GPU state
+nvidia-smi -r 2>/dev/null || true
+REMOTE_GPU
+      log "  ${ip} — GPU cleaned"
+    done <<< "$node_ips"
+  fi
+  log "[4/9] GPU processes killed on all nodes"
+
+  # ── 5. Purge Docker image cache on all nodes ───────────
+  info "[5/9] Purging cached Docker images on all nodes..."
+  if [[ -n "$node_ips" ]]; then
+    while IFS= read -r ip; do
+      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" bash -s 2>/dev/null <<'REMOTE_DOCKER'
+# Remove asteroid/baselines images from containerd (k3s) and docker
+sudo ctr -n k8s.io images ls -q 2>/dev/null | grep -i "asteroid" | xargs -r sudo ctr -n k8s.io images rm 2>/dev/null || true
+sudo crictl rmi --prune 2>/dev/null || true
+docker rmi $(docker images --filter "reference=*asteroid*" -q) 2>/dev/null || true
+docker rmi $(docker images --filter "reference=*baselines*" -q) 2>/dev/null || true
+# Prune dangling
+docker image prune -f 2>/dev/null || true
+echo "  images pruned"
+REMOTE_DOCKER
+      log "  ${ip} — images pruned"
+    done <<< "$node_ips"
+  fi
+  # Also clean local registry images
+  docker rmi $(docker images --filter "reference=*asteroid*" -q) 2>/dev/null || true
+  docker rmi $(docker images --filter "reference=*baselines*" -q) 2>/dev/null || true
+  docker image prune -f 2>/dev/null || true
+  log "[5/9] Docker images purged"
+
+  # ── 6. Clean remote checkpoint & output data ───────────
+  info "[6/9] Cleaning checkpoint & output data on all nodes..."
+  if [[ -n "$node_ips" ]]; then
+    while IFS= read -r ip; do
+      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" bash -s 2>/dev/null <<'REMOTE_DATA'
+sudo rm -rf /var/lib/baselines/checkpoints 2>/dev/null || true
+sudo rm -rf /tmp/baselines_* 2>/dev/null || true
+sudo rm -rf /tmp/asteroid_* 2>/dev/null || true
+sudo rm -rf /tmp/hf_cache* 2>/dev/null || true
+rm -rf ~/asteroid_output 2>/dev/null || true
+echo "  data cleared"
+REMOTE_DATA
+      log "  ${ip} — data cleared"
+    done <<< "$node_ips"
+  fi
+  log "[6/9] Remote data cleared"
+
+  # ── 7. Clean ALL local generated files ─────────────────
+  info "[7/9] Removing ALL local generated files..."
+
+  # Generated manifests
+  rm -rf "${GENERATED_DIR}" 2>/dev/null || true
+  log "  Generated manifests removed"
+
+  # Profiles
+  rm -rf "${PROFILES_DIR}" 2>/dev/null || true
+  log "  Profiles directory removed"
+
+  # HPP plan
+  rm -f "${PLAN_FILE}" 2>/dev/null || true
+  log "  HPP plan removed"
+
+  # TensorBoard logs
+  rm -rf /tmp/baselines_tb_logs 2>/dev/null || true
+  rm -rf "${BASELINES_DIR}/tb_logs" 2>/dev/null || true
+  log "  TensorBoard logs removed"
+
+  # Temp bundles
+  rm -f /tmp/baselines_asteroid_image.tar 2>/dev/null || true
+  rm -f /tmp/baselines_src.tar.gz 2>/dev/null || true
+  rm -f /tmp/hf_cache.tar.gz 2>/dev/null || true
+  log "  Temp bundles removed"
+
+  # Deploy logs
+  rm -f "${BASELINES_DIR}"/deploy_full.log 2>/dev/null || true
+  log "  Deploy logs removed"
+
+  # Output directory
+  rm -rf "${BASELINES_DIR}/asteroid_output" 2>/dev/null || true
+  log "  Output directory removed"
+
+  # Checkpoints collected locally
+  rm -rf "${BASELINES_DIR}/checkpoints" 2>/dev/null || true
+  rm -rf "${BASELINES_DIR}/checkpoints_collected" 2>/dev/null || true
+  log "  Local checkpoints removed"
+
+  log "[7/9] Local artifacts removed"
+
+  # ── 8. Kill local background processes ─────────────────
+  info "[8/9] Killing all background processes..."
+  pkill -f "monitor_asteroid.sh" 2>/dev/null || true
+  pkill -f "tensorboard.*baselines" 2>/dev/null || true
+  pkill -f "kubectl.*logs.*asteroid" 2>/dev/null || true
+  pkill -f "kubectl.*logs.*rank" 2>/dev/null || true
+  log "[8/9] Background processes killed"
+
+  # ── 9. Reset GPU memory on all nodes ───────────────────
+  info "[9/9] Resetting GPU memory on all nodes..."
+  if [[ -n "$node_ips" ]]; then
+    while IFS= read -r ip; do
+      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" \
+        "python3 -c 'import torch; torch.cuda.empty_cache()' 2>/dev/null; nvidia-smi 2>/dev/null | head -4 || true" \
+        2>/dev/null || true
+    done <<< "$node_ips"
+  fi
+  log "[9/9] GPU memory reset"
+
+  # ── Summary ────────────────────────────────────────────
+  echo ""
+  header "DEEP CLEAN COMPLETE"
+  echo ""
+  echo "  Destroyed:"
+  echo "    - ALL K8s jobs, pods, services, configmaps"
+  echo "    - ALL GPU processes on every node"
+  echo "    - NVIDIA MPS daemon on every node"
+  echo "    - NCCL/torch shared memory on every node"
+  echo "    - Docker image caches on every node"
+  echo "    - Checkpoint files on every node"
+  echo "    - Generated manifests, profiles, HPP plan"
+  echo "    - TensorBoard logs, output directories"
+  echo "    - All local temp bundles and deploy logs"
+  echo "    - All background monitor processes"
+  echo ""
+  echo "  Preserved:"
+  echo "    - K3s cluster (nodes still Ready)"
+  echo "    - NVIDIA device plugin (still running)"
+  echo "    - Docker registry container (10.203.54.11:5000)"
+  echo "    - Source code, config YAML, deploy script"
+  echo "    - Python venv, Ansible inventory & secrets"
+  echo ""
+  echo "  Next steps:"
+  echo "    $(basename "$0") --status                    # Verify clean state"
+  echo "    $(basename "$0") --skip-k3s --skip-gpu       # Full redeploy from scratch"
+  echo ""
+}
+
+# ============================================================================
 # Status
 # ============================================================================
 
@@ -1336,8 +1629,8 @@ Run the full Baselines-Asteroid deployment pipeline or individual phases.
 
 Options:
   --phase PHASE       Run a single phase:
-                      k3s|registry|gpu|profile|plan|build|manifests|
-                      deploy|monitor|tensorboard|mps
+                      k3s|join-nodes|registry|gpu|profile|plan|build|
+                      manifests|deploy|monitor|tensorboard|mps
   --strategy NAME     Override parallelism strategy: asteroid | confident | dtfm
   --config PATH       Path to config YAML (default: configs/asteroid_default.yaml)
   --skip-k3s          Skip K3s installation (already installed)
@@ -1353,10 +1646,12 @@ Options:
   --checkpoints [DIR] Collect saved checkpoints from nodes (default: ./checkpoints_collected)
   --merge-checkpoints [DIR] [ITER]  Merge rank checkpoints into single model file
   --stop              Stop all training: delete jobs, pods, services, clean up
+  --clean             NUCLEAR RESET: destroy everything (pods, images, MPS, caches, data)
   -h, --help          Show this help message
 
 Phases (run in order):
-  1.  k3s         Install K3s cluster
+  1.  k3s         Install K3s cluster (auto-joins new nodes)
+  1a. join-nodes  Join new inventory nodes to existing cluster
   1b. registry    Setup private Docker registry on master
   2.  gpu         Setup NVIDIA runtime & device plugin
   3.  profile     Profile cluster hardware
@@ -1378,6 +1673,7 @@ Examples:
   $(basename "$0") --checkpoints                # Collect trained model checkpoints
   $(basename "$0") --merge-checkpoints ./ckpt 500  # Merge into single model
   $(basename "$0") --stop                       # Stop training and clean up everything
+  $(basename "$0") --clean                      # Nuclear reset: destroy pods, images, MPS, all data
 EOF
 }
 
@@ -1457,6 +1753,11 @@ parse_args() {
         stop_and_clean
         exit 0
         ;;
+      --clean)
+        shift
+        deep_clean
+        exit 0
+        ;;
       -h|--help)
         usage
         exit 0
@@ -1477,6 +1778,7 @@ parse_args() {
 run_phase_by_name() {
   case "$1" in
     k3s)         phase_k3s ;;
+    join-nodes)  _detect_and_join_new_nodes ;;
     registry)    phase_registry ;;
     gpu)         phase_gpu ;;
     profile)     phase_profile ;;
