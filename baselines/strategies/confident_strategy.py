@@ -39,7 +39,10 @@ class ConfidentStrategy(ParallelismStrategy):
     ) -> ParallelismPlan:
         topology = self._normalize_topology(device_topology)
         num_layers = max(1, model_config.num_layers)
-        num_stages = min(self.pp_size, len(topology.device_specs), num_layers)
+        # Use ALL available devices as pipeline stages
+        # (matches notebook ConfidantScheduler: k = num_devices)
+        num_devices = len(topology.device_specs)
+        num_stages = min(num_devices, num_layers)
         num_stages = max(1, num_stages)
         device_groups = {
             stage_idx: [stage_idx] for stage_idx in range(num_stages)
@@ -83,7 +86,8 @@ class ConfidentStrategy(ParallelismStrategy):
 
     def _normalize_topology(self, topology: DeviceTopology) -> DeviceTopology:
         specs = list(topology.device_specs)
-        target = max(self.pp_size, 1)
+        # Keep all devices — don't trim to pp_size
+        target = max(len(specs), self.pp_size, 1)
         if not specs:
             specs = [DeviceConfig(device_id=i) for i in range(target)]
         elif len(specs) < target:

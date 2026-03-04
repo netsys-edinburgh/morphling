@@ -37,20 +37,27 @@
     hf_bundle_remote: /tmp/baselines_hf_cache.tar.gz
 
     # Profiling configuration
-    profile_num_layers: 12
-    profile_embed_dim: 768
-    profile_batch_sizes: "1,2,4,8,16"
-    profile_seq_len: 128
+    # Must match actual model dimensions for accurate timing.
+    # LLaMA-7B: num_layers=32, embed_dim=4096, d_ff=11008
+    profile_num_layers: 32
+    profile_embed_dim: 4096
+    profile_num_heads: 32
+    profile_d_ff: 11008
+    profile_batch_sizes: "1,2,4"
+    profile_seq_len: 512
 
     # Build peer list dynamically from inventory (exclude self)
+    # Use hostvars[h].ansible_host with a safe default per host
     network_peers: >-
-      {{ groups['cluster']
-         | map('extract', hostvars, 'ansible_host')
-         | default(groups['cluster'])
-         | reject('equalto', inventory_hostname)
-         | reject('equalto', ansible_host | default(inventory_hostname))
-         | map('regex_replace', '$', ':5201')
-         | join(',') }}
+      {% set peers = [] -%}
+      {% for h in groups['cluster'] -%}
+        {% set peer_ip = hostvars[h].get('ansible_host', h) -%}
+        {% if peer_ip != (ansible_host | default(inventory_hostname))
+           and h != inventory_hostname -%}
+          {% if peers.append(peer_ip ~ ':5201') %}{% endif -%}
+        {% endif -%}
+      {% endfor -%}
+      {{ peers | join(',') }}
 
   tasks:
     # =========================================================================
@@ -76,6 +83,15 @@
             --exclude='baselines/deploy_asteroid/generated' \
             --exclude='*.egg-info' \
             --exclude='hpp_plan.json' \
+            --exclude='*.pt' \
+            --exclude='*.tar.gz' \
+            --exclude='*.log' \
+            --exclude='my_checkpoints*' \
+            --exclude='final_model' \
+            --exclude='checkpoints_collected' \
+            --exclude='tb_logs' \
+            --exclude='baselines_output' \
+            --exclude='node_modules' \
             -czf "{{ local_bundle_path }}" .
       delegate_to: localhost
       become: false
@@ -114,6 +130,18 @@
       delegate_to: localhost
       become: false
       run_once: true
+
+    - name: "INSTALL | Fix conflicting nvidia apt sources"
+      ansible.builtin.shell:
+        cmd: |
+          f=/etc/apt/sources.list.d/nvidia-container-toolkit.list
+          if [ -f "$f" ] && grep -qv 'signed-by' "$f"; then
+            grep 'signed-by' "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+          fi
+          curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+            | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg --yes 2>/dev/null || true
+      become: true
+      changed_when: false
 
     - name: "INSTALL | Ensure python3-venv is installed"
       ansible.builtin.apt:
@@ -156,7 +184,19 @@
 
     - name: "INSTALL | Install baselines requirements"
       ansible.builtin.shell: |
-        /opt/baselines/venv/bin/pip install --no-cache-dir -r "{{ baselines_remote_src }}/baselines/requirements.txt"
+        set -e
+        PIP=/opt/baselines/venv/bin/pip
+        # Try the dedicated deploy requirements first (most complete)
+        if [ -f "{{ baselines_remote_src }}/baselines/requirements-deploy.txt" ]; then
+          $PIP install --no-cache-dir -r "{{ baselines_remote_src }}/baselines/requirements-deploy.txt"
+        elif [ -f "{{ baselines_remote_src }}/requirements-deploy.txt" ]; then
+          $PIP install --no-cache-dir -r "{{ baselines_remote_src }}/requirements-deploy.txt"
+        else
+          # Absolute fallback — install core deps manually
+          $PIP install --no-cache-dir torch torchvision torchaudio numpy \
+            pydantic pydantic-settings pyyaml tensorboard tqdm \
+            python-dotenv datasets transformers jinja2 scipy safetensors
+        fi
       become: true
       register: pip_install_result
       ignore_errors: true
@@ -274,7 +314,7 @@
         state: started
 
     # =========================================================================
-    # PHASE 4: Execute Profiler
+    # PHASE 4: Execute GPU Profiler (parallel across all nodes)
     # =========================================================================
     - name: "PROFILE | Create profiles directory"
       file:
@@ -284,16 +324,19 @@
         owner: "{{ ansible_user }}"
       become: true
 
-    - name: "PROFILE | Run profile_node.py"
+    - name: "PROFILE | Run GPU profiling (--skip-network)"
       command: >
         {{ venv_python }} {{ baselines_remote_src }}/baselines/scripts/profile_node.py
         --output-dir {{ baselines_remote_profiles }}
         --rank {{ rank | default(ansible_play_hosts_all.index(inventory_hostname)) }}
         --num-layers {{ profile_num_layers }}
         --embed-dim {{ profile_embed_dim }}
+        --num-heads {{ profile_num_heads }}
+        --d-ff {{ profile_d_ff }}
         --batch-sizes "{{ profile_batch_sizes }}"
         --seq-len {{ profile_seq_len }}
         --network-peers "{{ network_peers }}"
+        --skip-network
       environment:
         HF_HOME: "{{ hf_cache_remote }}"
         CUDA_VISIBLE_DEVICES: "{{ gpu_id | default('0') }}"
@@ -301,14 +344,68 @@
       become: true
       become_user: "{{ ansible_user }}"
 
-    - name: "PROFILE | Display profiling output"
+    - name: "PROFILE | Display GPU profiling output"
       debug:
         msg: "{{ profile_result.stdout_lines[-20:] }}"
       when: profile_result.stdout_lines | length > 0
 
-    # =========================================================================
-    # PHASE 5: Gather Profiles to Control Node
-    # =========================================================================
+# =============================================================================
+# PLAY 2: Network (iperf) profiling — serialized one node at a time
+# =============================================================================
+# iperf3 server only handles one client at a time.  Running all nodes in
+# parallel causes "the server is busy" errors on 75%+ of links.
+# serial: 1 ensures each node completes its iperf tests before the next starts.
+- name: Serialized Network Profiling (iperf3)
+  hosts: cluster
+  serial: 1
+  gather_facts: false
+  vars_files:
+    - secrets.yml
+  vars:
+    baselines_remote_src: /opt/baselines/src
+    baselines_remote_profiles: /opt/baselines/profiles
+    venv_python: /opt/baselines/venv/bin/python
+    network_peers: >-
+      {% set peers = [] -%}
+      {% for h in groups['cluster'] -%}
+        {% set peer_ip = hostvars[h].get('ansible_host', h) -%}
+        {% if peer_ip != (ansible_host | default(inventory_hostname))
+           and h != inventory_hostname -%}
+          {% if peers.append(peer_ip ~ ':5201') %}{% endif -%}
+        {% endif -%}
+      {% endfor -%}
+      {{ peers | join(',') }}
+
+  tasks:
+    - name: "NETWORK | Run iperf profiling (--network-only)"
+      command: >
+        {{ venv_python }} {{ baselines_remote_src }}/baselines/scripts/profile_node.py
+        --output-dir {{ baselines_remote_profiles }}
+        --rank {{ rank | default(groups['cluster'].index(inventory_hostname)) }}
+        --network-peers "{{ network_peers }}"
+        --network-only
+      register: net_result
+      become: true
+      become_user: "{{ ansible_user }}"
+
+    - name: "NETWORK | Display network profiling output"
+      debug:
+        msg: "{{ net_result.stdout_lines[-10:] }}"
+      when: net_result.stdout_lines | length > 0
+
+# =============================================================================
+# PLAY 3: Gather profiles and cleanup
+# =============================================================================
+- name: Gather Profiles and Cleanup
+  hosts: cluster
+  gather_facts: false
+  vars_files:
+    - secrets.yml
+  vars:
+    baselines_remote_profiles: /opt/baselines/profiles
+    profiles_local_dir: "{{ playbook_dir }}/../profiles"
+
+  tasks:
     - name: "GATHER | Ensure local profiles directory exists"
       file:
         path: "{{ profiles_local_dir }}"

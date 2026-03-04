@@ -332,6 +332,17 @@ def main() -> int:
         ],
         help="Image pull policy",
     )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default="asteroid",
+        choices=[
+            "asteroid",
+            "confident",
+            "dtfm",
+        ],
+        help="Training strategy",
+    )
 
     args = parser.parse_args()
 
@@ -390,6 +401,7 @@ def main() -> int:
         "image_pull_policy": (
             args.image_pull_policy
         ),
+        "strategy": args.strategy,
     }
 
     print("\nGenerating ConfigMap...")

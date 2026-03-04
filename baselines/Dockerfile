@@ -1,8 +1,8 @@
 # Baselines distributed training Docker image.
 # Matches conda env emulator: torch 2.3.0 + CUDA 12.1.
 #
-# Build:
-#   docker build -t baselines:latest -f baselines/Dockerfile .
+# Build (from baselines/ as context):
+#   docker build -t baselines:latest .
 #
 # Run (single-node, 4 GPUs):
 #   docker run --rm --gpus all --ipc=host baselines:latest \
@@ -26,14 +26,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
+# Upgrade pip and install build tools
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
 WORKDIR /workspace
 
 # Install Python dependencies first (layer caching)
-COPY baselines/requirements.txt /workspace/baselines/requirements.txt
-RUN pip install --no-cache-dir -r baselines/requirements.txt
+# requirements.txt is auto-generated from pyproject.toml by deploy_asteroid.sh
+COPY requirements.txt /workspace/requirements.txt
+RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
-# Copy baselines package
-COPY baselines/ /workspace/baselines/
+# Copy baselines package (build context is baselines/)
+COPY . /workspace/baselines/
 
 # Default: show help
 CMD ["python", "-m", "baselines.train", "--help"]

@@ -1,0 +1,244 @@
+---
+# ============================================================================
+# Setup GPU support for K3s cluster
+# ============================================================================
+# 1. Installs nvidia-driver-550 on nodes that lack a working NVIDIA driver.
+# 2. Installs nvidia-container-toolkit and configures containerd for GPU access.
+#
+# Usage:
+#   ansible-playbook setup_gpu.yaml -v
+#
+# Prerequisites:
+#   - K3s cluster running (setup_k3s.yaml completed)
+#   - Nodes have a physical NVIDIA GPU (driver is installed automatically)
+
+# ── Play 1: Install NVIDIA driver if missing ────────────────────────────────
+- name: Install NVIDIA driver on nodes without one
+  hosts: cluster
+  become: true
+  serial: 1
+  vars_files:
+    - secrets.yml
+  vars:
+    nvidia_driver_package: nvidia-driver-550
+  tasks:
+    - name: Check if nvidia-smi works
+      command: nvidia-smi -L
+      register: nvidia_smi_check
+      changed_when: false
+      failed_when: false
+
+    - name: Skip nodes that already have a working driver
+      debug:
+        msg: "NVIDIA driver present: {{ nvidia_smi_check.stdout }}"
+      when: nvidia_smi_check.rc == 0
+
+    - name: Check for physical NVIDIA GPU via lspci
+      shell: lspci | grep -i nvidia
+      register: lspci_nvidia
+      changed_when: false
+      failed_when: false
+      when: nvidia_smi_check.rc != 0
+
+    - name: Skip nodes with no physical NVIDIA GPU
+      debug:
+        msg: "No NVIDIA GPU detected in lspci — skipping driver install"
+      when: nvidia_smi_check.rc != 0 and lspci_nvidia.rc != 0
+
+    - name: Install prerequisites
+      apt:
+        name:
+          - software-properties-common
+          - ubuntu-drivers-common
+          - dkms
+          - build-essential
+          - "linux-headers-{{ ansible_kernel }}"
+        state: present
+        update_cache: yes
+      when: nvidia_smi_check.rc != 0 and lspci_nvidia.rc == 0
+
+    - name: Install {{ nvidia_driver_package }}
+      apt:
+        name: "{{ nvidia_driver_package }}"
+        state: present
+        update_cache: yes
+      register: driver_install
+      when: nvidia_smi_check.rc != 0 and lspci_nvidia.rc == 0
+
+    - name: Reboot after driver install
+      reboot:
+        reboot_timeout: 300
+        msg: "Rebooting for NVIDIA driver activation"
+      when:
+        - nvidia_smi_check.rc != 0
+        - lspci_nvidia.rc == 0
+        - driver_install is changed
+
+    - name: Verify driver after reboot
+      command: nvidia-smi -L
+      register: post_reboot_check
+      changed_when: false
+      when:
+        - nvidia_smi_check.rc != 0
+        - lspci_nvidia.rc == 0
+        - driver_install is changed
+
+    - name: Display GPU info after driver install
+      debug:
+        msg: "{{ post_reboot_check.stdout }}"
+      when:
+        - post_reboot_check is defined
+        - post_reboot_check.stdout is defined
+
+# ── Play 2: Install nvidia-container-toolkit and configure containerd ───────
+- name: Setup GPU support for K3s
+  hosts: cluster
+  become: true
+  vars_files:
+    - secrets.yml
+  vars:
+    containerd_config_dir: /var/lib/rancher/k3s/agent/etc/containerd
+
+  tasks:
+    - name: Check if NVIDIA driver is available
+      command: nvidia-smi -L
+      register: nvidia_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display NVIDIA GPU info
+      debug:
+        msg: "{{ nvidia_check.stdout }}"
+      when: nvidia_check.rc == 0
+
+    - name: Skip if no NVIDIA GPU
+      meta: end_host
+      when: nvidia_check.rc != 0
+
+    - name: Remove conflicting nvidia-container-toolkit apt sources
+      shell: rm -f /etc/apt/sources.list.d/nvidia-container-toolkit*
+      changed_when: true
+
+    - name: Add NVIDIA container toolkit GPG key
+      ansible.builtin.apt_key:
+        url: https://nvidia.github.io/libnvidia-container/gpgkey
+        state: present
+
+    - name: Download NVIDIA GPG keyring
+      shell: |
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+          | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg --yes 2>/dev/null || true
+      changed_when: true
+
+    - name: Add NVIDIA container toolkit repository (signed)
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH) /"
+        filename: nvidia-container-toolkit
+        state: present
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install nvidia-container-toolkit
+      apt:
+        name: nvidia-container-toolkit
+        state: present
+
+    - name: Create containerd config directory
+      file:
+        path: "{{ containerd_config_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Deploy containerd config template for nvidia runtime
+      copy:
+        src: containerd-nvidia.toml.tmpl
+        dest: "{{ containerd_config_dir }}/config.toml.tmpl"
+        mode: '0644'
+
+    - name: Detect k3s service name
+      shell: |
+        if systemctl list-unit-files k3s-agent.service | grep -q k3s-agent; then
+          echo k3s-agent
+        elif systemctl list-unit-files k3s.service | grep -q k3s; then
+          echo k3s
+        else
+          echo none
+        fi
+      register: k3s_svc_name
+      changed_when: false
+
+    - name: Restart detected k3s service
+      systemd:
+        name: "{{ k3s_svc_name.stdout }}"
+        state: restarted
+      when: k3s_svc_name.stdout != "none"
+
+    - name: Wait for k3s to be ready
+      pause:
+        seconds: 10
+
+- name: Install NVIDIA device plugin
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config"
+
+  tasks:
+    - name: Wait for nodes to be ready
+      command: kubectl get nodes
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: nodes_ready
+      until: "'NotReady' not in nodes_ready.stdout"
+      retries: 12
+      delay: 10
+      changed_when: false
+
+    - name: Deploy NVIDIA device plugin
+      command: >
+        kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.1/nvidia-device-plugin.yml
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: device_plugin
+
+    - name: Display device plugin result
+      debug:
+        var: device_plugin.stdout_lines
+
+    - name: Wait for device plugin to be ready
+      command: >
+        kubectl wait --for=condition=Ready pod
+        -l name=nvidia-device-plugin-ds
+        -n kube-system
+        --timeout=120s
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: plugin_wait
+      ignore_errors: true
+
+    - name: Check device plugin pods
+      command: kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds -o wide
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: plugin_pods
+
+    - name: Display device plugin pods
+      debug:
+        var: plugin_pods.stdout_lines
+
+    - name: Wait for GPU resources to be advertised
+      pause:
+        seconds: 30
+
+    - name: Verify GPU resources on nodes
+      shell: |
+        kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:.status.allocatable."nvidia\.com/gpu"
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: gpu_resources
+
+    - name: Display GPU resources
+      debug:
+        var: gpu_resources.stdout_lines
