@@ -7,8 +7,13 @@
 # Auth is handled via vault secrets (ansible_ssh_pass / ansible_become_pass).
 #
 # Prerequisites:
-#   1. New nodes added to [workers] in inventory.ini
+#   1. New nodes added to [workers] in inventory.ini with hostname=<name>
 #   2. Nodes reachable over SSH (password auth via secrets.yml)
+#
+# Note: All VMs are cloned from the same template and share the OS hostname
+# 'ubuntu-2404-desktop-template'. K3s rejects duplicate node names, so we
+# write /etc/rancher/k3s/config.yaml with a unique node-name (from the
+# inventory hostname= var) BEFORE installing the agent.
 #
 # Usage (called automatically by deploy_asteroid.sh --phase k3s or join-nodes):
 #   ansible-playbook -i inventory.ini join_new_workers.yaml \
@@ -63,6 +68,14 @@
         name: curl
         state: present
         update_cache: yes
+      when: not k3s_installed.stat.exists
+
+    - name: Set unique node-name before install
+      copy:
+        dest: /etc/rancher/k3s/config.yaml
+        content: "node-name: {{ hostname }}\n"
+        owner: root
+        mode: '0644'
       when: not k3s_installed.stat.exists
 
     - name: Install k3s agent
