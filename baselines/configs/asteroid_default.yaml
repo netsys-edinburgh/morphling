@@ -33,7 +33,7 @@ model:
 
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
-  global_batch_size: 64
+  global_batch_size: 32
   micro_batch_size: 2
   lr: 3.0e-4
   min_lr: 1.0e-5
@@ -48,10 +48,10 @@ training:
 
 # ── Parallelism ──────────────────────────────────────────────────────────────
 parallelism:
-  strategy: dtfm            # asteroid | confident | dtfm
-  schedule_type: ""                 # gpipe | 1f1b  (auto-set by strategy if empty)
+  strategy: confident            # asteroid | confident | dtfm
+  schedule_type: "1f1b"                 # gpipe | 1f1b  (auto-set by strategy if empty)
   num_stages: 2                     # pipeline stages per pipeline (pp_size); dp_size = world_size / num_stages
-  world_size: 4
+  world_size: 6
   comm_backend: torch_dist      # torch_dist | nccl | gloo
   dist_url: "tcp://127.0.0.1:29600"
   d2d_bandwidth_mbps: 100.0
@@ -89,7 +89,7 @@ cluster:
       memory_mb: 46068
       rank: 1
       mps:
-        active_thread_percentage: 100   # fast — paired with rank 0
+        active_thread_percentage: 90   # fast — paired with rank 0
         memory_limit_mb: 40960          # ~40 GB
 
     - ip: 10.203.53.10
@@ -99,7 +99,7 @@ cluster:
       memory_mb: 46068
       rank: 2
       mps:
-        active_thread_percentage: 50    # slow — paired with rank 3
+        active_thread_percentage: 60    # slow — paired with rank 3
         memory_limit_mb: 24576          # ~24 GB
 
     - ip: 10.203.56.10
@@ -112,9 +112,75 @@ cluster:
         active_thread_percentage: 50    # slow — paired with rank 2
         memory_limit_mb: 24576          # ~24 GB
 
+    - ip: 10.203.56.12
+      hostname: edinburgh
+      nic: ens33
+      gpu_id: 0
+      memory_mb: 46068
+      rank: 4
+      location: Edinburgh
+      mps:
+        active_thread_percentage: 100
+        memory_limit_mb: 40960
+
+    - ip: 10.203.53.11
+      hostname: leeds
+      nic: ens33
+      gpu_id: 0
+      memory_mb: 46068
+      rank: 5
+      location: Leeds
+      mps:
+        active_thread_percentage: 100
+        memory_limit_mb: 40960
+
+    # - ip: 10.203.57.14
+    #   hostname: bangor1
+    #   nic: ens33
+    #   gpu_id: 0
+    #   memory_mb: 46068
+    #   rank: 6
+    #   location: Bangor
+    #   mps:
+    #     active_thread_percentage: 100
+    #     memory_limit_mb: 40960
+
+    # - ip: 10.203.57.15
+    #   hostname: bangor2
+    #   nic: ens33
+    #   gpu_id: 0
+    #   memory_mb: 46068
+    #   rank: 7
+    #   location: Bangor
+    #   mps:
+    #     active_thread_percentage: 100
+    #     memory_limit_mb: 40960
+
+    # - ip: 10.203.67.12
+    #   hostname: belfast
+    #   nic: ens33
+    #   gpu_id: 0
+    #   memory_mb: 46068
+    #   rank: 8
+    #   location: Belfast
+    #   mps:
+    #     active_thread_percentage: 100
+    #     memory_limit_mb: 40960
+
+    # - ip: 10.203.68.11
+    #   hostname: dublin
+    #   nic: ens33
+    #   gpu_id: 0
+    #   memory_mb: 46068
+    #   rank: 9
+    #   location: Dublin
+    #   mps:
+    #     active_thread_percentage: 100
+    #     memory_limit_mb: 40960
+
 # ── MPS (NVIDIA Multi-Process Service) — global defaults ────────────────────
 mps:
-  enabled: true
+  enabled: false
   active_thread_percentage: 100   # overridden per-node above
   pipe_directory: ""              # default: /tmp/nvidia-mps-<gpu_id>
   log_directory: ""               # default: /tmp/nvidia-log-<gpu_id>
