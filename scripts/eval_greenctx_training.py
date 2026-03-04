@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false
+# pyright: basic, reportMissingImports=false, reportMissingTypeStubs=false
 # pyright: reportUnusedCallResult=false, reportImplicitStringConcatenation=false
-# pyright: reportAny=false, reportExplicitAny=false
 # pyright: reportUnknownVariableType=false, reportUnknownMemberType=false
 # pyright: reportUnknownArgumentType=false, reportUnknownParameterType=false
-# pyright: reportUnknownLambdaType=false, reportUnknownReturnType=false
-# pyright: reportUnknownArgumentType=false, reportUnknownTypeArgument=false
+# pyright: reportUnknownLambdaType=false
 """E2E single-GPU OPT-125M training benchmark.
 
 Runs baseline and green-context modes sequentially, records per-step
