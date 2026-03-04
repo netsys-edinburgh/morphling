@@ -142,23 +142,22 @@ if(ENABLE_XTGEMM_TESTS)
       ${XTGEMM_COMMON_LIBS}
     )
 
-    # Green Context benchmarks (bench/cuda/) — disabled: pre-existing
-    # compilation errors in bench_green_ctx.cpp (RunGemmDirect
-    # undeclared, slots_ type mismatch, LOG_FATAL_IF missing).
-    # TODO(fix): re-enable once bench_green_ctx.cpp is fixed.
-    # add_executable(bench_green_ctx
-    #   bench/cuda/bench_green_ctx.cpp
-    #   ${XTGEMM_TEST_DEPS}
-    # )
-    # target_include_directories(bench_green_ctx PRIVATE
-    #   ${XTGEMM_INCLUDE_DIRS}
-    #   ${CMAKE_CURRENT_SOURCE_DIR}/bench/cuda
-    # )
-    # target_link_libraries(bench_green_ctx PRIVATE
-    #   benchmark::benchmark
-    #   benchmark::benchmark_main
-    #   ${XTGEMM_COMMON_LIBS}
-    # )
+    # Green Context benchmarks (bench/cuda/)
+    add_executable(bench_green_ctx
+      bench/cuda/bench_green_ctx.cpp
+      ${XTGEMM_TEST_DEPS}
+    )
+    target_include_directories(bench_green_ctx PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/bench/cuda
+    )
+    target_link_libraries(bench_green_ctx PRIVATE
+      benchmark::benchmark
+      benchmark::benchmark_main
+      ${XTGEMM_COMMON_LIBS}
+      CUDA::cublas
+      CUDA::cuda_driver
+    )
 
     # Pool dispatch benchmarks (GPU vs CPU vs Hybrid) (bench/cuda/)
     set(POOL_DISPATCH_DEPS
@@ -315,6 +314,15 @@ if(ENABLE_ZEROCOPY_TESTS)
   )
   add_custom_target(generate_proto_files ALL DEPENDS ${PROTO_SRCS})
 
-  add_subdirectory(unit/zerocopy)
-  add_subdirectory(bench/zerocopy)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/zerocopy/CMakeLists.txt")
+    add_subdirectory(unit/zerocopy)
+  else()
+    message(WARNING "unit/zerocopy/CMakeLists.txt not found; zerocopy unit tests skipped.")
+  endif()
+
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/zerocopy/CMakeLists.txt")
+    add_subdirectory(bench/zerocopy)
+  else()
+    message(WARNING "bench/zerocopy/CMakeLists.txt not found; zerocopy benchmarks skipped.")
+  endif()
 endif()

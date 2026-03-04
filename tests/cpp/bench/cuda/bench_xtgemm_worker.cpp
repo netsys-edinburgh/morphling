@@ -5,66 +5,7 @@
 #include <thread>
 #include <vector>
 
-#include "scheduler/gpu_worker.h"
-#include "utils/logger.h"
-
-// Helper: build a GemmArgs for a single NN SGEMM (no transpose)
-static std::shared_ptr<GemmArgs> MakeNNGemmArgs(int m, int n, int k, float* a,
-                                                float* b, float* c) {
-  auto args = std::make_shared<GemmArgs>();
-  args->group_size = 1;
-  args->transa[0] = 'N';
-  args->transb[0] = 'N';
-  args->m[0] = m;
-  args->n[0] = n;
-  args->k[0] = k;
-  args->alpha[0] = 1.0f;
-  args->a[0] = a;
-  args->lda[0] = m;
-  args->b[0] = b;
-  args->ldb[0] = k;
-  args->beta[0] = 0.0f;
-  args->c[0] = c;
-  args->ldc[0] = m;
-  return args;
-}
-
-// Pinned host memory RAII wrapper
-struct PinnedBuffer {
-  float* ptr = nullptr;
-  size_t bytes = 0;
-
-  PinnedBuffer() = default;
-
-  explicit PinnedBuffer(size_t elems) : bytes(elems * sizeof(float)) {
-    if (elems > 0) {
-      cudaHostAlloc(reinterpret_cast<void**>(&ptr), bytes,
-                    cudaHostAllocDefault);
-      for (size_t i = 0; i < elems; i++) {
-        ptr[i] = static_cast<float>(i % 1000) * 0.001f;
-      }
-    }
-  }
-  ~PinnedBuffer() {
-    if (ptr) cudaFreeHost(ptr);
-  }
-  PinnedBuffer(const PinnedBuffer&) = delete;
-  PinnedBuffer& operator=(const PinnedBuffer&) = delete;
-  PinnedBuffer(PinnedBuffer&& o) noexcept : ptr(o.ptr), bytes(o.bytes) {
-    o.ptr = nullptr;
-    o.bytes = 0;
-  }
-  PinnedBuffer& operator=(PinnedBuffer&& o) noexcept {
-    if (this != &o) {
-      if (ptr) cudaFreeHost(ptr);
-      ptr = o.ptr;
-      bytes = o.bytes;
-      o.ptr = nullptr;
-      o.bytes = 0;
-    }
-    return *this;
-  }
-};
+#include "bench_cuda_utils.h"
 
 // ---------------------------------------------------------------------------
 // BM_SingleWorker_Gemm: Latency of a single GEMM at various sizes
