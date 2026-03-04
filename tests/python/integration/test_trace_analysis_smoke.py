@@ -229,15 +229,15 @@ def test_eval_script_runs(tmp_path: Path) -> None:
     if not script.exists():
         pytest.skip(f"missing script: {script}")
 
-    output_csv = tmp_path / "eval_smoke.csv"
+    output_dir = tmp_path / "eval_output"
     result = _run_python(
         [
             str(script),
             "--num-steps",
             "5",
             "--skip-greenctx",
-            "--output-csv",
-            str(output_csv),
+            "--output-dir",
+            str(output_dir),
         ]
     )
 
@@ -246,8 +246,9 @@ def test_eval_script_runs(tmp_path: Path) -> None:
         f"stdout:\n{result.stdout}\n"
         f"stderr:\n{result.stderr}"
     )
-    assert output_csv.exists()
+    baseline_csv = output_dir / "eval_metrics_baseline.csv"
+    assert baseline_csv.exists()
 
-    with output_csv.open("r", encoding="utf-8", newline="") as f:
+    with baseline_csv.open("r", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
     assert rows
