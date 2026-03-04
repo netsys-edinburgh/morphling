@@ -1,0 +1,5 @@
+- Kept all LDPC adapter tests pure Python/pandas with no GPU dependencies and no external-service mocking.
+- Used synthetic temporary CSVs for behavior-focused tests (conversion, violations, inefficiencies, clamping, iterator, output file), and reserved real datasets only for parse/row-count checks.
+- Verified green-trace parser compatibility for `to_v2_file()` by asserting strict 3-column CSV layout and integer-castable first two fields (`timestamp_ns`, `num_sms`).
+- Standardized real-trace figure outputs to dual format (`.pdf` + `.png`) with stable stems: `deadline_compliance`, `decode_latency_cdf`, `timeline_decode_and_sm`, `workload_vs_latency`, `violation_inefficiency_events`.
+- Timeline SM target plotting accepts multiple schema variants (`target_sm`, `target_sm_count`, `target_sms`) and falls back to constant `--total-sms` when target columns are absent.
