@@ -426,6 +426,16 @@ def main() -> int:
     parser.add_argument("--batch-sizes", type=str, default="1,2,4,8,16")
     parser.add_argument("--network-peers", type=str, default="")
     parser.add_argument("--skip-gpu", action="store_true")
+    parser.add_argument(
+        "--skip-network",
+        action="store_true",
+        help="Skip network (iperf) profiling",
+    )
+    parser.add_argument(
+        "--network-only",
+        action="store_true",
+        help="Run only network profiling and merge into existing profile",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -438,17 +448,47 @@ def main() -> int:
     device = torch.device("cuda" if use_cuda else "cpu")
     print(f"rank={args.rank} hostname={socket.gethostname()} device={device}")
 
-    hardware = get_hardware_info(skip_gpu=args.skip_gpu)
-    layer_profile = profile_all_layers(args=args, device=device)
-    network_profile = profile_network_peers(args.network_peers)
-
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
     hostname = socket.gethostname()
     output_path = output_dir / f"profile_{hostname}_rank{args.rank}.json"
 
-    payload: dict[str, Any] = {
+    # --network-only: just measure network and merge
+    # into existing profile JSON.
+    if args.network_only:
+        print("Network-only mode: measuring peers...")
+        network_profile = profile_network_peers(
+            args.network_peers
+        )
+        payload: dict[str, Any] = {}
+        if output_path.exists():
+            with open(output_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        payload["network"] = network_profile
+        payload["network_timestamp_unix"] = time.time()
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        ok = sum(
+            1 for v in network_profile.values()
+            if v.get("ok")
+        )
+        print(
+            f"Network profiling done: {ok}/"
+            f"{len(network_profile)} peers OK"
+        )
+        print(f"Updated profile: {output_path}")
+        return 0
+
+    hardware = get_hardware_info(skip_gpu=args.skip_gpu)
+    layer_profile = profile_all_layers(args=args, device=device)
+
+    network_profile: dict[str, Any] = {}
+    if not args.skip_network:
+        network_profile = profile_network_peers(
+            args.network_peers
+        )
+
+    payload = {
         "rank": args.rank,
         "hostname": hostname,
         "hardware": hardware,
