@@ -226,7 +226,8 @@ class AsteroidHPPPlanner:
             if layer_idx < len(self.weight_sizes)
         )
         mem_mod = weight_bytes
-        mem_opt = weight_bytes * 2
+        mem_grad = weight_bytes          # gradient memory
+        mem_opt = weight_bytes * 2        # AdamW momentum + variance
 
         mem_act = (
             sum(
@@ -236,8 +237,10 @@ class AsteroidHPPPlanner:
             )
             * batch_size
         )
-        total_bytes = mem_mod + mem_opt + k_p * mem_act
-        return total_bytes / (1024 * 1024)
+        # 1.10x safety factor for PyTorch overhead,
+        # CUDA context, and memory fragmentation
+        total_bytes = (mem_mod + mem_grad + mem_opt + k_p * mem_act)
+        return total_bytes / (1024 * 1024) * 1.10
 
     def _alloc_microbatch(
         self,
@@ -489,6 +492,29 @@ class AsteroidHPPPlanner:
                     L,
                     self.micro_batch_size,
                 )
+
+                # Memory check for single-stage base case
+                mem_ok = True
+                # When used as the last stage in P stages,
+                # stage_idx = P - 1
+                global_stage_idx = max(0, P - 1)
+                for did, bs in alloc.items():
+                    if bs <= 0:
+                        continue
+                    mem = self._memory_footprint(
+                        global_stage_idx,
+                        P,
+                        L - l,
+                        L,
+                        bs,
+                    )
+                    device = self._device_or_default(did)
+                    if mem > device.memory_budget_mb:
+                        mem_ok = False
+                        break
+                if not mem_ok:
+                    continue
+
                 ar_t = self._allreduce_time(group, L - l, L)
                 lat = self.num_microbatches * exec_t + ar_t
                 if lat < q[l][n][1]:
