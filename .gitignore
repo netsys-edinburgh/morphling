@@ -10,6 +10,8 @@ node_modules
 .vscode
 .claude
 .opencode
+.tmp*
+.sisyphus/
 
 # CMake-generated files
 .ninja_deps
