@@ -377,6 +377,24 @@
       {{ peers | join(',') }}
 
   tasks:
+    - name: "NETWORK | Verify iperf3 servers are alive on ALL nodes"
+      ansible.builtin.shell: |
+        # Restart iperf_server if it crashed between profiles
+        if ! systemctl is-active --quiet iperf_server; then
+          echo "iperf_server not running — restarting"
+          systemctl restart iperf_server
+          sleep 2
+        fi
+        # Verify port 5201 is listening
+        ss -tlnp | grep -q ':5201 ' && echo 'OK: port 5201 listening' || {
+          echo 'FAIL: port 5201 not listening after restart';
+          exit 1;
+        }
+      become: true
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['cluster'] }}"
+      run_once: true
+
     - name: "NETWORK | Run iperf profiling (--network-only)"
       command: >
         {{ venv_python }} {{ baselines_remote_src }}/baselines/scripts/profile_node.py

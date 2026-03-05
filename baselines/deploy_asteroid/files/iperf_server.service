@@ -5,9 +5,14 @@ After=network.target
 
 [Service]
 Type=simple
+# Kill any stale iperf3 processes hogging port 5201 before starting
+ExecStartPre=/bin/sh -c 'fuser -k 5201/tcp 2>/dev/null; sleep 1; true'
 ExecStart=/usr/bin/iperf3 -s -p 5201
-Restart=on-failure
-RestartSec=5
+# Always restart — iperf3 -s exits on client errors, SIGINT, etc.
+Restart=always
+RestartSec=2
+# Prevent systemd from stopping restarts after too many failures
+StartLimitIntervalSec=0
 StandardOutput=journal
 StandardError=journal
 
