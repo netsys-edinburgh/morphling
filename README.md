@@ -208,6 +208,9 @@ Each log entry has the fields:
   does not report a count.
 - `greenctx_enabled`: boolean indicating whether a green context controller was
   configured when the entry was recorded.
+- `m`: GEMM M dimension for this operation.
+- `n`: GEMM N dimension for this operation.
+- `k`: GEMM K dimension for this operation.
 
 Example end-to-end usage:
 

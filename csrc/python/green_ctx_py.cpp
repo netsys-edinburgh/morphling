@@ -62,6 +62,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def_readwrite("switch_sync", &GreenContextRuntime::Options::switch_sync)
       .def_readwrite("roles", &GreenContextRuntime::Options::roles);
 
+  py::class_<SwapStats>(m, "SwapStats")
+      .def_readonly("count", &SwapStats::count)
+      .def_readonly("total_overhead_us", &SwapStats::total_overhead_us)
+      .def("avg_overhead_us", &SwapStats::avg_overhead_us);
+
   // ── GreenContextRuntime ────────────────────────────────
   py::class_<GreenContextRuntime, std::shared_ptr<GreenContextRuntime>>(
       m, "GreenContextRuntime")
@@ -132,7 +137,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
       // Stats
       .def("switch_count", &GreenContextRuntime::SwitchCount)
-      .def("generation", &GreenContextRuntime::Generation);
+      .def("generation", &GreenContextRuntime::Generation)
+      .def("swap_stats", &GreenContextRuntime::GetAndResetSwapStats,
+           "Get and reset swap timing statistics");
 
   // ── Convenience factory ────────────────────────────────
   m.def(

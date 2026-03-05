@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 from importlib import import_module
+import json
 import logging
 from pathlib import Path
 import sys
@@ -99,10 +100,36 @@ def _parse_args() -> argparse.Namespace:
         help="Skip green-context training run",
     )
     parser.add_argument(
+        "--dump-gemm-shapes",
+        action="store_true",
+        help="Dump unique GEMM shapes observed by autograd hooks",
+    )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="Number of training runs",
+    )
+    parser.add_argument(
+        "--seed-base",
+        type=int,
+        default=42,
+        help="Base seed (incremented per run)",
+    )
+    parser.add_argument(
+        "--max-trace-slots",
+        type=int,
+        default=27462,
+        help=(
+            "Truncate training to this many trace slots "
+            "(shorter trace length)"
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
-        help="Random seed",
+        help="Random seed (legacy alias for --seed-base)",
     )
     return parser.parse_args()
 
@@ -277,7 +304,9 @@ def _run_mode(
     torch: Any,
     AutoModelForCausalLM: Any,
     controller: Any | None,
-) -> list[dict[str, float | int]]:
+    get_gemm_log: Any,
+    collect_gemm_entries: bool = False,
+) -> tuple[list[dict[str, float | int]], list[dict[str, Any]]]:
     _set_seed(torch, seed)
     model = AutoModelForCausalLM.from_pretrained(model_name)
     model.to(device)
@@ -285,6 +314,11 @@ def _run_mode(
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
     metrics: list[dict[str, float | int]] = []
+    all_gemm_entries: list[dict[str, Any]] = []
+
+    _ = get_gemm_log(reset=True)
+    if controller is not None:
+        controller.reset_swap_stats()
 
     logging.info("Starting mode: %s", mode_name)
     for step_idx, (input_ids_cpu,) in enumerate(loader):
@@ -310,6 +344,23 @@ def _run_mode(
                 bundle.comp.synchronize()
                 sm_count = int(bundle.sm_count)
 
+        if controller is None:
+            step_swap_count = 0
+            step_swap_overhead_us = 0.0
+        else:
+            swap_stats = controller.get_swap_stats()
+            python_swap = swap_stats.get("python_layer", {})
+            step_swap_count = int(python_swap.get("count", 0))
+            step_swap_overhead_us = float(
+                python_swap.get("total_overhead_us", 0.0)
+            )
+            controller.reset_swap_stats()
+
+        step_gemm_entries = get_gemm_log(reset=True)
+        step_gemm_count = int(len(step_gemm_entries))
+        if collect_gemm_entries and step_gemm_entries:
+            all_gemm_entries.extend(step_gemm_entries)
+
         wall_time_s = max(time.perf_counter() - start_t, 1e-12)
         tokens_per_sec = float(input_ids.numel()) / wall_time_s
         metrics.append(
@@ -320,13 +371,16 @@ def _run_mode(
                 "tokens_per_sec": tokens_per_sec,
                 "gpu_mem_mb": float(torch.cuda.memory_allocated(device) / 1e6),
                 "sm_count": int(sm_count),
+                "swap_count": int(step_swap_count),
+                "swap_overhead_us": float(step_swap_overhead_us),
+                "gemm_count": int(step_gemm_count),
                 "is_warmup": int(step_idx < WARMUP_STEPS),
             }
         )
 
     del model
     torch.cuda.empty_cache()
-    return metrics
+    return metrics, all_gemm_entries
 
 
 def _timed_rows(df: Any) -> Any:
@@ -334,6 +388,54 @@ def _timed_rows(df: Any) -> Any:
     if len(timed) == 0:
         return df
     return timed
+
+
+def _summarize_run(df: Any) -> dict[str, float]:
+    timed = _timed_rows(df)
+    return {
+        "tokens_per_sec": float(timed["tokens_per_sec"].mean()),
+        "step_time_ms": float(timed["wall_time_ms"].mean()),
+        "swap_count": float(timed["swap_count"].mean()),
+        "swap_overhead_us": float(timed["swap_overhead_us"].mean()),
+    }
+
+
+def _dump_gemm_shapes(
+    output_dir: str,
+    num_steps: int,
+    gemm_log: list[dict[str, Any]] | None = None,
+) -> None:
+    from collections import Counter
+    import os
+
+    if gemm_log is None:
+        from morphling.hooks.autograd import get_gemm_log
+
+        log = get_gemm_log()
+    else:
+        log = gemm_log
+    shape_counts = Counter()
+    for entry in log:
+        key = (entry["m"], entry["n"], entry["k"], entry["phase"])
+        shape_counts[key] += 1
+
+    shapes = []
+    for (m, n, k, phase), count in shape_counts.most_common():
+        shapes.append(
+            {
+                "m": m,
+                "n": n,
+                "k": k,
+                "phase": phase,
+                "count_per_step": count / max(num_steps, 1),
+            }
+        )
+
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, "gemm_shapes.json")
+    with open(path, "w") as f:
+        json.dump(shapes, f, indent=2)
+    print(f"Saved {len(shapes)} GEMM shapes to {path}")
 
 
 def _print_summary(results: dict[str, Any]) -> None:
@@ -456,6 +558,7 @@ def _run_benchmark(args: argparse.Namespace) -> None:
         import torch
         from torch.utils.data import DataLoader, TensorDataset
         from transformers import AutoModelForCausalLM, AutoTokenizer
+        from morphling.hooks.autograd import get_gemm_log
     except ImportError as exc:
         raise SystemExit(
             "Missing dependency for benchmark runtime: "
@@ -470,6 +573,10 @@ def _run_benchmark(args: argparse.Namespace) -> None:
         raise ValueError("Cannot skip both modes")
     if args.num_steps <= 0:
         raise ValueError("--num-steps must be > 0")
+    if args.runs <= 0:
+        raise ValueError("--runs must be > 0")
+    if args.max_trace_slots <= 0:
+        raise ValueError("--max-trace-slots must be > 0")
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be > 0")
     if args.seq_len <= 0:
@@ -480,7 +587,18 @@ def _run_benchmark(args: argparse.Namespace) -> None:
 
     torch.cuda.set_device(0)
     device = torch.device("cuda:0")
-    _set_seed(torch, args.seed)
+
+    base_seed = int(args.seed_base)
+    if args.seed_base == 42 and args.seed != 42:
+        base_seed = int(args.seed)
+
+    effective_num_steps = min(int(args.num_steps), int(args.max_trace_slots))
+    if effective_num_steps < int(args.num_steps):
+        logging.info(
+            "Truncating training from %d to %d steps due to --max-trace-slots",
+            args.num_steps,
+            effective_num_steps,
+        )
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -489,86 +607,186 @@ def _run_benchmark(args: argparse.Namespace) -> None:
     tokenizer.pad_token = tokenizer.eos_token
     vocab_size = int(tokenizer.vocab_size)
 
-    loader = _make_loader(
-        torch,
-        DataLoader,
-        TensorDataset,
-        num_steps=args.num_steps,
-        batch_size=args.batch_size,
-        seq_len=args.seq_len,
-        vocab_size=vocab_size,
-        seed=args.seed,
-    )
+    run_summaries: dict[str, list[dict[str, float]]] = {}
+    single_run_results: dict[str, Any] = {}
+    single_run_gemm_log: list[dict[str, Any]] = []
 
-    if len(loader) != args.num_steps:
-        raise RuntimeError(
-            "Unexpected synthetic loader length: "
-            f"got {len(loader)}, expected {args.num_steps}"
+    for run_idx in range(args.runs):
+        seed = base_seed + run_idx
+        logging.info(
+            "Starting run %d/%d (seed=%d)",
+            run_idx + 1,
+            args.runs,
+            seed,
         )
 
-    results: dict[str, Any] = {}
-
-    if not args.skip_baseline:
-        baseline_metrics = _run_mode(
-            mode_name="baseline",
-            model_name=args.model,
-            seed=args.seed,
-            loader=loader,
-            device=device,
-            total_sms=args.total_sms,
-            torch=torch,
-            AutoModelForCausalLM=AutoModelForCausalLM,
-            controller=None,
+        loader = _make_loader(
+            torch,
+            DataLoader,
+            TensorDataset,
+            num_steps=effective_num_steps,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            vocab_size=vocab_size,
+            seed=seed,
         )
-        baseline_df = pd.DataFrame(baseline_metrics)
-        baseline_df.to_csv(
-            output_dir / "eval_metrics_baseline.csv",
-            index=False,
-        )
-        results["baseline"] = baseline_df
-        logging.info("Saved baseline metrics CSV")
 
-    if not args.skip_greenctx:
-        trace_path = _resolve_trace_path(args.trace_path)
-        ctrl = None
-        v2_path: Path | None = None
-        try:
-            ctrl, v2_path = _prepare_greenctx_controller(
-                trace_path=trace_path,
-                total_sms=args.total_sms,
-                device_id=0,
-                GreenContextConfig=GreenContextConfig,
-                GreenContextController=GreenContextController,
-                LdpcTraceAdapter=LdpcTraceAdapter,
+        if len(loader) != effective_num_steps:
+            raise RuntimeError(
+                "Unexpected synthetic loader length: "
+                f"got {len(loader)}, expected {effective_num_steps}"
             )
-            greenctx_metrics = _run_mode(
-                mode_name="greenctx",
+
+        run_dir = output_dir / f"run_{run_idx}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        results: dict[str, Any] = {}
+        run_gemm_log: list[dict[str, Any]] = []
+
+        if not args.skip_baseline:
+            baseline_metrics, baseline_gemm_log = _run_mode(
+                mode_name="baseline",
                 model_name=args.model,
-                seed=args.seed,
+                seed=seed,
                 loader=loader,
                 device=device,
                 total_sms=args.total_sms,
                 torch=torch,
                 AutoModelForCausalLM=AutoModelForCausalLM,
-                controller=ctrl,
+                controller=None,
+                get_gemm_log=get_gemm_log,
+                collect_gemm_entries=args.dump_gemm_shapes,
             )
-        finally:
-            if ctrl is not None:
-                ctrl.close()
-            if v2_path is not None and v2_path.exists():
-                v2_path.unlink()
+            run_gemm_log.extend(baseline_gemm_log)
+            baseline_df = pd.DataFrame(baseline_metrics)
+            baseline_df.to_csv(
+                run_dir / "eval_metrics_baseline.csv",
+                index=False,
+            )
+            if args.runs == 1:
+                baseline_df.to_csv(
+                    output_dir / "eval_metrics_baseline.csv",
+                    index=False,
+                )
+            results["baseline"] = baseline_df
+            run_summaries.setdefault("baseline", []).append(
+                _summarize_run(baseline_df)
+            )
+            logging.info("Saved baseline metrics CSV for run %d", run_idx)
 
-        greenctx_df = pd.DataFrame(greenctx_metrics)
-        greenctx_df.to_csv(
-            output_dir / "eval_metrics_greenctx.csv",
-            index=False,
+        if not args.skip_greenctx:
+            trace_path = _resolve_trace_path(args.trace_path)
+            ctrl = None
+            v2_path: Path | None = None
+            try:
+                ctrl, v2_path = _prepare_greenctx_controller(
+                    trace_path=trace_path,
+                    total_sms=args.total_sms,
+                    device_id=0,
+                    GreenContextConfig=GreenContextConfig,
+                    GreenContextController=GreenContextController,
+                    LdpcTraceAdapter=LdpcTraceAdapter,
+                )
+                greenctx_metrics, greenctx_gemm_log = _run_mode(
+                    mode_name="greenctx",
+                    model_name=args.model,
+                    seed=seed,
+                    loader=loader,
+                    device=device,
+                    total_sms=args.total_sms,
+                    torch=torch,
+                    AutoModelForCausalLM=AutoModelForCausalLM,
+                    controller=ctrl,
+                    get_gemm_log=get_gemm_log,
+                    collect_gemm_entries=args.dump_gemm_shapes,
+                )
+            finally:
+                if ctrl is not None:
+                    ctrl.close()
+                if v2_path is not None and v2_path.exists():
+                    v2_path.unlink()
+
+            run_gemm_log.extend(greenctx_gemm_log)
+            greenctx_df = pd.DataFrame(greenctx_metrics)
+            greenctx_df.to_csv(
+                run_dir / "eval_metrics_greenctx.csv",
+                index=False,
+            )
+            if args.runs == 1:
+                greenctx_df.to_csv(
+                    output_dir / "eval_metrics_greenctx.csv",
+                    index=False,
+                )
+            results["greenctx"] = greenctx_df
+            run_summaries.setdefault("greenctx", []).append(
+                _summarize_run(greenctx_df)
+            )
+            logging.info("Saved greenctx metrics CSV for run %d", run_idx)
+
+        combined_frames = []
+        for mode_name, df in results.items():
+            mode_df = df.copy()
+            mode_df.insert(0, "mode", mode_name)
+            mode_df.insert(1, "seed", int(seed))
+            mode_df.insert(2, "run_idx", int(run_idx))
+            combined_frames.append(mode_df)
+        if combined_frames:
+            run_metrics_df = pd.concat(combined_frames, ignore_index=True)
+            run_metrics_df.to_csv(run_dir / "metrics.csv", index=False)
+            if args.runs == 1:
+                run_metrics_df.to_csv(output_dir / "metrics.csv", index=False)
+
+        if args.dump_gemm_shapes:
+            _dump_gemm_shapes(
+                str(run_dir),
+                effective_num_steps,
+                gemm_log=run_gemm_log,
+            )
+
+        if args.runs == 1:
+            single_run_results = results
+            single_run_gemm_log = run_gemm_log
+
+    if args.runs > 1:
+        aggregated: dict[str, Any] = {
+            "runs": int(args.runs),
+            "seed_base": int(base_seed),
+            "num_steps": int(effective_num_steps),
+            "metrics": {},
+        }
+        for mode_name, summaries in run_summaries.items():
+            mode_payload: dict[str, Any] = {}
+            for metric_name in (
+                "tokens_per_sec",
+                "step_time_ms",
+                "swap_count",
+                "swap_overhead_us",
+            ):
+                values = np.asarray(
+                    [row[metric_name] for row in summaries],
+                    dtype=float,
+                )
+                mode_payload[metric_name] = {
+                    "mean": float(values.mean()),
+                    "std": float(values.std()),
+                }
+            aggregated["metrics"][mode_name] = mode_payload
+
+        aggregated_path = output_dir / "aggregated.json"
+        with open(aggregated_path, "w", encoding="utf-8") as f:
+            json.dump(aggregated, f, indent=2)
+        logging.info("Saved multi-run aggregation to %s", aggregated_path)
+        return
+
+    if args.dump_gemm_shapes:
+        _dump_gemm_shapes(
+            str(output_dir),
+            effective_num_steps,
+            gemm_log=single_run_gemm_log,
         )
-        results["greenctx"] = greenctx_df
-        logging.info("Saved greenctx metrics CSV")
 
-    _print_summary(results)
+    _print_summary(single_run_results)
     _plot_comparison(
-        results=results,
+        results=single_run_results,
         output_dir=output_dir,
         plt=plt,
         np=np,

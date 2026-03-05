@@ -13,6 +13,7 @@ Backend selection:
 from __future__ import annotations
 
 import logging
+import time
 import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Tuple
@@ -134,6 +135,10 @@ class CppBackend:
         )
         self._gpu_id = gpu_id
         self._closed = False
+        self._swap_log: list[dict[str, int]] = []
+        self._swap_count: int = 0
+        self._total_python_overhead_ns: int = 0
+        self._prev_sm_count: int = 0
 
         # Pre-build ExternalStream cache (one-time)
         self._stream_cache: Dict[
@@ -185,12 +190,45 @@ class CppBackend:
     def activate_for_time(
         self, elapsed_us: int
     ) -> Tuple[int, int]:
+        t0 = time.perf_counter_ns()
         sm = self._rt.sm_count_at_time(elapsed_us)
-        prev = self._rt.activate_sm_for_thread(sm)
+        _ = self._rt.activate_sm_for_thread(sm)
+        t1 = time.perf_counter_ns()
+
+        if sm != self._prev_sm_count:
+            overhead_ns = t1 - t0
+            self._swap_log.append(
+                {
+                    "timestamp_ns": t0,
+                    "from_sm": self._prev_sm_count,
+                    "to_sm": sm,
+                    "python_overhead_ns": overhead_ns,
+                }
+            )
+            self._swap_count += 1
+            self._total_python_overhead_ns += overhead_ns
+            self._prev_sm_count = sm
+
         return sm, self._rt.generation()
 
     def deactivate(self, prev_sm_count: int) -> None:
+        t0 = time.perf_counter_ns()
         self._rt.deactivate_for_thread(prev_sm_count)
+        t1 = time.perf_counter_ns()
+
+        if prev_sm_count != self._prev_sm_count:
+            overhead_ns = t1 - t0
+            self._swap_log.append(
+                {
+                    "timestamp_ns": t0,
+                    "from_sm": self._prev_sm_count,
+                    "to_sm": prev_sm_count,
+                    "python_overhead_ns": overhead_ns,
+                }
+            )
+            self._swap_count += 1
+            self._total_python_overhead_ns += overhead_ns
+            self._prev_sm_count = prev_sm_count
 
     def load_trace(self, path: str) -> bool:
         return self._rt.load_trace(path)
@@ -203,6 +241,27 @@ class CppBackend:
 
     def switch_count(self) -> int:
         return self._rt.switch_count()
+
+    def get_swap_stats(self):
+        return {
+            "count": self._swap_count,
+            "total_overhead_us": self._total_python_overhead_ns
+            / 1000,
+            "avg_overhead_us": (
+                self._total_python_overhead_ns
+                / 1000
+                / max(self._swap_count, 1)
+            ),
+        }
+
+    def get_swap_log(self):
+        return list(self._swap_log)
+
+    def reset_swap_stats(self):
+        self._swap_log.clear()
+        self._swap_count = 0
+        self._total_python_overhead_ns = 0
+        self._prev_sm_count = 0
 
     def close(self) -> None:
         if not self._closed:

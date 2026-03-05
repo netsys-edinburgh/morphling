@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Dict, Generator, Optional
+from typing import Dict, Generator, Optional, cast
 
 import torch
 
@@ -183,6 +183,35 @@ class GreenContextController:
 
     def switch_count(self) -> int:
         return self._backend.switch_count()
+
+    def get_swap_stats(self) -> dict[str, object]:
+        """Return swap statistics from Python layer."""
+        backend_obj: object = self._backend
+        get_stats = getattr(backend_obj, "get_swap_stats", None)
+        if callable(get_stats):
+            return {"python_layer": get_stats()}
+        return {
+            "python_layer": {
+                "count": 0,
+                "total_overhead_us": 0,
+                "avg_overhead_us": 0,
+            }
+        }
+
+    def get_swap_log(self) -> list[dict[str, int]]:
+        """Return detailed per-swap timing log."""
+        backend_obj: object = self._backend
+        get_log = getattr(backend_obj, "get_swap_log", None)
+        if callable(get_log):
+            return cast(list[dict[str, int]], get_log())
+        return []
+
+    def reset_swap_stats(self) -> None:
+        """Clear swap tracking data."""
+        backend_obj: object = self._backend
+        reset_stats = getattr(backend_obj, "reset_swap_stats", None)
+        if callable(reset_stats):
+            reset_stats()
 
     def close(self) -> None:
         """Release all resources."""

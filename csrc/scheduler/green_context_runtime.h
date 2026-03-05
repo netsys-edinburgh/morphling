@@ -4,6 +4,8 @@
 #include <cuda_runtime_api.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -70,6 +72,14 @@ struct GreenContextSlot {
   GreenContextSlot& operator=(GreenContextSlot&& other) noexcept;
   GreenContextSlot(const GreenContextSlot&) = delete;
   GreenContextSlot& operator=(const GreenContextSlot&) = delete;
+};
+
+struct SwapStats {
+  int64_t count = 0;
+  int64_t total_overhead_us = 0;
+  double avg_overhead_us() const {
+    return count > 0 ? static_cast<double>(total_overhead_us) / count : 0.0;
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -191,6 +201,8 @@ class GreenContextRuntime {
     return generation_.load(std::memory_order_relaxed);
   }
 
+  SwapStats GetAndResetSwapStats();
+
  private:
   void InitAllContexts();
   GreenContextSlot CreateContextSlot(CUdevResource* groups, int num_groups,
@@ -221,6 +233,8 @@ class GreenContextRuntime {
   // Stats
   std::atomic<uint64_t> switch_count_{0};
   std::atomic<uint64_t> generation_{0};
+  std::atomic<int64_t> swap_count_{0};
+  std::atomic<int64_t> swap_overhead_us_{0};
 
   mutable std::mutex mutex_;
 };
