@@ -5,9 +5,11 @@ import logging
 from typing import Any, cast
 
 from .nccl_functional import (
+    _PendingRecv,
     flush_all_sends,
     functional_allreduce,
     functional_recv,
+    functional_recv_async,
     functional_send,
     has_cupy_nccl,
 )
@@ -162,6 +164,41 @@ class NCCLBackend:
 
         stream_resolved = self._resolve_stream(tensor_any, stream)
         functional_recv(
+            tensor_any,
+            src_rank,
+            self.pp_nccl_comm,
+            stream_resolved,
+        )
+
+    def recv_async(
+        self,
+        tensor: object,
+        src_rank: int,
+        stream: object | None = None,
+    ) -> _PendingRecv | None:
+        """Post a non-blocking recv and return a handle.
+
+        Call ``handle.wait()`` before consuming the data.
+        Returns ``None`` when CuPy NCCL handles the recv
+        on the CUDA stream (no CPU-side wait needed).
+        """
+        if has_cupy_nccl() and self.pp_nccl_comm is None:
+            raise RuntimeError(
+                "PP communicator is not initialized."
+            )
+
+        tensor_any = cast(Any, tensor)
+        if not tensor_any.is_cuda:
+            raise ValueError(
+                "NCCL recv expects a CUDA tensor."
+            )
+        if not tensor_any.is_contiguous():
+            tensor_any = tensor_any.contiguous()
+
+        stream_resolved = self._resolve_stream(
+            tensor_any, stream
+        )
+        return functional_recv_async(
             tensor_any,
             src_rank,
             self.pp_nccl_comm,

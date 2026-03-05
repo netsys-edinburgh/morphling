@@ -441,12 +441,13 @@ def _worker_impl(
         )
 
     # ── Step 17b: Training loop ──────────────────────────
+    _perf_log = os.environ.get("ASTEROID_PERF_LOG", "")
+    _perf_log = _perf_log in ("1", "true", "yes")
     dist.barrier()
     model.train()
     t0 = time.time()
 
     for iter_num in range(cfg.training.max_iters):
-        dist.barrier()
         iter_start = time.time()
 
         # Green context: update streams for this step
@@ -492,7 +493,13 @@ def _worker_impl(
             torch.tensor(0.0)
         ] * num_micro
 
-        def _do_forward(m: int) -> None:
+        # Whether this stage needs recv for F / B ops.
+        _needs_fwd_recv = pp_prev is not None
+        _needs_bwd_recv = pp_next is not None
+
+        def _do_forward(
+            m: int, skip_recv: bool = False,
+        ) -> None:
             if is_single:
                 _fwd_single(
                     model,
@@ -531,6 +538,7 @@ def _worker_impl(
                     pp_prev,
                     comp_stream,
                     recv_stream,
+                    skip_recv=skip_recv,
                 )
                 cached[m] = out_list2[0]
             else:
@@ -546,10 +554,13 @@ def _worker_impl(
                     comp_stream,
                     recv_stream,
                     send_stream,
+                    skip_recv=skip_recv,
                 )
                 cached[m] = out_list3[0]
 
-        def _do_backward(m: int) -> None:
+        def _do_backward(
+            m: int, skip_recv: bool = False,
+        ) -> None:
             if is_single:
                 _bwd_single(cached[m], comp_stream)
             elif is_last:
@@ -571,6 +582,7 @@ def _worker_impl(
                     pp_next,
                     comp_stream,
                     recv_stream,
+                    skip_recv=skip_recv,
                 )
             else:
                 assert input_buffers is not None
@@ -585,15 +597,57 @@ def _worker_impl(
                     comp_stream,
                     recv_stream,
                     send_stream,
+                    skip_recv=skip_recv,
                 )
 
         if use_1f1b and stage_ops is not None:
             # ── 1F1B Interleaved Schedule ────────────────
-            for action, m in stage_ops:
-                if action == "F":
-                    _do_forward(m)
+            # Overlap: pre-post recv for the NEXT op while
+            # the CURRENT op's compute runs on the GPU.
+            pending_recv = None  # _PendingRecv | None
+            n_ops = len(stage_ops)
+
+            for i, (action, m) in enumerate(stage_ops):
+                # 1) Complete any pre-posted recv
+                if pending_recv is not None:
+                    pending_recv.wait()
+                    pending_recv = None
+                    skip = True
                 else:
-                    _do_backward(m)
+                    skip = False
+
+                # 2) Execute current F or B
+                if action == "F":
+                    _do_forward(m, skip_recv=skip)
+                else:
+                    _do_backward(m, skip_recv=skip)
+
+                # 3) Pre-post recv for next op (overlap)
+                if i + 1 < n_ops:
+                    na, nm = stage_ops[i + 1]
+                    if (
+                        na == "F"
+                        and _needs_fwd_recv
+                        and input_buffers is not None
+                    ):
+                        pending_recv = (
+                            nccl.recv_async(
+                                input_buffers[nm],
+                                pp_prev,
+                            )
+                        )
+                    elif (
+                        na == "B"
+                        and _needs_bwd_recv
+                        and grad_buffers is not None
+                    ):
+                        pending_recv = (
+                            nccl.recv_async(
+                                grad_buffers[nm],
+                                pp_next,
+                            )
+                        )
+
             # Drain any in-flight async sends before
             # the optimizer step / DP allreduce.
             nccl.flush_sends()
@@ -631,8 +685,24 @@ def _worker_impl(
             )
         optimizer.step()
 
+        # Local sync only — pipeline schedule + flush_sends
+        # already ensure all P2P is done.  A global barrier
+        # here serialises every rank and adds >200 ms/iter.
         torch.cuda.synchronize()
-        dist.barrier()
+
+        # ── Per-stage perf diagnostics ───────────────────
+        if _perf_log and (
+            iter_num % cfg.training.log_interval == 0
+        ):
+            iter_ms = (
+                (time.time() - iter_start) * 1000.0
+            )
+            print(
+                f"[PERF RANK {rank}] iter {iter_num}"
+                f" | stage {pp_rank}"
+                f" | total={iter_ms:.1f}ms",
+                flush=True,
+            )
 
         # Green context: deactivate for this step
         if _gc_prev_sm is not None and gc_controller:
@@ -733,12 +803,13 @@ def _fwd_last(
     pp_prev: int | None,
     comp_stream: torch.cuda.Stream,
     recv_stream: torch.cuda.Stream,
+    skip_recv: bool = False,
 ) -> None:
-    if pp_prev is not None:
+    if pp_prev is not None and not skip_recv:
         with torch.cuda.stream(recv_stream):
             nccl.recv(input_buf, pp_prev, recv_stream)
     with torch.cuda.stream(comp_stream):
-        if pp_prev is not None:
+        if pp_prev is not None and not skip_recv:
             comp_stream.wait_stream(recv_stream)
         loss = model(input_buf, micro_target)
     micro_losses.append(loss.item())
@@ -755,12 +826,13 @@ def _fwd_middle(
     comp_stream: torch.cuda.Stream,
     recv_stream: torch.cuda.Stream,
     send_stream: torch.cuda.Stream,
+    skip_recv: bool = False,
 ) -> None:
-    if pp_prev is not None:
+    if pp_prev is not None and not skip_recv:
         with torch.cuda.stream(recv_stream):
             nccl.recv(input_buf, pp_prev, recv_stream)
     with torch.cuda.stream(comp_stream):
-        if pp_prev is not None:
+        if pp_prev is not None and not skip_recv:
             comp_stream.wait_stream(recv_stream)
         out = model(input_buf)
     cached.append(out)
@@ -806,12 +878,17 @@ def _bwd_first(
     pp_next: int | None,
     comp_stream: torch.cuda.Stream,
     recv_stream: torch.cuda.Stream,
+    skip_recv: bool = False,
 ) -> None:
     if pp_next is not None:
-        with torch.cuda.stream(recv_stream):
-            nccl.recv(grad_buf, pp_next, recv_stream)
+        if not skip_recv:
+            with torch.cuda.stream(recv_stream):
+                nccl.recv(
+                    grad_buf, pp_next, recv_stream
+                )
         with torch.cuda.stream(comp_stream):
-            comp_stream.wait_stream(recv_stream)
+            if not skip_recv:
+                comp_stream.wait_stream(recv_stream)
             cached_out.backward(gradient=grad_buf)
     else:
         with torch.cuda.stream(comp_stream):
@@ -828,12 +905,17 @@ def _bwd_middle(
     comp_stream: torch.cuda.Stream,
     recv_stream: torch.cuda.Stream,
     send_stream: torch.cuda.Stream,
+    skip_recv: bool = False,
 ) -> None:
     if pp_next is not None:
-        with torch.cuda.stream(recv_stream):
-            nccl.recv(grad_buf, pp_next, recv_stream)
+        if not skip_recv:
+            with torch.cuda.stream(recv_stream):
+                nccl.recv(
+                    grad_buf, pp_next, recv_stream
+                )
         with torch.cuda.stream(comp_stream):
-            comp_stream.wait_stream(recv_stream)
+            if not skip_recv:
+                comp_stream.wait_stream(recv_stream)
             cached_out.backward(gradient=grad_buf)
     else:
         with torch.cuda.stream(comp_stream):

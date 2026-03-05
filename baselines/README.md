@@ -341,3 +341,9 @@ bash baselines/scripts/deploy_asteroid.sh deploy
 | `requirements-deploy.txt` | Runtime deps installed on remote nodes |
 | `configs/asteroid_default.yaml` | Cluster topology, model, training config |
 
+### Environment variables
+
+| Variable | Values | Purpose |
+|----------|--------|---------|
+| `ASTEROID_PERF_LOG` | `1` / `true` / `yes` | Enable per-iteration per-stage timing logs (`[PERF RANK …]`) |
+

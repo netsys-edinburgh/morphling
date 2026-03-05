@@ -213,18 +213,58 @@ def _dist_recv(
     # Gloo cannot recv into GPU tensors; use CPU buffer
     if t.is_cuda:
         cpu_buf = t.data.cpu()
-        if stream is not None:
-            with torch.cuda.stream(cast(Any, stream)):
-                dist.recv(cpu_buf, src=src_rank)
-        else:
-            dist.recv(cpu_buf, src=src_rank)
+        dist.recv(cpu_buf, src=src_rank)
         t.data.copy_(cpu_buf)
     else:
-        if stream is not None:
-            with torch.cuda.stream(cast(Any, stream)):
-                dist.recv(t, src=src_rank)
-        else:
-            dist.recv(t, src=src_rank)
+        dist.recv(t, src=src_rank)
+
+
+class _PendingRecv:
+    """Handle for a non-blocking irecv.
+
+    Call ``.wait()`` to block until the data is ready and
+    (for GPU tensors) copy the result back to the device.
+    """
+
+    __slots__ = ("_work", "_cpu_buf", "_gpu_tensor")
+
+    def __init__(
+        self,
+        work: Any,
+        cpu_buf: Any,
+        gpu_tensor: Any | None,
+    ) -> None:
+        self._work = work
+        self._cpu_buf = cpu_buf
+        self._gpu_tensor = gpu_tensor
+
+    def wait(self) -> None:
+        """Block until recv completes; copy back to GPU."""
+        self._work.wait()
+        if self._gpu_tensor is not None:
+            self._gpu_tensor.data.copy_(self._cpu_buf)
+
+
+def _dist_recv_async(
+    tensor: object,
+    src_rank: int,
+) -> _PendingRecv:
+    """Post a non-blocking ``irecv`` and return a handle.
+
+    The caller can do useful work between posting and
+    calling ``handle.wait()``.
+    """
+    _log_path_once(False)
+    dist = _import_dist()
+    t = cast(Any, tensor)
+    if t.is_cuda:
+        cpu_buf = t.data.cpu()
+        work = dist.irecv(cpu_buf, src=src_rank)
+        return _PendingRecv(work, cpu_buf, t)
+    else:
+        cpu_buf = t.clone()
+        work = dist.irecv(cpu_buf, src=src_rank)
+        return _PendingRecv(work, cpu_buf, t)
 
 
 def _dist_allreduce(
@@ -279,6 +319,26 @@ def functional_recv(
         _dist_recv(tensor, src_rank, stream)
 
 
+def functional_recv_async(
+    tensor: object,
+    src_rank: int,
+    nccl_comm: object | None = None,
+    stream: object | None = None,
+) -> _PendingRecv | None:
+    """Post a non-blocking recv.
+
+    Returns a ``_PendingRecv`` handle when using the
+    torch.distributed fallback (call ``.wait()`` to
+    complete).  Returns ``None`` when using CuPy NCCL
+    because the operation runs asynchronously on the
+    CUDA stream and no CPU-side handle is needed.
+    """
+    if _has_cupy and nccl_comm is not None:
+        _nccl_recv(tensor, src_rank, nccl_comm, stream)
+        return None
+    return _dist_recv_async(tensor, src_rank)
+
+
 def functional_allreduce(
     tensor: object,
     nccl_comm: object | None = None,
@@ -299,7 +359,8 @@ def has_cupy_nccl() -> bool:
 __all__ = [
     "functional_send",
     "functional_recv",
-    "functional_allreduce",
+    "functional_recv_async",
     "flush_all_sends",
     "has_cupy_nccl",
+    "_PendingRecv",
 ]

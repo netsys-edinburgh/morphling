@@ -177,6 +177,8 @@ def profile_layer(
 def measure_tcp_bandwidth_iperf(
     peer: str,
     duration: int = 5,
+    retries: int = 3,
+    retry_delay: float = 2.0,
 ) -> dict[str, Any]:
     host, port = _split_peer(peer)
     if not host:
@@ -200,68 +202,69 @@ def measure_tcp_bandwidth_iperf(
         "1",
     ]
 
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=duration + 10,
-            check=False,
-        )
-    except FileNotFoundError:
-        return {
-            "ok": False,
-            "method": "iperf3",
-            "peer": peer,
-            "error": "iperf3 not installed",
-        }
-    except Exception as exc:
-        return {
-            "ok": False,
-            "method": "iperf3",
-            "peer": peer,
-            "error": str(exc),
-        }
+    last_error = "unknown"
+    for attempt in range(retries):
+        if attempt > 0:
+            time.sleep(retry_delay)
 
-    if proc.returncode != 0:
-        err = proc.stderr.strip() or proc.stdout.strip() or "iperf3 failed"
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=duration + 10,
+                check=False,
+            )
+        except FileNotFoundError:
+            return {
+                "ok": False,
+                "method": "iperf3",
+                "peer": peer,
+                "error": "iperf3 not installed",
+            }
+        except Exception as exc:
+            last_error = str(exc)
+            continue
+
+        if proc.returncode != 0:
+            last_error = (
+                proc.stderr.strip()
+                or proc.stdout.strip()
+                or "iperf3 failed"
+            )
+            continue
+
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            last_error = f"bad iperf3 json: {exc}"
+            continue
+
+        end = data.get("end", {})
+        recv = end.get("sum_received", {})
+        sent = end.get("sum_sent", {})
+        bps = recv.get("bits_per_second")
+        if bps is None:
+            bps = sent.get("bits_per_second")
+
+        if bps is None:
+            last_error = "missing bits_per_second"
+            continue
+
         return {
-            "ok": False,
+            "ok": True,
             "method": "iperf3",
             "peer": peer,
-            "error": err,
-        }
-
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {
-            "ok": False,
-            "method": "iperf3",
-            "peer": peer,
-            "error": f"bad iperf3 json: {exc}",
-        }
-
-    end = data.get("end", {})
-    recv = end.get("sum_received", {})
-    sent = end.get("sum_sent", {})
-    bps = recv.get("bits_per_second")
-    if bps is None:
-        bps = sent.get("bits_per_second")
-
-    if bps is None:
-        return {
-            "ok": False,
-            "method": "iperf3",
-            "peer": peer,
-            "error": "missing bits_per_second",
+            "bandwidth_mbps": float(bps) / 1e6,
+            "attempts": attempt + 1,
         }
 
     return {
-        "ok": True,
+        "ok": False,
         "method": "iperf3",
         "peer": peer,
-        "bandwidth_mbps": float(bps) / 1e6,
+        "error": last_error,
+        "attempts": retries,
     }
 
 
