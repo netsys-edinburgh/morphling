@@ -12,12 +12,14 @@ _LOGGER = logging.getLogger(__name__)
 class ModelConfig:
     """Model configuration for memory estimation.
 
-    Matches the Confident Java implementation's config structure.
+    Matches the Confident Java implementation's config structure,
+    extended with GQA (Grouped Query Attention) support.
     """
 
     hidden_size: int = 4096  # h
     vocab_size: int = 50257  # v
-    num_attention_heads: int = 32  # a
+    num_attention_heads: int = 32  # a (query heads)
+    num_kv_heads: int = 32  # kv (key/value heads, for GQA: kv < a)
     intermediate_size: int = 11008  # hff (d_ff)
     max_seq_len: int = 512  # s
     batch_size: int = 2  # b (micro-batch size)
@@ -198,12 +200,17 @@ class DPPartitioner:
     ) -> float:
         """Estimate memory usage in GB for a pipeline stage.
 
-        Port of Java DynamicScheduler.estimateMemory() from Confidant.
+        Port of Java DynamicScheduler.estimateMemory() from Confidant,
+        extended with GQA (Grouped Query Attention) support.
+
         Accounts for:
           m1: Model weights (embedding + transformer blocks + output head)
           m2: Optimizer states (AdamW: 4× for params + grads + m + v)
           m3: Activations (attention + FFN intermediates)
           m4: Optimizer replication for fault tolerance
+
+        GQA adjustment: When num_kv_heads < num_attention_heads, K and V
+        projections are smaller, reducing both weights and KV cache memory.
 
         Args:
             num_sublayers: Number of transformer layers in this stage.
@@ -221,11 +228,15 @@ class DPPartitioner:
         cfg = self.model_config
         h = float(cfg.hidden_size)
         v = float(cfg.vocab_size)
-        a = float(cfg.num_attention_heads)
+        a = float(cfg.num_attention_heads)  # query heads
+        kv = float(cfg.num_kv_heads)  # key/value heads (GQA)
         hff = float(cfg.intermediate_size)
         s = float(cfg.max_seq_len)
         b = float(cfg.batch_size)
         sublayer = float(num_sublayers)
+
+        # GQA ratio: kv/a (1.0 for MHA, <1.0 for GQA)
+        gqa_ratio = kv / a if a > 0 else 1.0
 
         # node = devices "before" this one (for FT replication)
         node = float(device_idx)
@@ -239,32 +250,44 @@ class DPPartitioner:
 
         # m1: Model weights (fp32 = 4 bytes)
         # - Embedding: h × v
-        # - Transformer: (10h² + 12h) per layer
-        #   10h² = Q,K,V,O projections (4 × h²) + FFN up/down (2 × h × hff ≈ 6h²)
-        #   12h = biases and layer norms
-        # - Output head: 2h (lm_head projection)
+        # - Attention per layer:
+        #   * Q projection: h × h
+        #   * K projection: h × (h × kv/a) — GQA reduces this
+        #   * V projection: h × (h × kv/a) — GQA reduces this
+        #   * O projection: h × h
+        #   Total attention = h² × (2 + 2×kv/a) = 2h²(1 + kv/a)
+        # - FFN per layer: 2 × h × hff (up + down projections)
+        # - Biases/LayerNorm: ~12h per layer
+        # - Output head: h × v (tied with embedding typically)
+        attn_params = 2 * h * h * (1 + gqa_ratio)  # 4h² for MHA, less for GQA
+        ffn_params = 2 * h * hff
+        transformer_params = attn_params + ffn_params + 12 * h
+
         m1 = (
             embedding * h * v
-            + (10 * h * h + 12 * h) * sublayer
-            + end_head * 2 * h
+            + transformer_params * sublayer
+            + end_head * h * v  # lm_head often tied with embedding
         ) * 4 * bytes_to_gb
 
         # m2: Optimizer (AdamW) + gradients
         # - params × 4 (param + grad + momentum + variance)
-        m2 = (10 * h * h + 12 * h) * sublayer * 4 * 4 * bytes_to_gb
+        m2 = transformer_params * sublayer * 4 * 4 * bytes_to_gb
 
         # m3: Activations (mixed precision typical)
-        # - 16 × s × b × h: attention Q,K,V,O outputs
-        # - 8 × s × b × hff: FFN intermediates
-        # - a × s² × b: attention scores (per head)
-        m3 = (
-            sublayer
-            * (16 * s * b * h + 8 * s * b * hff + a * s * s * b)
-            * bytes_to_gb
-        )
+        # - Q output: s × b × h
+        # - K cache: s × b × h × (kv/a) — GQA reduces this
+        # - V cache: s × b × h × (kv/a) — GQA reduces this
+        # - Attention output: s × b × h
+        # - Attention scores: a × s² × b (still full query heads)
+        # - FFN intermediates: 2 × s × b × hff (up projection + activation)
+        attn_act = s * b * h * (2 + 2 * gqa_ratio)  # Q,K,V,O outputs
+        attn_scores = a * s * s * b  # attention matrix per query head
+        ffn_act = 2 * s * b * hff  # FFN intermediates
+
+        m3 = sublayer * (attn_act + attn_scores + ffn_act) * bytes_to_gb
 
         # m4: Fault tolerance - optimizer replication across nodes
-        m4 = node * (10 * h * h + 12 * h) * sublayer * 4 * bytes_to_gb
+        m4 = node * transformer_params * sublayer * 4 * bytes_to_gb
 
         return m1 + m2 + m3 + m4
 
