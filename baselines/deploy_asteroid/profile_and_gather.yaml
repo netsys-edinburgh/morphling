@@ -384,6 +384,7 @@
         --rank {{ rank | default(groups['cluster'].index(inventory_hostname)) }}
         --network-peers "{{ network_peers }}"
         --network-only
+        --strict-iperf
       register: net_result
       become: true
       become_user: "{{ ansible_user }}"

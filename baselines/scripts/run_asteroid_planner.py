@@ -151,7 +151,15 @@ class _ProfileDataAdapter(ProfilerBackend):
         dst_device: object,
         data_size_mb: float,
     ) -> float:
-        return 1000.0
+        # This method is not used in the
+        # planning path — get_bandwidth() is
+        # called instead.  Raise so we catch
+        # any unexpected caller.
+        raise NotImplementedError(
+            "profile_bandwidth() should not be "
+            "called; use get_bandwidth() with "
+            "real iperf3 data."
+        )
 
     def get_memory_info(
         self, device: object,
@@ -192,7 +200,13 @@ class _ProfileDataAdapter(ProfilerBackend):
         #   output_size_MB / bw_MB_per_ms = ms
         # Profile stores Mbps; convert:
         #   Mbps → MB/s (÷8) → MB/ms (÷1000)
-        mbps = self._bw.get(device_id, 1000.0)
+        if device_id not in self._bw:
+            raise RuntimeError(
+                f"No iperf3 bandwidth data for "
+                f"rank {device_id}. Re-run "
+                f"profiling with --strict-iperf."
+            )
+        mbps = self._bw[device_id]
         return mbps / 8000.0
 
     def get_computing_capacity(
@@ -292,26 +306,40 @@ def _build_strategy_plan(
                 latencies[
                     (int(rank), dst)
                 ] = 0.1
-    # Fill missing links with defaults.
-    # Use the average of successful bandwidth
-    # measurements instead of 100 Mbps so failed
-    # iperf tests don't artificially dominate the
-    # communication cost model.
-    measured = [
-        v for v in bandwidths.values()
-        if v > 0
-    ]
-    default_bw = (
-        sum(measured) / len(measured)
-        if measured
-        else 10000.0
-    )
+    # Validate all inter-rank links have measured
+    # bandwidth.  Reject fallback / default values
+    # so the planner uses only real iperf3 data.
+    missing_links: List[Tuple[int, int]] = []
+    for i in range(world_size):
+        for j in range(world_size):
+            if i != j and (i, j) not in bandwidths:
+                missing_links.append((i, j))
+    if missing_links:
+        print(
+            f"\n  ERROR: {len(missing_links)} "
+            f"inter-rank bandwidth link(s) have "
+            f"no iperf3 data:",
+            file=sys.stderr,
+        )
+        for src, dst in sorted(missing_links):
+            print(
+                f"    rank {src} -> rank {dst}: "
+                f"NO DATA",
+                file=sys.stderr,
+            )
+        print(
+            "\n  Re-run profiling phase to fix."
+            "  Ensure iperf3 server is running "
+            "on all nodes before profiling.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # All links present — fill latencies for any
+    # that only have bandwidth.
     for i in range(world_size):
         for j in range(world_size):
             if i != j:
-                bandwidths.setdefault(
-                    (i, j), default_bw
-                )
                 latencies.setdefault(
                     (i, j), 0.1
                 )

@@ -329,10 +329,24 @@ def measure_tcp_bandwidth_socket(
                 pass
 
 
-def measure_network_bandwidth(peer: str) -> dict[str, Any]:
+def measure_network_bandwidth(
+    peer: str,
+    strict_iperf: bool = False,
+) -> dict[str, Any]:
     iperf_result = measure_tcp_bandwidth_iperf(peer)
     if iperf_result.get("ok"):
         return iperf_result
+
+    if strict_iperf:
+        # No fallback — iperf3 must succeed
+        return {
+            "ok": False,
+            "method": "iperf3",
+            "peer": peer,
+            "error": iperf_result.get(
+                "error", "iperf3 failed"
+            ),
+        }
 
     socket_result = measure_tcp_bandwidth_socket(peer)
     if socket_result.get("ok"):
@@ -406,14 +420,23 @@ def profile_all_layers(
     return results
 
 
-def profile_network_peers(peers: str) -> dict[str, Any]:
-    peer_list = [peer.strip() for peer in peers.split(",") if peer.strip()]
+def profile_network_peers(
+    peers: str,
+    strict_iperf: bool = False,
+) -> dict[str, Any]:
+    peer_list = [
+        peer.strip()
+        for peer in peers.split(",")
+        if peer.strip()
+    ]
     if not peer_list:
         return {}
 
     results: dict[str, Any] = {}
     for peer in peer_list:
-        results[peer] = measure_network_bandwidth(peer)
+        results[peer] = measure_network_bandwidth(
+            peer, strict_iperf=strict_iperf,
+        )
     return results
 
 
@@ -421,6 +444,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Profile a BASELINES node")
     parser.add_argument("--output-dir", type=str, required=True)
     parser.add_argument("--rank", type=int, required=True)
+    parser.add_argument(
+        "--strict-iperf",
+        action="store_true",
+        default=False,
+        help=(
+            "Require iperf3 for all network "
+            "measurements (no socket fallback)"
+        ),
+    )
     parser.add_argument("--num-layers", type=int, default=12)
     parser.add_argument("--embed-dim", type=int, default=768)
     parser.add_argument("--num-heads", type=int, default=12)
@@ -461,7 +493,8 @@ def main() -> int:
     if args.network_only:
         print("Network-only mode: measuring peers...")
         network_profile = profile_network_peers(
-            args.network_peers
+            args.network_peers,
+            strict_iperf=args.strict_iperf,
         )
         payload: dict[str, Any] = {}
         if output_path.exists():
@@ -488,7 +521,8 @@ def main() -> int:
     network_profile: dict[str, Any] = {}
     if not args.skip_network:
         network_profile = profile_network_peers(
-            args.network_peers
+            args.network_peers,
+            strict_iperf=args.strict_iperf,
         )
 
     payload = {

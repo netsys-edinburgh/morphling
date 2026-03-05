@@ -633,13 +633,16 @@ PYEOF
 phase_gpu() {
   header "Phase 2: GPU & NVIDIA Runtime Setup"
 
-  # Check if NVIDIA device plugin is already running
+  # Check if NVIDIA device plugin is already running on ALL nodes
   if kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds --no-headers 2>/dev/null | grep -q Running; then
-    local gpu_count
+    local gpu_count node_count
     gpu_count=$(kubectl get nodes -o jsonpath='{range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}' 2>/dev/null | grep -c "1" || true)
-    if [[ "$gpu_count" -gt 0 ]]; then
-      log "NVIDIA device plugin running, ${gpu_count} GPU(s) available"
+    node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+    if [[ "$gpu_count" -ge "$node_count" && "$gpu_count" -gt 0 ]]; then
+      log "NVIDIA device plugin running, ${gpu_count}/${node_count} GPU(s) available"
       return 0
+    else
+      info "Only ${gpu_count}/${node_count} nodes have GPUs — running GPU setup for missing nodes..."
     fi
   fi
 
@@ -699,9 +702,46 @@ phase_gpu() {
     --timeout=180s || true
   sleep 10
 
-  # Step 6: Verify GPUs
+  # Step 6: Verify GPUs — bounce device-plugin pods on nodes still missing GPUs
   info "Checking GPU resources..."
   kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:.status.allocatable."nvidia\.com/gpu"
+
+  local missing_gpu_nodes
+  missing_gpu_nodes=$(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}' 2>/dev/null \
+    | grep -v '=1' | cut -d= -f1 | grep -v '^$' || true)
+
+  if [[ -n "$missing_gpu_nodes" ]]; then
+    info "Nodes still missing GPU resources: ${missing_gpu_nodes}"
+    info "Restarting k3s-agent on affected nodes and bouncing device-plugin pods..."
+
+    for node in $missing_gpu_nodes; do
+      # Restart k3s-agent via Ansible
+      run_ansible_adhoc "${node}" -m systemd -a "name=k3s-agent state=restarted" --become 2>/dev/null || \
+        run_ansible_adhoc "${node}" -m systemd -a "name=k3s state=restarted" --become 2>/dev/null || true
+    done
+
+    info "Waiting for nodes to rejoin..."
+    sleep 20
+
+    for node in $missing_gpu_nodes; do
+      kubectl delete pod -n kube-system -l name=nvidia-device-plugin-ds --field-selector "spec.nodeName=${node}" 2>/dev/null || true
+    done
+
+    info "Waiting for device plugin pods to restart..."
+    sleep 30
+
+    # Final verification
+    local final_gpu_count node_count
+    final_gpu_count=$(kubectl get nodes -o jsonpath='{range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}' 2>/dev/null | grep -c "1" || true)
+    node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+    kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:.status.allocatable."nvidia\.com/gpu"
+
+    if [[ "$final_gpu_count" -lt "$node_count" ]]; then
+      warn "Only ${final_gpu_count}/${node_count} nodes have GPUs after remediation"
+    else
+      log "All ${final_gpu_count}/${node_count} nodes now have GPUs"
+    fi
+  fi
 
   log "GPU setup complete"
 }
@@ -725,6 +765,61 @@ phase_profile() {
 
   profile_count=$(find "${PROFILES_DIR}" -name "profile_*.json" 2>/dev/null | wc -l)
   log "Profiling complete: ${profile_count} profile(s) collected"
+
+  # Validate every profile has successful iperf3 measurements.
+  # If any network entry uses a fallback method or has ok=false,
+  # the deployment must stop — no fallback values allowed.
+  info "Validating iperf3 results in all profiles..."
+  if ! "${VENV_DIR}/bin/python" - "${PROFILES_DIR}" <<'PYEOF'
+import json, sys, glob, os
+
+profiles_dir = sys.argv[1]
+files = sorted(glob.glob(os.path.join(profiles_dir, "profile_*.json")))
+if not files:
+    print("ERROR: No profile files found in", profiles_dir, file=sys.stderr)
+    sys.exit(1)
+
+all_ok = True
+for fpath in files:
+    fname = os.path.basename(fpath)
+    with open(fpath) as f:
+        data = json.load(f)
+    net = data.get("network", {})
+    if not net:
+        print(f"  FAIL  {fname}: no network data at all", file=sys.stderr)
+        all_ok = False
+        continue
+    for peer, result in net.items():
+        method = result.get("method", "unknown")
+        ok = result.get("ok", False)
+        if not ok or method != "iperf3":
+            bw = result.get("bandwidth_mbps", "N/A")
+            err_msg = result.get("error", "")
+            print(
+                f"  FAIL  {fname}: peer {peer} "
+                f"method={method} ok={ok} "
+                f"bw={bw} err={err_msg}",
+                file=sys.stderr,
+            )
+            all_ok = False
+
+if all_ok:
+    print("All profiles have valid iperf3 measurements.")
+    sys.exit(0)
+else:
+    print(
+        "\nERROR: Some network links do not have "
+        "successful iperf3 measurements.\n"
+        "Fix iperf3 connectivity and re-run. "
+        "Deployment cannot proceed with fallback values.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PYEOF
+  then
+    err "iperf3 validation failed — aborting deployment"
+    exit 1
+  fi
 }
 
 phase_plan() {
@@ -859,6 +954,7 @@ phase_manifests() {
   info "Generating manifests from HPP plan (image: ${manifest_image})..."
   "${VENV_DIR}/bin/python" "${DEPLOY_DIR}/generate_manifests.py" \
     --plan "${PLAN_FILE}" \
+    --config "${ASTEROID_CONFIG}" \
     --image "${manifest_image}" \
     --namespace "${NAMESPACE}" \
     --master-port "${MASTER_PORT}" \
