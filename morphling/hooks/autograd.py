@@ -1,5 +1,6 @@
 import functools
-from typing import List, Union
+import time
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -10,6 +11,10 @@ from morphling.common import get_logger
 logger = get_logger()
 _backend: BaseBackend = None
 _enable_verification = False
+_greenctx: Any = None
+_gemm_log: List[Dict[str, Any]] = []
+_greenctx_t0: float = 0.0
+_gemm_idx: int = 0
 
 HOOK_TYPES = [
     "linear",
@@ -25,7 +30,79 @@ HOOK_TYPES = [
 ]
 
 
-def apply_hooks(types: Union[str, List[str]]):
+def _reset_gemm_log() -> None:
+    global _gemm_log
+    global _greenctx_t0
+    global _gemm_idx
+
+    _gemm_log = []
+    _greenctx_t0 = 0.0
+    _gemm_idx = 0
+
+
+def _elapsed_us() -> float:
+    global _greenctx_t0
+
+    now_s = time.perf_counter()
+    if _greenctx_t0 == 0.0:
+        _greenctx_t0 = now_s
+        return 0.0
+    return (now_s - _greenctx_t0) * 1_000_000.0
+
+
+def _log_gemm(
+    gemm_idx: int,
+    phase: str,
+    start_us: float,
+    end_us: float,
+    sm_count: Optional[int],
+) -> None:
+    duration_us = end_us - start_us
+    _gemm_log.append(
+        {
+            "gemm_idx": gemm_idx,
+            "phase": phase,
+            "start_us": start_us,
+            "end_us": end_us,
+            "duration_us": duration_us,
+            "sm_count": sm_count,
+            "greenctx_enabled": _greenctx is not None,
+        }
+    )
+    logger.debug(
+        "GEMM log idx=%s phase=%s duration_us=%.3f sm_count=%s",
+        gemm_idx,
+        phase,
+        duration_us,
+        sm_count,
+    )
+
+
+def set_greenctx(greenctx: Any = None, reset_log: bool = True) -> None:
+    global _greenctx
+
+    _greenctx = greenctx
+    if _greenctx is not None and not hasattr(_greenctx, "deactivate"):
+        backend = getattr(_greenctx, "backend", None)
+        if backend is None:
+            backend = getattr(_greenctx, "_backend", None)
+        deactivate_fn = getattr(backend, "deactivate", None)
+        if callable(deactivate_fn):
+            setattr(_greenctx, "deactivate", deactivate_fn)
+    if reset_log:
+        _reset_gemm_log()
+
+
+def get_gemm_log(reset: bool = False) -> List[Dict[str, Any]]:
+    log = list(_gemm_log)
+    if reset:
+        _reset_gemm_log()
+    return log
+
+
+def apply_hooks(types: Union[str, List[str]], greenctx: Any = None):
+    set_greenctx(greenctx)
+
     if isinstance(types, str):
         types = [types]
     for t in types:
@@ -59,6 +136,8 @@ class LinearFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, input, weight, bias=None):
+        global _gemm_idx
+
         print("LinearFunction forward", input.shape, weight.shape)
         ctx.save_for_backward(input, weight, bias)
         # output = input.mm(weight.t())
@@ -67,8 +146,38 @@ class LinearFunction(torch.autograd.Function):
         # output = torch.as_tensor(np.matmul(input, weight))
 
         # FIXME: this only applies to mqtt backend
-        _backend.async_dispatch_matmul(input, weight.transpose(-2, -1))
+        start_us: Optional[float] = None
+        sm_count: Optional[int] = None
+        gemm_idx: Optional[int] = None
+        if _greenctx is not None:
+            start_us = _elapsed_us()
+            activated_sm_count = None
+            try:
+                sm_count, _ = _greenctx.activate_for_time(int(start_us))
+                activated_sm_count = sm_count
+                _backend.async_dispatch_matmul(
+                    input, weight.transpose(-2, -1)
+                )
+            finally:
+                if activated_sm_count is not None:
+                    _greenctx.deactivate(activated_sm_count)
+            gemm_idx = _gemm_idx
+            _gemm_idx += 1
+        else:
+            _backend.async_dispatch_matmul(input, weight.transpose(-2, -1))
         output = _backend.wait_matmul(0)
+        if (
+            _greenctx is not None
+            and start_us is not None
+            and gemm_idx is not None
+        ):
+            _log_gemm(
+                gemm_idx,
+                "forward",
+                start_us,
+                _elapsed_us(),
+                sm_count,
+            )
         # ref = torch.matmul(input.to("cuda:0"), weight.to("cuda:0")).to("cpu")
         # validate output
         # assert torch.allclose(output, ref), f"Output is not close! input shape: {input.shape}, weight shape: {weight.shape}, max diff: {torch.max(torch.abs(output - ref))}"
@@ -88,6 +197,8 @@ class LinearFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
+        global _gemm_idx
+
         input, weight, bias = ctx.saved_tensors
         print(
             "LinearFunction backward",
@@ -96,6 +207,12 @@ class LinearFunction(torch.autograd.Function):
             input.shape,
         )
         grad_input = grad_weight = grad_bias = None
+        grad_input_start_us: Optional[float] = None
+        grad_input_sm_count: Optional[int] = None
+        grad_input_gemm_idx: Optional[int] = None
+        grad_weight_start_us: Optional[float] = None
+        grad_weight_sm_count: Optional[int] = None
+        grad_weight_gemm_idx: Optional[int] = None
         if ctx.needs_input_grad[0]:
             # grad_input = grad_output.mm(weight)
             # grad_input = torch.as_tensor(
@@ -104,7 +221,22 @@ class LinearFunction(torch.autograd.Function):
             # grad_input = _backend.sync_dispatch_matmul(
             #     grad_output, weight.transpose(-2, -1)
             # )
-            _backend.async_dispatch_matmul(grad_output, weight)
+            if _greenctx is not None:
+                grad_input_start_us = _elapsed_us()
+                activated_sm_count = None
+                try:
+                    grad_input_sm_count, _ = _greenctx.activate_for_time(
+                        int(grad_input_start_us)
+                    )
+                    activated_sm_count = grad_input_sm_count
+                    _backend.async_dispatch_matmul(grad_output, weight)
+                finally:
+                    if activated_sm_count is not None:
+                        _greenctx.deactivate(activated_sm_count)
+                grad_input_gemm_idx = _gemm_idx
+                _gemm_idx += 1
+            else:
+                _backend.async_dispatch_matmul(grad_output, weight)
         if ctx.needs_input_grad[1]:
             # grad_weight = grad_output.t().mm(input)
             # grad_weight = torch.as_tensor(
@@ -113,18 +245,59 @@ class LinearFunction(torch.autograd.Function):
             # grad_weight = _backend.sync_dispatch_matmul(
             #     grad_output.transpose(-2, -1), input
             # ).transpose(-2, -1)
-            _backend.async_dispatch_matmul(
-                grad_output.transpose(-2, -1), input.transpose(-2, -1)
-            )
+            if _greenctx is not None:
+                grad_weight_start_us = _elapsed_us()
+                activated_sm_count = None
+                try:
+                    grad_weight_sm_count, _ = _greenctx.activate_for_time(
+                        int(grad_weight_start_us)
+                    )
+                    activated_sm_count = grad_weight_sm_count
+                    _backend.async_dispatch_matmul(
+                        grad_output.transpose(-2, -1),
+                        input.transpose(-2, -1),
+                    )
+                finally:
+                    if activated_sm_count is not None:
+                        _greenctx.deactivate(activated_sm_count)
+                grad_weight_gemm_idx = _gemm_idx
+                _gemm_idx += 1
+            else:
+                _backend.async_dispatch_matmul(
+                    grad_output.transpose(-2, -1),
+                    input.transpose(-2, -1),
+                )
 
         dispatch_count = 0
         if ctx.needs_input_grad[0]:
             grad_input = _backend.wait_matmul(dispatch_count)
             dispatch_count += 1
+            if (
+                grad_input_start_us is not None
+                and grad_input_gemm_idx is not None
+            ):
+                _log_gemm(
+                    grad_input_gemm_idx,
+                    "backward_grad_input",
+                    grad_input_start_us,
+                    _elapsed_us(),
+                    grad_input_sm_count,
+                )
 
         if ctx.needs_input_grad[1]:
             grad_weight = _backend.wait_matmul(dispatch_count).transpose(-2, -1)
             dispatch_count += 1
+            if (
+                grad_weight_start_us is not None
+                and grad_weight_gemm_idx is not None
+            ):
+                _log_gemm(
+                    grad_weight_gemm_idx,
+                    "backward_grad_weight",
+                    grad_weight_start_us,
+                    _elapsed_us(),
+                    grad_weight_sm_count,
+                )
 
         if bias is not None and ctx.needs_input_grad[2]:
             grad_bias = grad_output.sum(0)

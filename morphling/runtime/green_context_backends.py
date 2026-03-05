@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import warnings
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Protocol, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import torch
 import torch.cuda
@@ -78,6 +78,12 @@ class GreenCtxBackend(Protocol):
         """Returns (sm_count, generation)."""
         ...
 
+    def activate_for_time(
+        self, elapsed_us: int
+    ) -> Tuple[int, int]:
+        """Returns (sm_count, generation)."""
+        ...
+
     def deactivate(self, prev_sm_count: int) -> None:
         ...
 
@@ -113,7 +119,9 @@ class CppBackend:
         strict: bool = False,
         switch_sync: str = "event_chain",
     ):
-        from morphling._GreenCtx import create_runtime
+        from morphling._GreenCtx import (  # pyright: ignore[reportMissingImports]
+            create_runtime,
+        )
 
         self._rt = create_runtime(
             gpu_id=gpu_id,
@@ -171,6 +179,13 @@ class CppBackend:
         self, step_or_time: int
     ) -> Tuple[int, int]:
         sm = self._rt.sm_count_at_step(step_or_time)
+        prev = self._rt.activate_sm_for_thread(sm)
+        return sm, self._rt.generation()
+
+    def activate_for_time(
+        self, elapsed_us: int
+    ) -> Tuple[int, int]:
+        sm = self._rt.sm_count_at_time(elapsed_us)
         prev = self._rt.activate_sm_for_thread(sm)
         return sm, self._rt.generation()
 
@@ -337,9 +352,9 @@ class TorchNativeBackend:
         self._closed = False
         self._switch_count = 0
         self._generation = 0
-        self._active_gc = None
+        self._active_gc: Optional[Any] = None
         self._active_sm = 0
-        self._contexts: Dict[int, object] = {}
+        self._contexts: Dict[int, Any] = {}
         self._stream_cache: Dict[
             Tuple[int, str], torch.cuda.Stream
         ] = {}
@@ -511,6 +526,47 @@ class TorchNativeBackend:
 
         return sm, self._generation
 
+    def activate_for_time(
+        self, elapsed_us: int
+    ) -> Tuple[int, int]:
+        # Determine target SM count from trace
+        if self._trace_entries:
+            sm = _sm_count_at_time(
+                self._trace_entries,
+                elapsed_us,
+                self._trace_time_unit,
+                self._partition_sm,
+            )
+            # Snap to nearest available
+            sm = min(
+                self._sm_counts,
+                key=lambda x: abs(x - sm),
+            )
+        else:
+            sm = self._partition_sm
+
+        # Pop current context if different
+        if (
+            self._active_gc is not None
+            and self._active_sm != sm
+        ):
+            self._active_gc.pop_context()
+            self._active_gc = None
+            self._switch_count += 1
+            self._generation += 1
+
+        # Push new context if needed
+        gc = self._contexts.get(sm)
+        if gc is not None and self._active_gc is None:
+            gc.set_context()
+            self._active_gc = gc
+            self._active_sm = sm
+            if self._switch_count == 0:
+                self._switch_count = 1
+                self._generation = 1
+
+        return sm, self._generation
+
     def deactivate(self, prev_sm_count: int) -> None:
         if self._active_gc is not None:
             self._active_gc.pop_context()
@@ -622,6 +678,11 @@ class OffBackend:
 
     def activate_for_step(
         self, step_or_time: int
+    ) -> Tuple[int, int]:
+        return 0, 0
+
+    def activate_for_time(
+        self, elapsed_us: int
     ) -> Tuple[int, int]:
         return 0, 0
 
