@@ -7,8 +7,11 @@ After=network.target
 Type=simple
 # Kill any stale iperf3 processes hogging port 5201 before starting
 ExecStartPre=/bin/sh -c 'fuser -k 5201/tcp 2>/dev/null; sleep 1; true'
-ExecStart=/usr/bin/iperf3 -s -p 5201
-# Always restart — iperf3 -s exits on client errors, SIGINT, etc.
+# Run in --one-off mode inside a loop: each client gets a FRESH server
+# process.  Without this, iperf3 -s gets stuck in "busy" state after
+# client disconnects/timeouts (known iperf3 bug).
+ExecStart=/bin/sh -c 'while true; do /usr/bin/iperf3 -s -p 5201 --one-off 2>/dev/null; sleep 1; done'
+# Always restart — the outer loop should never exit, but just in case
 Restart=always
 RestartSec=2
 # Prevent systemd from stopping restarts after too many failures

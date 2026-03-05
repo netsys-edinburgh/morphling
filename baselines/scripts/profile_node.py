@@ -223,6 +223,8 @@ def measure_tcp_bandwidth_iperf(
         str(duration),
         "-P",
         "1",
+        "--connect-timeout",
+        "5000",
     ]
 
     last_error = "unknown"
