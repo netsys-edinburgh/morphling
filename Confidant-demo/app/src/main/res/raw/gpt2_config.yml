@@ -1,0 +1,50 @@
+#Config File example
+save_dir: logfile/gpt2
+model_name: GPT2
+model_args:
+  total_layer: 27.0 # 27.0 # 15.0
+#  total_layer: 5.0
+#  total_layer: 3.0
+  hidden_size: 1024.0 # 1024.0 # 768.0
+#  hidden_size: 768.0 # 1024.0 # 768.0
+  vocab_size: 50257.0
+#  num_hidden_layers: 2.0
+#  num_hidden_layers: 4.0
+  num_hidden_layers: 24.0
+  max_position_embeddings: 1024.0
+  attention_dropout_prob: 0.0
+  hidden_dropout_prob: 0.0
+  num_attention_heads: 16.0 # 16.0 # 12.0
+#  intermediate_size: 2048.0
+  intermediate_size: 3072.0
+  max_seq_len: 256.0
+  parallel_size : 1.0
+data:
+  name: SQuAD
+  path: /
+  batch_size: 1
+  input_size: [3, 256, 256]
+schedule:
+  #  resume:
+  #  load_model: YOUR_MODEL_PATH
+  opt_name: ADAMW
+  opt_args:
+    lr: 0.00002 #0.1
+  #    momentum: 0.9
+  #    weight_decay: 0.00004 #0.00004
+  warmup:
+    name: linear
+    steps: 0 # 300
+    ratio: 0.1
+  total_epochs: 300
+  lr_schedule:
+    name: MultiStepLR
+    milestones: [ 130,160,175,185 ] # [ 130,160,175,185 ]
+    gamma: 0.1
+  # lr_schedule:
+  #   name: ExponentialLR
+  #   gamma: 0.98
+  val_intervals: 100 #100
+log:
+  interval: 10
+weight_aggregation_interval: -1

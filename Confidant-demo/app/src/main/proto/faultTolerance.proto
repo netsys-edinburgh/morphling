@@ -1,0 +1,89 @@
+syntax = "proto3";
+import "worker.proto";
+
+option java_multiple_files = true;
+option java_package = "com.example.confidant.rpc.api";
+option java_outer_classname = "FaultToleranceProto";
+option objc_class_prefix = "FaultTolerance";
+
+package faulttolerance;
+
+service FaultToleranceGreeter {
+    rpc RestartSyncState (RestartSyncStateRequest) returns (trainworker.CommonResponse) {}
+    rpc WeightsRedistribute (WeightsRedistributeRequest) returns (trainworker.CommonResponse) {}
+    rpc CommitFaultSync (CommitFaultSyncRequest) returns (trainworker.CommonResponse) {}
+    rpc WeightsReplication (WeightsReplicationRequest) returns (trainworker.CommonResponse) {}
+    rpc PassiveCommitFinish(trainworker.EmptyRequest) returns (trainworker.CommonResponse) {}
+    rpc ParamsFromRemote(ParamsFromRemoteRequest) returns (TensorResponse) {}
+    rpc PassiveRedistributionFinish(PassiveRedistributionFinishRequest) returns (trainworker.CommonResponse) {}
+
+    // Proactive FT
+    rpc WorkerExit(WorkerExitRequest) returns (trainworker.CommonResponse) {}
+    rpc DCInfo(trainworker.EmptyRequest) returns (DcInfoResponse) {}
+    rpc NotifySubstituteDevice(NotifySubstituteDeviceRequest) returns (trainworker.CommonResponse) {}
+    rpc WeightsFromQuitDevice(trainworker.EmptyRequest) returns (TensorResponse) {}
+    rpc NotifyCentralFetchFinish(trainworker.EmptyRequest) returns (trainworker.CommonResponse) {}
+    rpc ProactiveFTUpdateWorkers(ProactiveFTUpdateWorkersRequest) returns (trainworker.CommonResponse) {}
+}
+
+message RestartSyncStateRequest {
+    int32 idx = 1;
+    map<int32, string> workers = 2;
+    repeated int32 point = 3;
+}
+
+message WeightsRedistributeRequest {
+    repeated string failed_set = 1;
+    repeated int32 point = 2;
+}
+
+message CommitFaultSyncRequest {
+    int32 iter_id = 1;
+    repeated int32 point = 2;
+}
+
+message UnifiedFloatTensorList {
+    repeated trainworker.UnifiedFloatTensor weight = 1;
+}
+
+message WeightsReplicationRequest {
+    int32 replication_type = 1;
+    map<string, UnifiedFloatTensorList> weights = 2;
+}
+
+message ParamsFromRemoteRequest {
+    repeated int32 layers = 1;
+}
+
+message TensorResponse {
+    map<string, UnifiedFloatTensorList> weights = 1;
+}
+
+message PassiveRedistributionFinishRequest {
+    int32 idx = 1;
+}
+
+message WorkerExitRequest {
+    int32 deviceIdx = 1;
+}
+
+message DcInfoResponse {
+    repeated float ccv = 1;
+    int32 battery = 2;
+}
+
+message NotifySubstituteDeviceRequest {
+    string quitUrl = 1;
+    string centralUrl = 2;
+    int32 quitIdx = 3;
+    repeated int32 points = 4;
+    int32 epoch = 5;
+    float lr = 6;
+    int32 len = 7;
+}
+
+message ProactiveFTUpdateWorkersRequest {
+    int32 idx = 1;
+    map<int32, string> workers = 2;
+    int32 startIterId = 3;
+}

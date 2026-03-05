@@ -1,0 +1,34 @@
+#Config File example
+save_dir: logfile/mobilevit
+model_name: MobileViT
+model_args:
+  n_class: 10.0
+data:
+  name: MNIST
+  path: /raw
+  batch_size: 64
+  input_size: [3, 256, 256]
+schedule:
+  #  resume:
+  #  load_model: YOUR_MODEL_PATH
+  opt_name: SGD
+  opt_args:
+    lr: 0.1 #0.1
+    momentum: 0.9
+    weight_decay: 0.00004 #0.00004
+  warmup:
+    name: linear
+    steps: 0 # 300
+    ratio: 0.1
+  total_epochs: 300
+  lr_schedule:
+    name: MultiStepLR
+    milestones: [ 130,160,175,185 ] # [ 130,160,175,185 ]
+    gamma: 0.1
+  # lr_schedule:
+  #   name: ExponentialLR
+  #   gamma: 0.98
+  val_intervals: 100 #100
+log:
+  interval: 10
+weight_aggregation_interval: -1

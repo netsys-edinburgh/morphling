@@ -1,0 +1,95 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asteroid-config
+  namespace: default
+  labels:
+    app: baselines-asteroid
+    component: config
+data:
+  hpp_plan.json: |
+    {
+      "partition_points": [
+        16,
+        18,
+        19,
+        25,
+        28
+      ],
+      "device_groups": {
+        "0": [
+          0
+        ],
+        "1": [
+          1
+        ],
+        "2": [
+          2
+        ],
+        "3": [
+          3
+        ],
+        "4": [
+          4
+        ],
+        "5": [
+          5
+        ]
+      },
+      "micro_batch_alloc": {},
+      "schedule_type": "1f1b",
+      "estimated_latency_ms": 235.84754382724282,
+      "node_mapping": {
+        "0": {
+          "hostname": "ubuntu-2404-desktop-template",
+          "ip": "10.203.54.11",
+          "nic": "ens33",
+          "gpu_id": 0,
+          "memory_mb": 45459,
+          "architecture": "x86_64"
+        },
+        "1": {
+          "hostname": "ubuntu-2404-desktop-template",
+          "ip": "10.203.54.10",
+          "nic": "ens33",
+          "gpu_id": 0,
+          "memory_mb": 45459,
+          "architecture": "x86_64"
+        },
+        "2": {
+          "hostname": "ubuntu",
+          "ip": "10.203.53.10",
+          "nic": "ens33",
+          "gpu_id": 0,
+          "memory_mb": 45459,
+          "architecture": "x86_64"
+        },
+        "3": {
+          "hostname": "ubuntu-2404-desktop-template",
+          "ip": "10.203.56.10",
+          "nic": "ens33",
+          "gpu_id": 0,
+          "memory_mb": 45459,
+          "architecture": "x86_64"
+        },
+        "4": {
+          "hostname": "ubuntu-2404-desktop-template",
+          "ip": "10.203.56.12",
+          "nic": "ens33",
+          "gpu_id": 0,
+          "memory_mb": 45459,
+          "architecture": "x86_64"
+        },
+        "5": {
+          "hostname": "ubuntu-2404-desktop-template",
+          "ip": "10.203.53.11",
+          "nic": "ens33",
+          "gpu_id": 0,
+          "memory_mb": 45459,
+          "architecture": "x86_64"
+        }
+      },
+      "num_stages": 6,
+      "world_size": 6
+    }

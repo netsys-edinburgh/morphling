@@ -255,21 +255,21 @@ class DTFMStrategy(ParallelismStrategy):
         for i, src in enumerate(specs):
             for j, dst in enumerate(specs):
                 if i == j:
-                    # Self-links: zero latency, high BW
+                    # Self-links: zero latency, effectively infinite BW
                     peer_delay[i, j] = 0.0
-                    peer_bandwidth[i, j] = 1000.0
+                    peer_bandwidth[i, j] = 100.0  # 100 Gbps local
                     continue
-                delay = self._lookup_metric(
+                delay = self._lookup_metric_strict(
                     topology.latencies,
                     src.device_id,
                     dst.device_id,
-                    1.0,
+                    "latency",
                 )
-                bw_mbps = self._lookup_metric(
+                bw_mbps = self._lookup_metric_strict(
                     topology.bandwidths,
                     src.device_id,
                     dst.device_id,
-                    1000.0,
+                    "bandwidth",
                 )
                 peer_delay[i, j] = max(delay, 1e-6)
                 # GCMAScheduler expects Gbps
@@ -340,20 +340,28 @@ class DTFMStrategy(ParallelismStrategy):
 
         return groups
 
-    def _lookup_metric(
+    def _lookup_metric_strict(
         self,
         table: dict[tuple[int, int], float],
         src: int,
         dst: int,
-        default: float,
+        metric_name: str,
     ) -> float:
+        """Lookup metric - raises error if not found.
+
+        NO FALLBACK VALUES ALLOWED.
+        """
         direct = table.get((src, dst))
         if direct is not None:
             return float(direct)
         reverse = table.get((dst, src))
         if reverse is not None:
             return float(reverse)
-        return default
+        raise RuntimeError(
+            f"Missing {metric_name} for link ({src}, {dst}). "
+            f"Re-run profiling with iperf3 on ALL nodes. "
+            f"NO FALLBACK VALUES ALLOWED."
+        )
 
     def _dp_partition(
         self,
@@ -480,8 +488,12 @@ class DTFMStrategy(ParallelismStrategy):
         points.reverse()
         bottleneck = dp[num_layers - 1][num_stages - 1]
         if bottleneck == float("inf"):
-            points = self._fallback_points(num_layers, num_stages)
-            bottleneck = 0.0
+            raise RuntimeError(
+                f"DP partition failed: no valid partition found. "
+                f"num_layers={num_layers} num_stages={num_stages}. "
+                f"Ensure all layer timing and bandwidth data are profiled. "
+                f"NO FALLBACK VALUES ALLOWED."
+            )
         return points, bottleneck
 
     def _layer_time(
@@ -492,31 +504,39 @@ class DTFMStrategy(ParallelismStrategy):
         model_config: ModelConfig,
         profiler: ProfilerBackend | None,
     ) -> float:
-        if profiler is not None:
-            try:
-                fwd = profiler.get_time_interval(
-                    device_id,
-                    layer_idx,
-                    layer_idx,
-                    0,
-                )
-                bwd = profiler.get_time_interval(
-                    device_id,
-                    layer_idx,
-                    layer_idx,
-                    1,
-                )
-                if fwd > 0.0 and bwd > 0.0:
-                    return fwd + bwd
-            except Exception:
-                logger.debug(
-                    "Profiler layer lookup failed for device %s layer %s",
-                    device_id,
-                    layer_idx,
-                )
-        dim_factor = max(1.0, model_config.embedding_dim / 1024.0)
-        cap_factor = 1.0 / max(device_cfg.compute_capacity, 0.1)
-        return (1.0 + 0.015 * layer_idx) * dim_factor * cap_factor
+        if profiler is None:
+            raise RuntimeError(
+                f"Profiler required for layer timing. "
+                f"device={device_id} layer={layer_idx}. "
+                f"NO FALLBACK VALUES ALLOWED."
+            )
+        try:
+            fwd = profiler.get_time_interval(
+                device_id,
+                layer_idx,
+                layer_idx,
+                0,
+            )
+            bwd = profiler.get_time_interval(
+                device_id,
+                layer_idx,
+                layer_idx,
+                1,
+            )
+            if fwd > 0.0 and bwd > 0.0:
+                return fwd + bwd
+            raise RuntimeError(
+                f"Invalid profiler timing for device={device_id} "
+                f"layer={layer_idx}: fwd={fwd} bwd={bwd}. "
+                f"Re-run profiling phase."
+            )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(
+                f"Profiler lookup failed for device={device_id} "
+                f"layer={layer_idx}: {e}. NO FALLBACK VALUES ALLOWED."
+            ) from e
 
     def _boundary_comm_time(
         self,
@@ -536,22 +556,29 @@ class DTFMStrategy(ParallelismStrategy):
                     profiler.get_output_size(boundary_layer),
                     1e-6,
                 )
-                left_bw = max(profiler.get_bandwidth(left_group[0]), 1e-6)
-                right_bw = max(profiler.get_bandwidth(right_group[0]), 1e-6)
+                left_bw = profiler.get_bandwidth(left_group[0])
+                right_bw = profiler.get_bandwidth(right_group[0])
+                if left_bw <= 0 or right_bw <= 0:
+                    raise RuntimeError(
+                        f"Invalid bandwidth: left={left_bw} right={right_bw}"
+                    )
                 return output_size / min(left_bw, right_bw)
-            except Exception:
+            except RuntimeError:
+                raise
+            except Exception as e:
                 logger.debug(
-                    "Profiler comm lookup failed at boundary %s",
-                    boundary_layer,
+                    "Profiler comm lookup failed at boundary %s: %s",
+                    boundary_layer, e,
                 )
+                # Fall through to topology lookup
 
         output_mb = self._default_output_mb(model_config)
         min_bw = float("inf")
         max_lat = 0.0
         for src in left_group:
             for dst in right_group:
-                bw = self._lookup_metric(topology.bandwidths, src, dst, 1000.0)
-                lat = self._lookup_metric(topology.latencies, src, dst, 0.1)
+                bw = self._lookup_metric_strict(topology.bandwidths, src, dst, "bandwidth")
+                lat = self._lookup_metric_strict(topology.latencies, src, dst, "latency")
                 min_bw = min(min_bw, max(bw, 1e-6))
                 max_lat = max(max_lat, lat)
         return max_lat + output_mb / max(min_bw, 1e-6) * 1000.0
@@ -560,16 +587,6 @@ class DTFMStrategy(ParallelismStrategy):
         bytes_per_token = 4.0
         total = model_config.seq_length * model_config.embedding_dim
         return max(1e-6, total * bytes_per_token / (1024.0 * 1024.0))
-
-    def _fallback_points(self, num_layers: int, num_stages: int) -> list[int]:
-        if num_stages <= 1:
-            return []
-        step = max(1, num_layers // num_stages)
-        points: list[int] = []
-        for stage_idx in range(1, num_stages):
-            point = min(num_layers - 2, stage_idx * step - 1)
-            points.append(point)
-        return sorted(set(points))
 
 
 __all__ = ["DTFMStrategy"]

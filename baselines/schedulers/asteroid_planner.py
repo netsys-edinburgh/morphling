@@ -428,7 +428,11 @@ class AsteroidHPPPlanner:
         l_total = self.num_layers
         n_total = min(self.num_devices, len(self.devices))
         if l_total <= 0 or n_total <= 0:
-            return self._fallback_plan([])
+            raise RuntimeError(
+                f"Invalid configuration: num_layers={l_total} "
+                f"num_devices={n_total}. Both must be > 0. "
+                f"NO FALLBACK PLANS ALLOWED."
+            )
 
         device_ids = [device.device_id for device in self.devices[:n_total]]
         best_plan: dict[str, object] | None = None
@@ -449,7 +453,12 @@ class AsteroidHPPPlanner:
                 best_plan = result
 
         if best_plan is None:
-            best_plan = self._fallback_plan(device_ids)
+            raise RuntimeError(
+                f"DP planning failed: no valid plan found for "
+                f"num_layers={l_total} num_devices={n_total}. "
+                f"Ensure all profiling data (layer timings, bandwidth) "
+                f"is available. NO FALLBACK PLANS ALLOWED."
+            )
 
         _LOGGER.info(
             "Asteroid planner: stages=%s partition=%s latency=%.3fms",
@@ -669,52 +678,6 @@ class AsteroidHPPPlanner:
             "device_groups": groups,
             "micro_batch_alloc": allocs,
             "latency": float(best_lat),
-        }
-
-    def _fallback_plan(self, device_ids: list[int]) -> dict[str, object]:
-        if not device_ids or self.num_layers <= 0:
-            return {
-                "num_stages": 0,
-                "partition_points": [],
-                "device_groups": {},
-                "micro_batch_alloc": {},
-                "latency": float("inf"),
-            }
-
-        p = min(self.num_layers, len(device_ids))
-        layers_per = max(1, self.num_layers // p)
-        partition_points = [idx * layers_per for idx in range(1, p)]
-        partition_points = [
-            point for point in partition_points if point < self.num_layers
-        ]
-
-        groups: dict[int, list[int]] = {}
-        devices_per = max(1, len(device_ids) // p)
-        for stage_idx in range(p):
-            start_d = stage_idx * devices_per
-            end_d = start_d + devices_per
-            if stage_idx == p - 1:
-                end_d = len(device_ids)
-            groups[stage_idx] = device_ids[start_d:end_d]
-
-        allocs: dict[int, dict[int, int]] = {}
-        for stage_idx, group in groups.items():
-            if not group:
-                allocs[stage_idx] = {}
-                continue
-            base = self.micro_batch_size // len(group)
-            rem = self.micro_batch_size % len(group)
-            allocs[stage_idx] = {
-                did: base + (1 if idx < rem else 0)
-                for idx, did in enumerate(group)
-            }
-
-        return {
-            "num_stages": p,
-            "partition_points": partition_points,
-            "device_groups": groups,
-            "micro_batch_alloc": allocs,
-            "latency": float("inf"),
         }
 
 

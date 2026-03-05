@@ -121,6 +121,8 @@ class ParallelConfig:
     dp_size: int = 1
     num_stages: int = 1
     schedule_type: str = "gpipe"
+    comm_backend: str = "nccl"  # nccl | gloo | torch_dist
+    d2d_bandwidth_mbps: float = 1000.0  # default bandwidth estimate (Mbps)
 
     def __post_init__(self) -> None:
         # Sync pp_size ↔ num_stages: whichever the user
@@ -147,6 +149,18 @@ class FaultToleranceConfig:
     replication_mode: str = "none"
     replication_interval: int = 50
     ft_check_interval: int = 10
+
+
+@dataclass
+class ClusterConfig:
+    """Cluster topology configuration.
+
+    NOTE: Bandwidth data is NOT stored here. All bandwidth measurements
+    MUST come from iperf3 profiling during deployment. NO FALLBACKS.
+    """
+
+    # Reserved for future cluster-level config (not bandwidth)
+    pass
 
 
 @dataclass
@@ -333,6 +347,7 @@ class BaseConfig:
     fault_tolerance: FaultToleranceConfig = field(
         default_factory=FaultToleranceConfig,
     )
+    cluster: ClusterConfig = field(default_factory=ClusterConfig)
     topology: DeviceTopology | None = None
     plan: ParallelismPlan | None = None
     metadata: dict[str, object] = field(default_factory=dict)
@@ -343,6 +358,7 @@ class BaseConfig:
 
 __all__ = [
     "BaseConfig",
+    "ClusterConfig",
     "DeviceConfig",
     "DistributedConfig",
     "ModelConfig",

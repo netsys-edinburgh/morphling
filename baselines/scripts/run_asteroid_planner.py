@@ -230,6 +230,9 @@ def _build_strategy_plan(
     """Dispatch to the correct strategy's create_plan
     based on ``strategy_name``.
 
+    All bandwidth data MUST come from iperf3 measurements
+    in profiles.  NO FALLBACK VALUES ARE ALLOWED.
+
     Returns None if the strategy is not available or
     if it should fall through to AsteroidHPPPlanner.
     """
@@ -259,13 +262,19 @@ def _build_strategy_plan(
     )
 
     # Build DeviceTopology from cluster data
+    # GPU memory from profiles (not cluster.conf)
     device_specs: List[DeviceConfig] = []
     for ip, info in cluster_nodes.items():
         r = info["rank"]
-        mem = info.get(
-            "memory_limit_mb",
-            info.get("memory_mb", 46000),
-        )
+        # Get GPU memory from profile hardware section
+        pdata = profiles.get(r, {})
+        hw = pdata.get("hardware", {})
+        mem = hw.get("gpu_memory_mb")
+        if mem is None:
+            mem = info.get(
+                "memory_limit_mb",
+                info.get("memory_mb", 46000),
+            )
         pct = info.get(
             "active_thread_pct", 100
         )
@@ -307,8 +316,8 @@ def _build_strategy_plan(
                     (int(rank), dst)
                 ] = 0.1
     # Validate all inter-rank links have measured
-    # bandwidth.  Reject fallback / default values
-    # so the planner uses only real iperf3 data.
+    # bandwidth.  NO FALLBACKS - all links MUST have
+    # iperf3 measurements from profiling phase.
     missing_links: List[Tuple[int, int]] = []
     for i in range(world_size):
         for j in range(world_size):
@@ -318,7 +327,7 @@ def _build_strategy_plan(
         print(
             f"\n  ERROR: {len(missing_links)} "
             f"inter-rank bandwidth link(s) have "
-            f"no iperf3 data:",
+            f"no iperf3 measurement data:",
             file=sys.stderr,
         )
         for src, dst in sorted(missing_links):
@@ -328,9 +337,9 @@ def _build_strategy_plan(
                 file=sys.stderr,
             )
         print(
-            "\n  Re-run profiling phase to fix."
-            "  Ensure iperf3 server is running "
-            "on all nodes before profiling.",
+            "\n  Re-run profiling phase with iperf3 "
+            "servers running on ALL nodes."
+            "\n  NO FALLBACK VALUES ARE ALLOWED.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -722,14 +731,20 @@ def build_profiler_data(
         "weight_sizes": weight_sizes,
     }
 
-    # Build device specs from cluster MPS info
+    # Build device specs - GPU memory from profiles (not cluster.conf)
     device_specs: List[Dict[str, Any]] = []
     for ip, info in cluster_nodes.items():
         r = info["rank"]
-        mem_mb = info.get(
-            "memory_limit_mb",
-            info.get("memory_mb", 46000),
-        )
+        # Get GPU memory from profile hardware section
+        pdata = profiles.get(r, {})
+        hw = pdata.get("hardware", {})
+        mem_mb = hw.get("gpu_memory_mb")
+        if mem_mb is None:
+            # Fall back to cluster.conf if profile missing
+            mem_mb = info.get(
+                "memory_limit_mb",
+                info.get("memory_mb", 46000),
+            )
         pct = info.get(
             "active_thread_pct", 100
         )

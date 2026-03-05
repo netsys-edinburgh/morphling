@@ -195,7 +195,18 @@ def _worker_impl(
     if num_stages == 1:
         boundaries = [0, cfg.model.num_layers]
 
-    # ── Step 5: Init process group (gloo control plane) ──
+    # ── Step 5: Init process group ───────────────────────
+    # Determine backend from config: nccl, gloo, or torch_dist (→gloo)
+    _comm_backend = getattr(cfg.parallel, "comm_backend", "gloo")
+    if _comm_backend == "torch_dist":
+        _comm_backend = "gloo"  # torch_dist maps to gloo for control plane
+    # Validate backend availability
+    if _comm_backend == "nccl" and not dist.is_nccl_available():
+        logger.warning("NCCL not available, falling back to gloo")
+        _comm_backend = "gloo"
+    if _comm_backend == "gloo" and not dist.is_gloo_available():
+        raise RuntimeError("Neither NCCL nor Gloo backends available")
+
     if not dist.is_initialized():
         # Detect K8s / multi-node: if MASTER_ADDR is set in
         # the environment, use env:// init (like asteroid_project
@@ -208,24 +219,24 @@ def _worker_impl(
             init_timeout = 300
             print(
                 f"[RANK {rank}] init_process_group"
-                f"(gloo, env://, timeout={init_timeout}s)"
+                f"({_comm_backend}, env://, timeout={init_timeout}s)"
                 f" MASTER_ADDR={os.environ.get('MASTER_ADDR')}"
                 f":{os.environ.get('MASTER_PORT', '?')}",
                 flush=True,
             )
             dist.init_process_group(
-                backend="gloo",
+                backend=_comm_backend,
                 init_method=init_method,
                 timeout=timedelta(seconds=init_timeout),
             )
         else:
             print(
                 f"[RANK {rank}] init_process_group"
-                f"(gloo, {cfg.distributed.dist_url})...",
+                f"({_comm_backend}, {cfg.distributed.dist_url})...",
                 flush=True,
             )
             dist.init_process_group(
-                backend="gloo",
+                backend=_comm_backend,
                 init_method=cfg.distributed.dist_url,
                 world_size=world_size,
                 rank=rank,

@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: asteroid-master
+  namespace: default
+  labels:
+    app: baselines-asteroid
+    component: master-service
+spec:
+  clusterIP: None
+  selector:
+    app: baselines-asteroid
+    rank: "0"
+  ports:
+    - name: torch-dist
+      port: 29500
+      targetPort: 29500
+      protocol: TCP

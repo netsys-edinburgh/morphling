@@ -52,9 +52,9 @@ parallelism:
   schedule_type: "1f1b"                 # gpipe | 1f1b  (auto-set by strategy if empty)
   num_stages: 2                     # pipeline stages per pipeline (pp_size); dp_size = world_size / num_stages
   world_size: 6
-  comm_backend: torch_dist      # torch_dist | nccl | gloo
+  comm_backend: nccl            # torch_dist | nccl | gloo — nccl for better CUDA stream overlap
   dist_url: "tcp://127.0.0.1:29600"
-  d2d_bandwidth_mbps: 100.0
+  d2d_bandwidth_mbps: 800.0     # measured 867 Mbps edinburgh↔leeds via iperf3
 
 # ── Fault Tolerance (unified — applied to ALL strategies) ────────────────────
 fault_tolerance:
@@ -69,7 +69,18 @@ fault_tolerance:
   checkpoint_interval: 100
 
 # ── Cluster (replaces cluster.conf) ──────────────────────────────────────────
+# NOTE: All bandwidth data MUST come from iperf3 profiling during deploy.
+#       The link_bandwidths section below is for DOCUMENTATION ONLY.
+#       NO FALLBACK VALUES ARE USED - profiling is MANDATORY.
 cluster:
+  # Reference bandwidth measurements (iperf3, March 5 2026)
+  # These are NOT used by the planner - profiling provides the actual data.
+  # Keeping them here for documentation purposes only.
+  # _measured_bandwidths:
+  #   "0,1": 8100.0    # host ↔ worker2 (same 10.203.54.x subnet)
+  #   "4,5": 867.0     # edinburgh ↔ leeds (measured)
+  #   Cross-subnet: 893-1000 Mbps typical
+
   nodes:
     - ip: 10.203.54.11
       hostname: host
@@ -156,7 +167,7 @@ cluster:
     #     active_thread_percentage: 100
     #     memory_limit_mb: 40960
 
-    # - ip: 10.203.67.12
+    # - ip: 10.203.67.13
     #   hostname: belfast
     #   nic: ens33
     #   gpu_id: 0

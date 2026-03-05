@@ -23,6 +23,11 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore
+
+try:
     from jinja2 import (
         Environment,
         FileSystemLoader,
@@ -163,6 +168,17 @@ def generate_job_manifest(
 
     node_mapping = plan.get("node_mapping", {})
     node_info = node_mapping.get(str(rank), {})
+
+    # Fallback: if rank missing from plan's node_mapping,
+    # try the cluster config nodes list (from extra_vars)
+    if not node_info and extra_vars:
+        cluster_nodes = extra_vars.get(
+            "cluster_nodes", []
+        )
+        for cn in cluster_nodes:
+            if cn.get("rank") == rank:
+                node_info = cn
+                break
 
     node_hostname = node_info.get(
         "hostname", f"node-{rank}"
@@ -343,6 +359,16 @@ def main() -> int:
         ],
         help="Training strategy",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help=(
+            "Path to asteroid_default.yaml. "
+            "Used as fallback for node info "
+            "when plan node_mapping is incomplete."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -403,6 +429,29 @@ def main() -> int:
         ),
         "strategy": args.strategy,
     }
+
+    # Load cluster nodes from config as fallback
+    if args.config and Path(args.config).exists():
+        if yaml is None:
+            print(
+                "Warning: pyyaml not installed, "
+                "cannot load config fallback"
+            )
+        else:
+            with open(args.config) as cf:
+                ast_cfg = yaml.safe_load(cf) or {}
+            cluster_nodes = (
+                ast_cfg.get("cluster", {})
+                .get("nodes", [])
+            )
+            if cluster_nodes:
+                extra_vars["cluster_nodes"] = (
+                    cluster_nodes
+                )
+                print(
+                    f"  Loaded {len(cluster_nodes)}"
+                    " cluster node(s) from config"
+                )
 
     print("\nGenerating ConfigMap...")
     cm = generate_configmap(

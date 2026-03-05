@@ -20,7 +20,7 @@
   vars_files:
     - secrets.yml
   vars:
-    nvidia_driver_package: nvidia-driver-550
+    nvidia_driver_package: nvidia-driver-590-open
   tasks:
     - name: Check if nvidia-smi works
       command: nvidia-smi -L

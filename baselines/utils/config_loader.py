@@ -7,6 +7,7 @@ from typing import TypeVar, cast
 
 from baselines.core.config import (
     BaseConfig,
+    ClusterConfig,
     DeviceConfig,
     DistributedConfig,
     FaultToleranceConfig,
@@ -40,6 +41,8 @@ def _parse_config(raw: dict[str, object]) -> BaseConfig:
     # Accept both "parallelism" (YAML convention) and
     # "parallel" (dataclass attribute name from asdict).
     parallel_raw = raw.get("parallelism", raw.get("parallel", {}))
+    # NOTE: Cluster config does NOT include bandwidth data.
+    # All bandwidth must come from iperf3 profiling. NO FALLBACKS.
     return BaseConfig(
         device=_build_dataclass(DeviceConfig, raw.get("device", {})),
         distributed=_build_dataclass(DistributedConfig, raw.get("distributed", {})),
@@ -50,6 +53,7 @@ def _parse_config(raw: dict[str, object]) -> BaseConfig:
             FaultToleranceConfig,
             raw.get("fault_tolerance", {}),
         ),
+        cluster=ClusterConfig(),  # Empty - bandwidth from profiling only
         greenctx=_build_dataclass(
             GreenCtxConfig,
             raw.get("greenctx", {}),

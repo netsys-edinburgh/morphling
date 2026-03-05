@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Confidant</string>
+    <string name="central_text">Central Node</string>
+    <string name="worker_text">Worker Node</string>
+    <string name="single_text">Single Train</string>
+    <string name="exit_text">Proactive Exit</string>
+</resources>

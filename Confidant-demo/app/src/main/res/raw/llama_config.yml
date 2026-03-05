@@ -1,0 +1,61 @@
+#Config File example
+save_dir: logfile/llama
+model_name: LLaMALora
+model_args:
+  total_layer: 35.0
+#  total_layer: 25.0
+#  hidden_size: 1024.0
+  hidden_size: 4096.0
+#  hidden_size: 2048.0
+#  hidden_size: 3072.0
+  vocab_size: 128256.0
+#  vocab_size: 51200.0
+#  vocab_size: 32000.0
+  num_hidden_layers: 32.0
+#  num_hidden_layers: 22.0
+  intermediate_size: 4096.0
+  num_attention_heads: 32.0
+  num_kv_heads: 32.0
+  norm_eps: 0.00001
+  max_seq_len: 256.0
+  parallel_size : 1.0
+  max_batch_size: 8.0
+  multiple_of: 256.0
+  ffn_dim_multiplier: -1.0
+  temperature: 0.0
+  topP: 0.9
+  lora_r: 8.0
+  enable_lora_q: 1.0
+  enable_lora_k: 1.0
+  enable_lora_v: 1.0
+  lora_alpha: 1.0
+  lora_drop_out: 0.0
+data:
+  name: Alpaca
+  path: /
+  batch_size: 1
+  input_size: [3, 256, 256]
+schedule:
+  #  resume:
+  #  load_model: YOUR_MODEL_PATH
+  opt_name: ADAMW
+  opt_args:
+    lr: 0.00002 #0.1
+  #    momentum: 0.9
+  #    weight_decay: 0.00004 #0.00004
+  warmup:
+    name: linear
+    steps: 0 # 300
+    ratio: 0.1
+  total_epochs: 300
+  lr_schedule:
+    name: MultiStepLR
+    milestones: [ 130,160,175,185 ] # [ 130,160,175,185 ]
+    gamma: 0.1
+  # lr_schedule:
+  #   name: ExponentialLR
+  #   gamma: 0.98
+  val_intervals: 100 #100
+log:
+  interval: 10
+weight_aggregation_interval: -1

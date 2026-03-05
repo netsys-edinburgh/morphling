@@ -1,0 +1,10 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+plugins {
+    alias(libs.plugins.android.application) apply false
+
+    // rpc related
+    id 'org.jetbrains.kotlin.android' version '1.8.20' apply false
+    // https://github.com/google/protobuf-gradle-plugin
+    id "com.google.protobuf" version "0.9.3" apply false
+}

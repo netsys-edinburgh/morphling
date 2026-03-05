@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.example.confidant.rpc.api";
+option java_outer_classname = "TrainWorkerProto";
+option objc_class_prefix = "TrainWorker";
+
+package trainworker;
+
+service WorkerGreeter {
+    rpc SendTensorTest (SendTensorTestRequest) returns (trainworker.CommonResponse) {}
+    rpc HandleForward(HandleForwardRequest) returns (CommonResponse) {}
+    rpc SendTrainBackward(SendTrainBackwardRequest) returns(CommonResponse) {}
+    rpc Labels(LabelsRequest) returns(CommonResponse) {}
+    rpc IsAvailable(EmptyRequest) returns(CommonResponse) {}
+    rpc StartEpoch(StartEpochRequest) returns(CommonResponse) {}
+    rpc UpdateWorkers(UpdateWorkersRequest) returns(CommonResponse) {}
+    rpc SetBasicInfo(SetBasicInfoRequest) returns(CommonResponse) {}
+    rpc MeasureBandwidth(EmptyRequest) returns(BandwidthResponse) {}
+    rpc MemoryInfo(EmptyRequest) returns(MemoryResponse) {}
+    rpc ProfileTransformerBlock(EmptyRequest) returns(TransformerBlockResponse) {}
+}
+
+message EmptyRequest {
+
+}
+
+message SendTensorTestRequest {
+    UnifiedFloatTensor tensor = 1;
+}
+
+message CommonResponse{
+    string status = 1;
+}
+
+message BandwidthResponse {
+    float bandwidth = 1;
+}
+
+message MemoryResponse {
+    float availMem = 1;
+    float totalMem = 2;
+}
+
+message TransformerBlockResponse {
+    float time = 1;
+}
+
+message UnifiedFloatTensor {
+    repeated float data = 1;
+    int32 dataType = 2;
+    repeated int32 dataShape = 3;
+}
+
+message UnifiedIntTensor {
+    repeated int32 data = 1;
+    int32 dataType = 2;
+    repeated int32 dataShape = 3;
+}
+
+message Float32List {
+    repeated float data = 1;
+}
+
+message HandleForwardRequest {
+    int32 iterId = 1;
+    int32 modelIdx = 2;
+    int32 version = 3;
+    double lr = 4;
+    repeated UnifiedFloatTensor data = 5;
+    int32 term = 7;
+}
+
+message SendTrainBackwardRequest {
+    double loss = 1;
+    int32 errorCode = 2;
+    int32 iterId = 3;
+    int32 version = 4;
+    int32 term = 5;
+    int32 modelIdx = 6;
+    repeated UnifiedFloatTensor data = 7;
+    map<int32, Float32List> time = 9;
+    double lr = 8;
+}
+
+message LabelsRequest {
+    int32 iterId = 1;
+    repeated UnifiedIntTensor labels = 2;
+}
+
+message UpdateWorkersRequest{
+    int32 idx = 1;
+    map<int32, string> workers = 2;
+}
+
+message StartEpochRequest{
+    int32 epoch = 1;
+    double lr = 4;
+    int32 len = 5;
+}
+
+message SetBasicInfoRequest{
+    repeated int32 point = 1;
+    string modelName = 2;
+    map<string, double> modelArgs = 3;
+    int32 aggrInterval = 4;
+}
