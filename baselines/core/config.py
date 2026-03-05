@@ -66,6 +66,14 @@ class ModelConfig:
     dropout: float = 0.1
     use_flash_attention: bool = True
 
+    def __post_init__(self) -> None:
+        # YAML uses ``max_seq_len``; code paths use
+        # ``seq_length``.  Keep them in sync.
+        if self.max_seq_len != 2048 and self.seq_length == 2048:
+            self.seq_length = self.max_seq_len
+        elif self.seq_length != 2048 and self.max_seq_len == 2048:
+            self.max_seq_len = self.seq_length
+
 
 @dataclass
 class TrainingConfig:
@@ -115,7 +123,15 @@ class ParallelConfig:
     schedule_type: str = "gpipe"
 
     def __post_init__(self) -> None:
-        if self.num_stages <= 0:
+        # Sync pp_size ↔ num_stages: whichever the user
+        # set to > 1 wins.  The YAML typically has
+        # ``num_stages`` while the dataclass default for
+        # ``pp_size`` is 1, so derive the missing one.
+        if self.num_stages > 1 and self.pp_size <= 1:
+            self.pp_size = self.num_stages
+        elif self.pp_size > 1 and self.num_stages <= 1:
+            self.num_stages = self.pp_size
+        elif self.num_stages <= 0:
             self.num_stages = max(self.pp_size, 1)
 
 

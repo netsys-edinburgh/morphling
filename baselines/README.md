@@ -332,3 +332,45 @@ See [baselines/examples/LLAMA_SST_GUIDE.md](examples/LLAMA_SST_GUIDE.md) for ful
 - `examples/analyze_violations.py` — Violation analyzer
 - `examples/sample_greenctx_trace.csv` — SM allocation trace
 - `examples/run_llama_sst.sh` — Launcher script
+## Cluster Deployment (Asteroid)
+
+Deployment uses Ansible playbooks under `deploy_asteroid/` and the
+orchestration script `scripts/deploy_asteroid.sh`.
+
+### Prerequisites
+
+- K3s cluster with GPU nodes
+- NVIDIA drivers installed on each node
+- Ansible installed on the control node
+
+### Quick start
+
+```bash
+# Full pipeline (bootstrap → K3s → GPU → profile → plan → build → deploy)
+bash baselines/scripts/deploy_asteroid.sh all
+
+# Or run individual phases
+bash baselines/scripts/deploy_asteroid.sh k3s
+bash baselines/scripts/deploy_asteroid.sh gpu
+bash baselines/scripts/deploy_asteroid.sh profile
+bash baselines/scripts/deploy_asteroid.sh plan
+bash baselines/scripts/deploy_asteroid.sh build
+bash baselines/scripts/deploy_asteroid.sh manifests
+bash baselines/scripts/deploy_asteroid.sh deploy
+```
+
+### Key files
+
+| File | Purpose |
+|------|---------|
+| `deploy_asteroid/inventory.ini` | Ansible inventory (auto-generated from YAML config) |
+| `deploy_asteroid/setup_k3s.yaml` | Install / configure K3s cluster |
+| `deploy_asteroid/setup_gpu.yaml` | nvidia-container-toolkit + NVIDIA device plugin |
+| `deploy_asteroid/bootstrap_nodes.yaml` | Create venvs, install PyTorch on remote nodes |
+| `deploy_asteroid/profile_and_gather.yaml` | Sync code, profile hardware, measure network |
+| `deploy_asteroid/setup_cluster.yml` | Full end-to-end orchestration playbook |
+| `deploy_asteroid/generate_manifests.py` | Generate K8s Job YAML from HPP plan |
+| `deploy_asteroid/templates/stage_job.yaml.j2` | Jinja2 template for per-rank K8s Jobs |
+| `requirements-deploy.txt` | Runtime deps installed on remote nodes |
+| `configs/asteroid_default.yaml` | Cluster topology, model, training config |
+
