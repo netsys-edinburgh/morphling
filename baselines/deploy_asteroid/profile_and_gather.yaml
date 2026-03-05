@@ -379,17 +379,16 @@
   tasks:
     - name: "NETWORK | Force-restart iperf3 servers on ALL nodes"
       ansible.builtin.shell: |
-        # Always force-restart to clear any stuck/busy state from
-        # the previous node's profiling run.  Persistent iperf3 -s
-        # can get stuck after client disconnects/timeouts.
         systemctl restart iperf_server
-        # Wait for port 5201 to be listening
         for i in 1 2 3 4 5; do
-          ss -tlnp | grep -q ':5201 ' && { echo "OK: port 5201 listening"; exit 0; }
+          if ss -tlnp | grep -q ':5201 '; then
+            echo "OK: port 5201 listening"
+            exit 0
+          fi
           echo "Waiting for port 5201 (attempt $i/5)..."
           sleep 2
         done
-        echo 'FAIL: port 5201 not listening after restart'
+        echo "FAIL: port 5201 not listening after restart"
         exit 1
       become: true
       delegate_to: "{{ item }}"
