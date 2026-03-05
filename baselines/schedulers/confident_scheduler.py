@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
-from .dp_partitioner import DPPartitioner
+from .dp_partitioner import DPPartitioner, ModelConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -10,7 +11,7 @@ _LOGGER = logging.getLogger(__name__)
 class ConfidentScheduler:
     """Confident DP-based bottleneck minimization scheduler.
 
-    Similar to DPPartitioner but with passive FT awareness.
+    Port of Java DynamicScheduler from Confidant with memory awareness.
     After failure, re-partitions among surviving devices.
     """
 
@@ -19,18 +20,53 @@ class ConfidentScheduler:
         num_layers: int,
         num_devices: int,
         profiler_data: dict[str, object] | list[float] | None = None,
+        model_config: Optional[ModelConfig] = None,
+        memory_budgets: Optional[list[float]] = None,
     ) -> None:
         self.num_layers = int(max(0, num_layers))
         self.num_devices = int(max(0, num_devices))
         self.profiler_data = profiler_data
+        self.model_config = model_config
+        self.memory_budgets = memory_budgets
         self._partitioner = DPPartitioner(
             num_layers=self.num_layers,
             num_devices=self.num_devices,
             profiler_data=self.profiler_data,
+            model_config=self.model_config,
         )
 
     def partition(self, is_average: bool = True) -> list[int]:
+        """Partition without memory constraints (legacy API)."""
         return self._partitioner.partition(is_average=is_average)
+
+    def partition_with_memory(
+        self,
+        memory_budgets: Optional[list[float]] = None,
+        is_average: bool = True,
+    ) -> list[int]:
+        """Partition with memory constraints.
+
+        Uses the Confidant memory estimation formula to ensure each
+        stage fits within the device's memory budget.
+
+        Args:
+            memory_budgets: Memory budget in GB for each device.
+                           If None, uses self.memory_budgets.
+            is_average: Whether to normalize by computing capacity.
+
+        Returns:
+            Partition points (layer indices ending each stage except last).
+        """
+        budgets = memory_budgets or self.memory_budgets
+        if not budgets:
+            _LOGGER.warning(
+                "No memory budgets provided. Falling back to plain partition."
+            )
+            return self.partition(is_average=is_average)
+        return self._partitioner.partition_with_memory(
+            memory_budgets=budgets,
+            is_average=is_average,
+        )
 
     def _remap_profiler_data(
         self,
@@ -109,7 +145,18 @@ class ConfidentScheduler:
         self,
         failed_devices: list[int],
         current_partition: list[int],
+        use_memory: bool = True,
     ) -> list[int]:
+        """Replan partition after device failures.
+
+        Args:
+            failed_devices: List of device IDs that failed.
+            current_partition: Current partition points.
+            use_memory: Whether to use memory-aware replanning.
+
+        Returns:
+            New partition points for surviving devices.
+        """
         failed = {int(device) for device in failed_devices}
         if not failed:
             return list(current_partition)
@@ -129,12 +176,29 @@ class ConfidentScheduler:
         )
 
         remapped_profiler = self._remap_profiler_data(survivors)
+
+        # Remap memory budgets for survivors
+        remapped_budgets: list[float] | None = None
+        if self.memory_budgets:
+            remapped_budgets = [
+                float(self.memory_budgets[did])
+                for did in survivors
+                if 0 <= did < len(self.memory_budgets)
+            ]
+
         replanner = DPPartitioner(
             num_layers=self.num_layers,
             num_devices=len(survivors),
             profiler_data=remapped_profiler,
+            model_config=self.model_config,
         )
+
+        if use_memory and remapped_budgets:
+            return replanner.partition_with_memory(
+                memory_budgets=remapped_budgets,
+                is_average=True,
+            )
         return replanner.partition(is_average=True)
 
 
-__all__ = ["ConfidentScheduler"]
+__all__ = ["ConfidentScheduler", "ModelConfig"]
