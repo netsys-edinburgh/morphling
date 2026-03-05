@@ -119,6 +119,55 @@ check_file() {
   fi
 }
 
+# Cached SSH password extracted from ansible-vault secrets
+_SSH_PASS_CACHE=""
+_SSH_PASS_LOADED=0
+
+# Extract SSH password from vault-encrypted secrets.yml.
+# Caches result so vault is only decrypted once per run.
+_load_ssh_pass() {
+  if [[ "$_SSH_PASS_LOADED" -eq 1 ]]; then
+    return
+  fi
+  _SSH_PASS_LOADED=1
+  if [[ -f "${ANSIBLE_SECRETS}" && -f "${VAULT_PASSWORD_FILE}" ]]; then
+    _SSH_PASS_CACHE=$("${VENV_DIR}/bin/ansible-vault" view \
+      "${ANSIBLE_SECRETS}" \
+      --vault-password-file "${VAULT_PASSWORD_FILE}" 2>/dev/null \
+      | "${VENV_DIR}/bin/python" -c "
+import yaml, sys
+d = yaml.safe_load(sys.stdin)
+print(d.get('ansible_ssh_pass', d.get('ansible_password', '')))" 2>/dev/null) || true
+  fi
+}
+
+# ssh_node <ip> [ssh-args...]
+# Wrapper around ssh that uses sshpass when key-based auth isn't
+# configured for the target node.  Supports all normal ssh flags
+# (e.g. -n) passed after the IP.
+ssh_node() {
+  local ip="$1"; shift
+  _load_ssh_pass
+  if [[ -n "$_SSH_PASS_CACHE" ]]; then
+    sshpass -p "${_SSH_PASS_CACHE}" \
+      ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" "$@"
+  else
+    ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" "$@"
+  fi
+}
+
+# scp_node <ip>:<remote_path> <local_path>  (or reverse)
+# Wrapper around scp that uses sshpass when needed.
+scp_node() {
+  _load_ssh_pass
+  if [[ -n "$_SSH_PASS_CACHE" ]]; then
+    sshpass -p "${_SSH_PASS_CACHE}" \
+      scp -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$@"
+  else
+    scp -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$@"
+  fi
+}
+
 # ============================================================================
 # YAML Config Helpers
 # ============================================================================
@@ -1201,7 +1250,7 @@ PYEOF
     log "Scanning ${hostname} (${ip}) for checkpoints..."
 
     local rank_dirs
-    rank_dirs=$(ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$ip" \
+    rank_dirs=$(ssh_node "$ip" -n \
       "ls -d /var/lib/baselines/checkpoints/rank-* 2>/dev/null" 2>/dev/null || true)
 
     if [[ -z "$rank_dirs" ]]; then
@@ -1221,14 +1270,14 @@ PYEOF
       fi
 
       local count
-      count=$(ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$ip" \
+      count=$(ssh_node "$ip" -n \
         "ls ${src}/*.pt 2>/dev/null | wc -l" 2>/dev/null || echo "0")
       count=$(echo "$count" | tr -d '[:space:]')
 
       if [[ "$count" -gt 0 ]]; then
         local rank_dir="${dest}/${rank_name}"
         mkdir -p "$rank_dir"
-        scp -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+        scp_node \
           "${ip}:${src}/*.pt" "$rank_dir/" 2>/dev/null
         log "  Copied ${count} checkpoint(s) from ${rank_name}"
         total=$((total + count))
@@ -1339,7 +1388,7 @@ PYEOF
   if [[ -n "$node_ips" ]]; then
     while IFS= read -r ip; do
       info "  Cleaning GPU processes on ${ip}..."
-      ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" bash -s 2>/dev/null <<'REMOTE_CLEAN'
+      ssh_node "${ip}" bash -s 2>/dev/null <<'REMOTE_CLEAN'
 # Kill any python/pytorch GPU processes (training workers)
 GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ')
 if [ -n "$GPU_PIDS" ]; then
@@ -1363,7 +1412,7 @@ REMOTE_CLEAN
   info "Cleaning checkpoint data on all nodes..."
   if [[ -n "$node_ips" ]]; then
     while IFS= read -r ip; do
-      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" \
+      ssh_node "${ip}" -n \
         "sudo rm -rf /var/lib/baselines/checkpoints/rank-*/*.pt 2>/dev/null; echo 'checkpoints cleared'" \
         2>/dev/null || true
     done <<< "$node_ips"
@@ -1408,7 +1457,7 @@ REMOTE_CLEAN
   info "Resetting GPU memory on all nodes..."
   if [[ -n "$node_ips" ]]; then
     while IFS= read -r ip; do
-      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" \
+      ssh_node "${ip}" -n \
         "python3 -c 'import torch; torch.cuda.empty_cache()' 2>/dev/null || true" \
         2>/dev/null || true
     done <<< "$node_ips"
@@ -1498,7 +1547,7 @@ PYEOF
   info "[3/9] Stopping NVIDIA MPS on all nodes..."
   if [[ -n "$node_ips" ]]; then
     while IFS= read -r ip; do
-      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" bash -s 2>/dev/null <<'REMOTE_MPS'
+      ssh_node "${ip}" -n bash -s 2>/dev/null <<'REMOTE_MPS'
 echo quit | sudo nvidia-cuda-mps-control 2>/dev/null || true
 sudo rm -rf /tmp/nvidia-mps* /tmp/nvidia-log* 2>/dev/null || true
 echo "  MPS stopped"
@@ -1512,7 +1561,7 @@ REMOTE_MPS
   info "[4/9] Killing GPU processes on all nodes..."
   if [[ -n "$node_ips" ]]; then
     while IFS= read -r ip; do
-      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" bash -s 2>/dev/null <<'REMOTE_GPU'
+      ssh_node "${ip}" -n bash -s 2>/dev/null <<'REMOTE_GPU'
 # Kill every process on the GPU
 GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ')
 if [ -n "$GPU_PIDS" ]; then
@@ -1537,7 +1586,7 @@ REMOTE_GPU
   info "[5/9] Purging cached Docker images on all nodes..."
   if [[ -n "$node_ips" ]]; then
     while IFS= read -r ip; do
-      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" bash -s 2>/dev/null <<'REMOTE_DOCKER'
+      ssh_node "${ip}" -n bash -s 2>/dev/null <<'REMOTE_DOCKER'
 # Remove asteroid/baselines images from containerd (k3s) and docker
 sudo ctr -n k8s.io images ls -q 2>/dev/null | grep -i "asteroid" | xargs -r sudo ctr -n k8s.io images rm 2>/dev/null || true
 sudo crictl rmi --prune 2>/dev/null || true
@@ -1560,7 +1609,7 @@ REMOTE_DOCKER
   info "[6/9] Cleaning checkpoint & output data on all nodes..."
   if [[ -n "$node_ips" ]]; then
     while IFS= read -r ip; do
-      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" bash -s 2>/dev/null <<'REMOTE_DATA'
+      ssh_node "${ip}" -n bash -s 2>/dev/null <<'REMOTE_DATA'
 sudo rm -rf /var/lib/baselines/checkpoints 2>/dev/null || true
 sudo rm -rf /tmp/baselines_* 2>/dev/null || true
 sudo rm -rf /tmp/asteroid_* 2>/dev/null || true
@@ -1626,7 +1675,7 @@ REMOTE_DATA
   info "[9/9] Resetting GPU memory on all nodes..."
   if [[ -n "$node_ips" ]]; then
     while IFS= read -r ip; do
-      ssh -n -o ConnectTimeout=5 -o StrictHostKeyChecking=no "ubuntu@${ip}" \
+      ssh_node "${ip}" -n \
         "python3 -c 'import torch; torch.cuda.empty_cache()' 2>/dev/null; nvidia-smi 2>/dev/null | head -4 || true" \
         2>/dev/null || true
     done <<< "$node_ips"
