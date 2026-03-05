@@ -175,6 +175,12 @@ class GreenContextController:
     def available_sm_counts(self):
         return self._backend.available_sm_counts()
 
+    def activate_for_time(self, elapsed_us: int):
+        return self._backend.activate_for_time(elapsed_us)
+
+    def deactivate(self, prev_sm_count: int):
+        return self._backend.deactivate(prev_sm_count)
+
     def switch_count(self) -> int:
         return self._backend.switch_count()
 
