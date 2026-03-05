@@ -174,11 +174,34 @@ def profile_layer(
     }
 
 
+def _wait_for_port(
+    host: str,
+    port: int,
+    timeout: float = 10.0,
+    poll: float = 1.0,
+) -> bool:
+    """Block until *host:port* accepts a TCP
+    connection, or *timeout* seconds elapse."""
+    import socket as _socket
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            s = _socket.create_connection(
+                (host, port), timeout=2
+            )
+            s.close()
+            return True
+        except OSError:
+            time.sleep(poll)
+    return False
+
+
 def measure_tcp_bandwidth_iperf(
     peer: str,
     duration: int = 5,
-    retries: int = 3,
-    retry_delay: float = 2.0,
+    retries: int = 5,
+    retry_delay: float = 3.0,
 ) -> dict[str, Any]:
     host, port = _split_peer(peer)
     if not host:
@@ -205,7 +228,24 @@ def measure_tcp_bandwidth_iperf(
     last_error = "unknown"
     for attempt in range(retries):
         if attempt > 0:
-            time.sleep(retry_delay)
+            # Exponential backoff: 3, 6, 12, 24s
+            delay = retry_delay * (2 ** (attempt - 1))
+            print(
+                f"  iperf3 {peer}: retry "
+                f"{attempt + 1}/{retries} "
+                f"in {delay:.0f}s "
+                f"(last: {last_error[:60]})"
+            )
+            time.sleep(delay)
+
+        # Pre-check: make sure port is reachable
+        # before launching iperf3 (avoids 15s hang)
+        if not _wait_for_port(host, port, timeout=10):
+            last_error = (
+                f"port {port} on {host} not "
+                f"reachable (pre-check)"
+            )
+            continue
 
         try:
             proc = subprocess.run(
@@ -345,6 +385,9 @@ def measure_network_bandwidth(
             "peer": peer,
             "error": iperf_result.get(
                 "error", "iperf3 failed"
+            ),
+            "attempts": iperf_result.get(
+                "attempts", 0
             ),
         }
 

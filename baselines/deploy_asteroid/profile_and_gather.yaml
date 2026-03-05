@@ -383,17 +383,19 @@
         if ! systemctl is-active --quiet iperf_server; then
           echo "iperf_server not running — restarting"
           systemctl restart iperf_server
-          sleep 2
+          sleep 3
         fi
         # Verify port 5201 is listening
-        ss -tlnp | grep -q ':5201 ' && echo 'OK: port 5201 listening' || {
-          echo 'FAIL: port 5201 not listening after restart';
-          exit 1;
-        }
+        for i in 1 2 3 4 5; do
+          ss -tlnp | grep -q ':5201 ' && { echo "OK: port 5201 listening"; exit 0; }
+          echo "Waiting for port 5201 (attempt $i/5)..."
+          sleep 2
+        done
+        echo 'FAIL: port 5201 not listening after restart'
+        exit 1
       become: true
       delegate_to: "{{ item }}"
       loop: "{{ groups['cluster'] }}"
-      run_once: true
 
     - name: "NETWORK | Run iperf profiling (--network-only)"
       command: >
