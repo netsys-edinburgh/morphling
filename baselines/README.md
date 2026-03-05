@@ -298,3 +298,37 @@ The original monolithic baselines are preserved as reference:
 - `baselines/dtfm_gpt2_train copy (1).py` — DT-FM (3177 lines)
 - `baselines/asteroid (1).py` — Asteroid (2144 lines)
 - `baselines/Confident-production-FIXED (1) copy 2 (1).ipynb` — Confident
+
+
+## Examples
+
+### LLaMA + SST-2 Single-GPU Training with SM Partition Analysis
+
+A complete example showing:
+- LLaMA transformer training on SST-2 sentiment classification
+- CUDA Green Context SM partitioning (dynamic SM allocation per step)
+- GEMM timing interception via LD_PRELOAD
+- Post-training SM partition violation analysis
+
+**Quick start:**
+
+```bash
+docker build -t device-emulator:latest .
+
+# Run full pipeline
+docker run --rm --gpus all -v $(pwd):/workspace device-emulator:latest \
+  bash /app/baselines/examples/run_llama_sst.sh both --max-iters 100
+
+# Analyze violations
+docker run --rm --gpus all -v $(pwd):/workspace device-emulator:latest \
+  bash /app/baselines/examples/run_llama_sst.sh analyze
+```
+
+See [baselines/examples/LLAMA_SST_GUIDE.md](examples/LLAMA_SST_GUIDE.md) for full documentation.
+
+**Files:**
+- `examples/llama_sst_single_gpu.py` — Training script
+- `examples/gemm_intercept/` — GEMM timing interceptor
+- `examples/analyze_violations.py` — Violation analyzer
+- `examples/sample_greenctx_trace.csv` — SM allocation trace
+- `examples/run_llama_sst.sh` — Launcher script
