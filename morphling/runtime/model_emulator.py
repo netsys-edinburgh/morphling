@@ -12,7 +12,8 @@ from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from tqdm import tqdm
 from transformers import AutoConfig
-from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
+from transformers.configuration_utils import PretrainedConfig
+from transformers import PreTrainedModel
 
 from morphling._C import ArcherTensorHandle, MemoryManagerClient, set_tensor_shm
 
