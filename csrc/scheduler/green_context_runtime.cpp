@@ -1,6 +1,7 @@
 #include "green_context_runtime.h"
 
 #include <algorithm>
+#include <chrono>
 
 #include "utils/logger.h"
 
@@ -89,9 +90,9 @@ GreenContextRuntime::GreenContextRuntime(const Options& opts) : opts_(opts) {
   CUresult dr_err = cuDriverGetVersion(&driver_version);
   if (dr_err != CUDA_SUCCESS || driver_version < 12050) {
     supported_ = false;
-    unsupported_reason_ =
-        "CUDA driver version " + std::to_string(driver_version) +
-        " too old (need >= 12050 for green contexts)";
+    unsupported_reason_ = "CUDA driver version " +
+                          std::to_string(driver_version) +
+                          " too old (need >= 12050 for green contexts)";
     if (opts_.strict) {
       LOG_FATAL << unsupported_reason_;
     }
@@ -317,11 +318,18 @@ int GreenContextRuntime::ActivateSmForThread(int num_sms) {
   }
 
   // Push the green context onto the CUDA context stack
+  auto t_start = std::chrono::steady_clock::now();
   CHECK_CU_RESULT(cuCtxSetCurrent(it->second.cuda_ctx));
+  auto t_end = std::chrono::steady_clock::now();
 
   int prev = active_sm_count_.exchange(num_sms, std::memory_order_relaxed);
   if (prev != num_sms) {
+    auto elapsed_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start)
+            .count();
     switch_count_.fetch_add(1, std::memory_order_relaxed);
+    swap_count_.fetch_add(1, std::memory_order_relaxed);
+    swap_overhead_us_.fetch_add(elapsed_us, std::memory_order_relaxed);
   }
   return prev;
 }
@@ -342,4 +350,12 @@ void GreenContextRuntime::DeactivateForThread(int prev_sm_count) {
     cudaSetDevice(opts_.gpu_id);
   }
   active_sm_count_.store(prev_sm_count, std::memory_order_relaxed);
+}
+
+SwapStats GreenContextRuntime::GetAndResetSwapStats() {
+  SwapStats stats;
+  stats.count = swap_count_.exchange(0, std::memory_order_relaxed);
+  stats.total_overhead_us =
+      swap_overhead_us_.exchange(0, std::memory_order_relaxed);
+  return stats;
 }

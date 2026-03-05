@@ -17,11 +17,12 @@ from __future__ import annotations
 import argparse
 import bisect
 import csv
+import json
 import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,62 @@ def parse_step_boundaries(
                 )
             )
     slots.sort(key=lambda s: s.start_ns)
+    return slots
+
+
+def parse_autograd_log(path: Path) -> list[GemmCall]:
+    """Parse autograd GEMM log (JSON from morphling hook)."""
+    with path.open(encoding="utf-8") as f:
+        entries = json.load(f)
+    calls: list[GemmCall] = []
+    for e in entries:
+        start_ns = int(e["start_us"] * 1000)
+        end_ns = int(e["end_us"] * 1000)
+        calls.append(
+            GemmCall(
+                name=e.get("phase", "unknown"),
+                start_ns=start_ns,
+                end_ns=end_ns,
+                duration_ns=end_ns - start_ns,
+                m=int(e.get("m", 0)),
+                n=int(e.get("n", 0)),
+                k=int(e.get("k", 0)),
+            )
+        )
+    calls.sort(key=lambda c: c.start_ns)
+    return calls
+
+
+def parse_trace_boundaries(path: Path) -> list[StepSlot]:
+    """Parse LDPC trace CSV as slot boundaries with SM counts."""
+    import pandas as pd
+
+    df: Any = pd.read_csv(path)
+    slots: list[StepSlot] = []
+    for i, row in df.iterrows():
+        slots.append(
+            StepSlot(
+                step=int(i),
+                start_ns=int(row["time_slot_sched_ns"]),
+                end_ns=0,
+                sm_count=int(row["sm_count"]),
+            )
+        )
+    for i in range(len(slots) - 1):
+        slots[i] = StepSlot(
+            step=slots[i].step,
+            start_ns=slots[i].start_ns,
+            end_ns=slots[i + 1].start_ns,
+            sm_count=slots[i].sm_count,
+        )
+    if slots:
+        last = slots[-1]
+        slots[-1] = StepSlot(
+            step=last.step,
+            start_ns=last.start_ns,
+            end_ns=last.start_ns + 1_000_000,
+            sm_count=last.sm_count,
+        )
     return slots
 
 
@@ -431,15 +488,28 @@ def parse_args() -> argparse.Namespace:
         description="SM partition violation analysis",
     )
     p.add_argument(
+        "--mode",
+        type=str,
+        default="ldpreload",
+        choices=["ldpreload", "autograd"],
+        help="Input mode: ldpreload CSVs or autograd JSON+trace",
+    )
+    p.add_argument(
         "--gemm-log",
         type=str,
-        required=True,
+        default=None,
         help="Path to GEMM timing CSV",
+    )
+    p.add_argument(
+        "--autograd-log",
+        type=str,
+        default=None,
+        help="Path to autograd GEMM JSON log",
     )
     p.add_argument(
         "--step-log",
         type=str,
-        required=True,
+        default=None,
         help="Path to step boundaries CSV",
     )
     p.add_argument(
@@ -467,6 +537,12 @@ def parse_args() -> argparse.Namespace:
         help="CSV summary output path",
     )
     p.add_argument(
+        "--output-json",
+        type=str,
+        default=None,
+        help="JSON summary output path",
+    )
+    p.add_argument(
         "--top-n",
         type=int,
         default=10,
@@ -480,6 +556,39 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def write_json_summary(
+    path: Path,
+    gemms: list[GemmCall],
+    slots: list[StepSlot],
+    summaries: list[StepViolationSummary],
+    violation_time_ns: int,
+) -> None:
+    total_boundaries = max(len(slots) - 1, 1)
+    result = {
+        "total_slots": len(slots),
+        "slots_with_violations": len(summaries),
+        "violation_pct": 100.0
+        * len(summaries)
+        / total_boundaries,
+        "total_gemms": len(gemms),
+        "violating_gemms": sum(
+            s.num_violations for s in summaries
+        ),
+        "total_violation_time_ns": violation_time_ns,
+        "per_step_violations": [
+            {
+                "step": s.step,
+                "violations": s.num_violations,
+                "max_overshoot_ns": s.max_overshoot_ns,
+                "total_overshoot_ns": s.total_overshoot_ns,
+            }
+            for s in summaries
+        ],
+    }
+    with open(str(path), "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -490,35 +599,74 @@ def main() -> None:
     )
     args = parse_args()
 
-    gemm_path = Path(args.gemm_log)
-    step_path = Path(args.step_log)
-
-    if not gemm_path.exists():
-        logger.error("GEMM log not found: %s", gemm_path)
-        sys.exit(1)
-    if not step_path.exists():
-        logger.error(
-            "Step boundaries not found: %s", step_path
-        )
-        sys.exit(1)
-
-    logger.info("parsing GEMM log: %s", gemm_path)
-    gemms = parse_gemm_log(gemm_path)
-    logger.info("  %d GEMM calls loaded", len(gemms))
-
-    logger.info(
-        "parsing step boundaries: %s", step_path
-    )
-    slots = parse_step_boundaries(step_path)
-    logger.info("  %d steps loaded", len(slots))
-
-    if args.trace:
-        trace_path = Path(args.trace)
-        if trace_path.exists():
-            trace = parse_trace(trace_path)
-            logger.info(
-                "trace loaded: %d entries", len(trace)
+    if args.mode == "autograd":
+        if not args.autograd_log:
+            logger.error(
+                "--autograd-log is required in autograd mode"
             )
+            sys.exit(1)
+        if not args.trace:
+            logger.error("--trace is required in autograd mode")
+            sys.exit(1)
+
+        autograd_path = Path(args.autograd_log)
+        trace_path = Path(args.trace)
+
+        if not autograd_path.exists():
+            logger.error(
+                "Autograd log not found: %s", autograd_path
+            )
+            sys.exit(1)
+        if not trace_path.exists():
+            logger.error("Trace not found: %s", trace_path)
+            sys.exit(1)
+
+        logger.info("parsing autograd log: %s", autograd_path)
+        gemms = parse_autograd_log(autograd_path)
+        logger.info("  %d GEMM calls loaded", len(gemms))
+
+        logger.info(
+            "parsing trace boundaries: %s", trace_path
+        )
+        slots = parse_trace_boundaries(trace_path)
+        logger.info("  %d steps loaded", len(slots))
+    else:
+        if not args.gemm_log:
+            logger.error("--gemm-log is required in ldpreload mode")
+            sys.exit(1)
+        if not args.step_log:
+            logger.error("--step-log is required in ldpreload mode")
+            sys.exit(1)
+
+        gemm_path = Path(args.gemm_log)
+        step_path = Path(args.step_log)
+
+        if not gemm_path.exists():
+            logger.error("GEMM log not found: %s", gemm_path)
+            sys.exit(1)
+        if not step_path.exists():
+            logger.error(
+                "Step boundaries not found: %s", step_path
+            )
+            sys.exit(1)
+
+        logger.info("parsing GEMM log: %s", gemm_path)
+        gemms = parse_gemm_log(gemm_path)
+        logger.info("  %d GEMM calls loaded", len(gemms))
+
+        logger.info(
+            "parsing step boundaries: %s", step_path
+        )
+        slots = parse_step_boundaries(step_path)
+        logger.info("  %d steps loaded", len(slots))
+
+        if args.trace:
+            trace_path = Path(args.trace)
+            if trace_path.exists():
+                trace = parse_trace(trace_path)
+                logger.info(
+                    "trace loaded: %d entries", len(trace)
+                )
 
     if len(slots) < 2:
         logger.warning(
@@ -573,6 +721,17 @@ def main() -> None:
         csv_path = Path(args.output_csv)
         write_csv_summary(csv_path, summaries)
         logger.info("wrote CSV summary: %s", csv_path)
+
+    if args.output_json:
+        json_path = Path(args.output_json)
+        write_json_summary(
+            json_path,
+            gemms,
+            slots,
+            summaries,
+            violation_time,
+        )
+        logger.info("wrote JSON summary: %s", json_path)
 
 
 if __name__ == "__main__":

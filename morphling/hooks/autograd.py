@@ -1,3 +1,6 @@
+# pyright: reportMissingImports=false, reportAssignmentType=false
+# pyright: reportAttributeAccessIssue=false
+
 import functools
 import time
 from typing import Any, Dict, List, Optional, Union
@@ -9,7 +12,7 @@ from morphling.backend import BaseBackend
 from morphling.common import get_logger
 
 logger = get_logger()
-_backend: BaseBackend = None
+_backend: Any = None
 _enable_verification = False
 _greenctx: Any = None
 _gemm_log: List[Dict[str, Any]] = []
@@ -56,6 +59,9 @@ def _log_gemm(
     start_us: float,
     end_us: float,
     sm_count: Optional[int],
+    m: int = 0,
+    n: int = 0,
+    k: int = 0,
 ) -> None:
     duration_us = end_us - start_us
     _gemm_log.append(
@@ -67,6 +73,9 @@ def _log_gemm(
             "duration_us": duration_us,
             "sm_count": sm_count,
             "greenctx_enabled": _greenctx is not None,
+            "m": m,
+            "n": n,
+            "k": k,
         }
     )
     logger.debug(
@@ -171,12 +180,18 @@ class LinearFunction(torch.autograd.Function):
             and start_us is not None
             and gemm_idx is not None
         ):
+            m = int(input.shape[0])
+            k = int(input.shape[1])
+            n = int(weight.shape[0])
             _log_gemm(
                 gemm_idx,
                 "forward",
                 start_us,
                 _elapsed_us(),
                 sm_count,
+                m,
+                n,
+                k,
             )
         # ref = torch.matmul(input.to("cuda:0"), weight.to("cuda:0")).to("cpu")
         # validate output
@@ -276,12 +291,18 @@ class LinearFunction(torch.autograd.Function):
                 grad_input_start_us is not None
                 and grad_input_gemm_idx is not None
             ):
+                grad_input_m = int(grad_output.shape[0])
+                grad_input_k = int(weight.shape[0])
+                grad_input_n = int(weight.shape[1])
                 _log_gemm(
                     grad_input_gemm_idx,
                     "backward_grad_input",
                     grad_input_start_us,
                     _elapsed_us(),
                     grad_input_sm_count,
+                    grad_input_m,
+                    grad_input_n,
+                    grad_input_k,
                 )
 
         if ctx.needs_input_grad[1]:
@@ -291,12 +312,18 @@ class LinearFunction(torch.autograd.Function):
                 grad_weight_start_us is not None
                 and grad_weight_gemm_idx is not None
             ):
+                grad_weight_m = int(weight.shape[0])
+                grad_weight_n = int(weight.shape[1])
+                grad_weight_k = int(input.shape[0])
                 _log_gemm(
                     grad_weight_gemm_idx,
                     "backward_grad_weight",
                     grad_weight_start_us,
                     _elapsed_us(),
                     grad_weight_sm_count,
+                    grad_weight_m,
+                    grad_weight_n,
+                    grad_weight_k,
                 )
 
         if bias is not None and ctx.needs_input_grad[2]:
