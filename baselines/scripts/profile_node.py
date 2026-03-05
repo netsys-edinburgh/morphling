@@ -252,7 +252,7 @@ def measure_tcp_bandwidth_iperf(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=duration + 10,
+                timeout=duration + 30,
                 check=False,
             )
         except FileNotFoundError:
