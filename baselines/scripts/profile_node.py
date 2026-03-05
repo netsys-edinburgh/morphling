@@ -200,7 +200,7 @@ def _wait_for_port(
 def measure_tcp_bandwidth_iperf(
     peer: str,
     duration: int = 5,
-    retries: int = 5,
+    retries: int = 3,
     retry_delay: float = 3.0,
 ) -> dict[str, Any]:
     host, port = _split_peer(peer)
@@ -230,24 +230,22 @@ def measure_tcp_bandwidth_iperf(
     last_error = "unknown"
     for attempt in range(retries):
         if attempt > 0:
-            # Exponential backoff: 3, 6, 12, 24s
-            delay = retry_delay * (2 ** (attempt - 1))
+            # Flat retry delay — keep it short since
+            # --connect-timeout already handles hangs.
             print(
                 f"  iperf3 {peer}: retry "
                 f"{attempt + 1}/{retries} "
-                f"in {delay:.0f}s "
+                f"in {retry_delay:.0f}s "
                 f"(last: {last_error[:60]})"
             )
-            time.sleep(delay)
+            time.sleep(retry_delay)
 
-        # Pre-check: make sure port is reachable
-        # before launching iperf3 (avoids 15s hang)
-        if not _wait_for_port(host, port, timeout=10):
-            last_error = (
-                f"port {port} on {host} not "
-                f"reachable (pre-check)"
-            )
-            continue
+        # NOTE: do NOT call _wait_for_port() here — it
+        # opens a TCP connection that consumes the
+        # --one-off iperf3 server, causing the real
+        # iperf3 client to hit a dead socket.  The
+        # --connect-timeout 5000 flag handles unreachable
+        # servers.
 
         try:
             proc = subprocess.run(
