@@ -152,7 +152,11 @@ class ClassificationHead(nn.Module):
 
 
 class LMHead(nn.Module):
-    """Language-modeling head with causal next-token loss."""
+    """Language-modeling head with causal next-token loss.
+
+    The final LayerNorm and cross-entropy are computed in
+    FP32 to avoid BF16 overflow in softmax over large vocab.
+    """
 
     def __init__(self, d_model: int, vocab_size: int) -> None:
         super().__init__()
@@ -160,16 +164,30 @@ class LMHead(nn.Module):
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
 
     def forward(self, x: Tensor, targets: Tensor | None = None) -> Tensor:
-        x = self.ln_f(x)
-        logits = self.lm_head(x)
+        # Upcast to FP32 for numerical stability in the
+        # final norm + loss (BF16 softmax over 50K vocab
+        # overflows).  Use functional layer_norm with
+        # explicitly-cast weight/bias so that input and
+        # parameters are both FP32 even when the module
+        # was globally cast to BF16.
+        x = x.float()
+        x = F.layer_norm(
+            x,
+            self.ln_f.normalized_shape,
+            self.ln_f.weight.float(),
+            self.ln_f.bias.float() if self.ln_f.bias is not None else None,
+            self.ln_f.eps,
+        )
+        logits = F.linear(x, self.lm_head.weight.float(), self.lm_head.bias.float() if self.lm_head.bias is not None else None)
         if targets is not None:
             shift_logits = logits[..., :-1, :].contiguous()
             shift_targets = targets[..., 1:].contiguous()
-            return F.cross_entropy(
+            loss = F.cross_entropy(
                 shift_logits.view(-1, shift_logits.size(-1)),
                 shift_targets.view(-1),
                 reduction="mean",
             )
+            return loss
         return logits
 
 

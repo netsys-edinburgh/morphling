@@ -66,7 +66,9 @@ def seed_everything(seed: int, deterministic: bool = True) -> None:
     if deterministic:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-        torch.use_deterministic_algorithms(True, warn_only=True)
+        # Disabled: deterministic algorithms can cause hangs
+        # in backward pass with pipeline-parallel training.
+        # torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 def make_rank_seed(base_seed: int, rank: int) -> int:

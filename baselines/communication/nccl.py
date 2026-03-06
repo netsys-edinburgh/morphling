@@ -77,6 +77,7 @@ def _type_torch_to_nccl(torch_dtype: object) -> int:
         torch.float32: nccl.NCCL_FLOAT32,
         torch.float: nccl.NCCL_FLOAT32,
         torch.float16: nccl.NCCL_FLOAT16,
+        torch.bfloat16: nccl.NCCL_BFLOAT16,
         torch.float64: nccl.NCCL_FLOAT64,
         torch.int32: nccl.NCCL_INT32,
         torch.int: nccl.NCCL_INT,
@@ -106,9 +107,19 @@ class NCCLBackend:
         self.dp_nccl_comm = None
 
     def _barrier(self) -> None:
+        """torch.distributed barrier.
+
+        Uses the existing process-group NCCL communicator
+        (created lazily by torch on the first collective).
+        On a fresh deploy all ranks participate and it
+        succeeds immediately.  On a stale restart the
+        missing peers cause a clean 300 s timeout instead
+        of silently passing with stale store keys.
+        """
         dist = _import_dist()
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
+        if not (dist.is_available() and dist.is_initialized()):
+            return
+        dist.barrier()
 
     def _resolve_stream(
         self,

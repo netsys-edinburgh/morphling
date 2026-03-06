@@ -21,6 +21,7 @@ import fcntl
 import os
 import sys
 import time
+import threading
 import traceback
 from datetime import timedelta
 from typing import Any
@@ -30,6 +31,11 @@ import torch.distributed as dist
 import torch.nn as nn
 
 from baselines.communication.nccl import NCCLBackend
+from baselines.communication.nccl_functional import (
+    has_cupy_nccl,
+    nccl_group_start,
+    nccl_group_end,
+)
 from baselines.core.config import (
     BaseConfig,
     DeviceConfig,
@@ -87,6 +93,28 @@ class SyntheticDataLoader:
 
 # ── Worker ────────────────────────────────────────────────
 
+# Watchdog: updated by the training loop to prove liveness.
+# A daemon thread calls os._exit(1) after _WD_TIMEOUT
+# seconds of no progress so peers that lost a rank don't
+# hang forever in a blocking NCCL recv.
+_wd_ts: float = 0.0
+_WD_TIMEOUT = 300          # 5 min — longer than any iter
+
+
+def _watchdog_loop(rank: int) -> None:
+    """Daemon thread: exit the process when stuck."""
+    global _wd_ts
+    while True:
+        time.sleep(15)
+        if _wd_ts > 0 and time.time() - _wd_ts > _WD_TIMEOUT:
+            print(
+                f"[RANK {rank}] WATCHDOG: no progress for "
+                f"{_WD_TIMEOUT}s — peer may be dead. "
+                f"Exiting.",
+                flush=True,
+            )
+            os._exit(1)
+
 
 def worker(
     rank: int,
@@ -105,7 +133,9 @@ def worker(
             flush=True,
         )
         traceback.print_exc()
-        raise
+        # Hard exit so K8s restarts this rank immediately
+        # instead of waiting for Python cleanup.
+        os._exit(1)
 
 
 def _worker_impl(
@@ -297,13 +327,18 @@ def _worker_impl(
         end_layer=boundaries[pp_rank + 1],
         is_first=is_first,
         is_last=is_last,
-    ).to(device)
+    ).to(device).bfloat16()
 
     n_params = sum(p.numel() for p in model.parameters())
+    param_bytes = sum(
+        p.numel() * p.element_size()
+        for p in model.parameters()
+    )
     print(
         f"[RANK {rank}] layers"
         f" [{boundaries[pp_rank]},{boundaries[pp_rank+1]})"
-        f" params={n_params:,}",
+        f" params={n_params:,}"
+        f" weight_mem={param_bytes/1024**3:.2f}GB (bf16)",
         flush=True,
     )
 
@@ -343,6 +378,21 @@ def _worker_impl(
         betas=cfg.training.betas,
     )
 
+    # ── GPU memory report after model + optimizer ────────
+    _mem_alloc = torch.cuda.memory_allocated(device) / 1024**3
+    _mem_resv = torch.cuda.memory_reserved(device) / 1024**3
+    _mem_total = (
+        torch.cuda.get_device_properties(device).total_memory
+        / 1024**3
+    )
+    print(
+        f"[RANK {rank}] GPU mem after init:"
+        f" alloc={_mem_alloc:.2f}GB"
+        f" reserved={_mem_resv:.2f}GB"
+        f" total={_mem_total:.2f}GB",
+        flush=True,
+    )
+
     # ── Step 13: CUDA streams ────────────────────────────
     if gc_controller and gc_controller.is_supported:
         gc_bundle = gc_controller.get_default_bundle()
@@ -351,7 +401,7 @@ def _worker_impl(
         send_stream = gc_bundle.send
         dp_stream = gc_bundle.dp if dp_size > 1 else None
     else:
-        comp_stream = torch.cuda.default_stream(
+        comp_stream = torch.cuda.Stream(
             device=device
         )
         recv_stream = torch.cuda.Stream(
@@ -378,6 +428,7 @@ def _worker_impl(
         input_buffers = [
             torch.zeros(
                 act_shape,
+                dtype=torch.bfloat16,
                 requires_grad=True,
                 device=device,
             )
@@ -388,6 +439,7 @@ def _worker_impl(
         grad_buffers = [
             torch.zeros(
                 act_shape,
+                dtype=torch.bfloat16,
                 requires_grad=False,
                 device=device,
             )
@@ -454,11 +506,20 @@ def _worker_impl(
     # ── Step 17b: Training loop ──────────────────────────
     _perf_log = os.environ.get("ASTEROID_PERF_LOG", "")
     _perf_log = _perf_log in ("1", "true", "yes")
+
+    # ── Start watchdog daemon ────────────────────────────
+    global _wd_ts
+    _wd = threading.Thread(
+        target=_watchdog_loop, args=(rank,), daemon=True,
+    )
+    _wd.start()
+
     dist.barrier()
     model.train()
     t0 = time.time()
 
     for iter_num in range(cfg.training.max_iters):
+        _wd_ts = time.time()           # pet the watchdog
         iter_start = time.time()
 
         # Green context: update streams for this step
@@ -481,7 +542,7 @@ def _worker_impl(
         lr = get_lr(iter_num, cfg)
         for pg in optimizer.param_groups:
             pg["lr"] = lr
-        optimizer.zero_grad(set_to_none=False)
+        optimizer.zero_grad(set_to_none=True)
 
         # Zero pre-allocated input grads
         if input_buffers is not None:
@@ -489,7 +550,7 @@ def _worker_impl(
                 if buf.grad is not None:
                     buf.grad.zero_()
 
-        micro_losses: list[float] = []
+        micro_losses: list = []
 
         # Collect micro-batches
         micro_inputs: list[torch.Tensor] = []
@@ -509,7 +570,10 @@ def _worker_impl(
         _needs_bwd_recv = pp_next is not None
 
         def _do_forward(
-            m: int, skip_recv: bool = False,
+            m: int,
+            skip_recv: bool = False,
+            start_group_before_send: bool = False,
+            end_group_after_recv: bool = False,
         ) -> None:
             if is_single:
                 _fwd_single(
@@ -533,6 +597,9 @@ def _worker_impl(
                     pp_next,
                     comp_stream,
                     send_stream,
+                    start_group_before_send=(
+                        start_group_before_send
+                    ),
                 )
                 cached[m] = out_list[0]
             elif is_last:
@@ -550,6 +617,9 @@ def _worker_impl(
                     comp_stream,
                     recv_stream,
                     skip_recv=skip_recv,
+                    end_group_after_recv=(
+                        end_group_after_recv
+                    ),
                 )
                 cached[m] = out_list2[0]
             else:
@@ -566,11 +636,20 @@ def _worker_impl(
                     recv_stream,
                     send_stream,
                     skip_recv=skip_recv,
+                    start_group_before_send=(
+                        start_group_before_send
+                    ),
+                    end_group_after_recv=(
+                        end_group_after_recv
+                    ),
                 )
                 cached[m] = out_list3[0]
 
         def _do_backward(
-            m: int, skip_recv: bool = False,
+            m: int,
+            skip_recv: bool = False,
+            start_group_before_send: bool = False,
+            end_group_after_recv: bool = False,
         ) -> None:
             if is_single:
                 _bwd_single(cached[m], comp_stream)
@@ -583,6 +662,9 @@ def _worker_impl(
                     pp_prev,
                     comp_stream,
                     send_stream,
+                    start_group_before_send=(
+                        start_group_before_send
+                    ),
                 )
             elif is_first:
                 assert grad_buffers is not None
@@ -594,6 +676,9 @@ def _worker_impl(
                     comp_stream,
                     recv_stream,
                     skip_recv=skip_recv,
+                    end_group_after_recv=(
+                        end_group_after_recv
+                    ),
                 )
             else:
                 assert input_buffers is not None
@@ -609,16 +694,48 @@ def _worker_impl(
                     recv_stream,
                     send_stream,
                     skip_recv=skip_recv,
+                    start_group_before_send=(
+                        start_group_before_send
+                    ),
+                    end_group_after_recv=(
+                        end_group_after_recv
+                    ),
                 )
 
         if use_1f1b and stage_ops is not None:
             # ── 1F1B Interleaved Schedule ────────────────
-            # Overlap: pre-post recv for the NEXT op while
-            # the CURRENT op's compute runs on the GPU.
+            # NCCL group notes:
+            #   Without ncclGroupStart/End, NCCL serialises
+            #   ALL P2P ops on the same communicator.
+            #   In 1F1B, every F→B transition produces
+            #   send(next) then recv(next) — same peer,
+            #   opposite direction → deadlock.  Similarly
+            #   every B→F has send(prev) then recv(prev).
+            #   We wrap these paired ops in a single group
+            #   so NCCL resolves them atomically.
+            _skip_prepost = (
+                has_cupy_nccl()
+                and nccl.pp_nccl_comm is not None
+            )
+            # Whether F/B ops actually have a send or recv
+            # to the relevant peer.
+            _f_sends_next = (
+                pp_next is not None and not is_last
+            )
+            _b_sends_prev = (
+                pp_prev is not None and not is_first
+            )
+
             pending_recv = None  # _PendingRecv | None
             n_ops = len(stage_ops)
+            _group_open = False
 
             for i, (action, m) in enumerate(stage_ops):
+                print(
+                    f"[R{rank}] {action}{m}"
+                    f" ({i+1}/{n_ops})",
+                    flush=True,
+                )
                 # 1) Complete any pre-posted recv
                 if pending_recv is not None:
                     pending_recv.wait()
@@ -627,14 +744,58 @@ def _worker_impl(
                 else:
                     skip = False
 
+                # Determine group flags.
+                # start_group: call ncclGroupStart before
+                #   this op's SEND (pairs with next op's
+                #   recv to the same peer).
+                # end_group: call ncclGroupEnd after this
+                #   op's RECV (closes a group opened by
+                #   the previous op's send).
+                next_action = (
+                    stage_ops[i + 1][0]
+                    if i + 1 < n_ops
+                    else None
+                )
+                sg = False
+                if _skip_prepost:
+                    if (
+                        action == "F"
+                        and next_action == "B"
+                        and _f_sends_next
+                    ):
+                        sg = True
+                    elif (
+                        action == "B"
+                        and next_action == "F"
+                        and _b_sends_prev
+                    ):
+                        sg = True
+                eg = _group_open
+
                 # 2) Execute current F or B
                 if action == "F":
-                    _do_forward(m, skip_recv=skip)
+                    _do_forward(
+                        m,
+                        skip_recv=skip,
+                        start_group_before_send=sg,
+                        end_group_after_recv=eg,
+                    )
                 else:
-                    _do_backward(m, skip_recv=skip)
+                    _do_backward(
+                        m,
+                        skip_recv=skip,
+                        start_group_before_send=sg,
+                        end_group_after_recv=eg,
+                    )
+
+                _group_open = sg
 
                 # 3) Pre-post recv for next op (overlap)
-                if i + 1 < n_ops:
+                #    Skipped for CuPy NCCL (see note above).
+                if (
+                    not _skip_prepost
+                    and i + 1 < n_ops
+                ):
                     na, nm = stage_ops[i + 1]
                     if (
                         na == "F"
@@ -696,10 +857,28 @@ def _worker_impl(
             )
         optimizer.step()
 
+        # ── GPU mem after optimizer step (first 3 iters) ─
+        if iter_num < 3:
+            _ma = torch.cuda.memory_allocated(device)
+            _mr = torch.cuda.memory_reserved(device)
+            _mp = torch.cuda.max_memory_allocated(device)
+            print(
+                f"[RANK {rank}] iter {iter_num}"
+                f" post-step:"
+                f" alloc={_ma/1024**3:.2f}GB"
+                f" peak={_mp/1024**3:.2f}GB"
+                f" reserved={_mr/1024**3:.2f}GB",
+                flush=True,
+            )
+
         # Local sync only — pipeline schedule + flush_sends
         # already ensure all P2P is done.  A global barrier
         # here serialises every rank and adds >200 ms/iter.
         torch.cuda.synchronize()
+
+        # Free cached blocks so the next iteration starts
+        # with maximum available memory for activations.
+        torch.cuda.empty_cache()
 
         # ── Per-stage perf diagnostics ───────────────────
         if _perf_log and (
@@ -733,7 +912,9 @@ def _worker_impl(
         )
         if should_log:
             avg = (
-                sum(micro_losses) / len(micro_losses)
+                sum(t.item() if hasattr(t, 'item') else t
+                    for t in micro_losses)
+                / len(micro_losses)
                 if micro_losses
                 else 0.0
             )
@@ -752,6 +933,9 @@ def _worker_impl(
             _save_checkpoint(
                 model, optimizer, iter_num, rank, args
             )
+
+    # ── Flush any in-flight async checkpoint ─────────
+    _flush_checkpoint()
 
     # ── Green context cleanup (before process group) ──
     if gc_controller is not None:
@@ -775,14 +959,15 @@ def _fwd_single(
     micro_input: torch.Tensor,
     micro_target: torch.Tensor,
     cached: list[torch.Tensor],
-    micro_losses: list[float],
+    micro_losses: list,
     num_micro: int,
     comp_stream: torch.cuda.Stream,
 ) -> None:
     with torch.cuda.stream(comp_stream):
         loss = model(micro_input, micro_target)
-    micro_losses.append(loss.item())
-    cached.append(loss / num_micro)
+        scaled_loss = loss / num_micro
+    micro_losses.append(loss.detach())
+    cached.append(scaled_loss)
 
 
 def _fwd_first(
@@ -793,6 +978,7 @@ def _fwd_first(
     pp_next: int | None,
     comp_stream: torch.cuda.Stream,
     send_stream: torch.cuda.Stream,
+    start_group_before_send: bool = False,
 ) -> None:
     with torch.cuda.stream(comp_stream):
         out = model(micro_input)
@@ -800,7 +986,10 @@ def _fwd_first(
     if pp_next is not None:
         with torch.cuda.stream(send_stream):
             send_stream.wait_stream(comp_stream)
-            nccl.send(out.data, pp_next, send_stream)
+            send_buf = out.data.clone()
+            if start_group_before_send:
+                nccl_group_start()
+            nccl.send(send_buf, pp_next, send_stream)
 
 
 def _fwd_last(
@@ -808,23 +997,27 @@ def _fwd_last(
     input_buf: torch.Tensor,
     micro_target: torch.Tensor,
     cached: list[torch.Tensor],
-    micro_losses: list[float],
+    micro_losses: list,
     num_micro: int,
     nccl: NCCLBackend,
     pp_prev: int | None,
     comp_stream: torch.cuda.Stream,
     recv_stream: torch.cuda.Stream,
     skip_recv: bool = False,
+    end_group_after_recv: bool = False,
 ) -> None:
     if pp_prev is not None and not skip_recv:
         with torch.cuda.stream(recv_stream):
             nccl.recv(input_buf, pp_prev, recv_stream)
+            if end_group_after_recv:
+                nccl_group_end()
     with torch.cuda.stream(comp_stream):
         if pp_prev is not None and not skip_recv:
             comp_stream.wait_stream(recv_stream)
         loss = model(input_buf, micro_target)
-    micro_losses.append(loss.item())
-    cached.append(loss / num_micro)
+        scaled_loss = loss / num_micro
+    micro_losses.append(loss.detach())
+    cached.append(scaled_loss)
 
 
 def _fwd_middle(
@@ -838,10 +1031,14 @@ def _fwd_middle(
     recv_stream: torch.cuda.Stream,
     send_stream: torch.cuda.Stream,
     skip_recv: bool = False,
+    start_group_before_send: bool = False,
+    end_group_after_recv: bool = False,
 ) -> None:
     if pp_prev is not None and not skip_recv:
         with torch.cuda.stream(recv_stream):
             nccl.recv(input_buf, pp_prev, recv_stream)
+            if end_group_after_recv:
+                nccl_group_end()
     with torch.cuda.stream(comp_stream):
         if pp_prev is not None and not skip_recv:
             comp_stream.wait_stream(recv_stream)
@@ -850,7 +1047,10 @@ def _fwd_middle(
     if pp_next is not None:
         with torch.cuda.stream(send_stream):
             send_stream.wait_stream(comp_stream)
-            nccl.send(out.data, pp_next, send_stream)
+            send_buf = out.data.clone()
+            if start_group_before_send:
+                nccl_group_start()
+            nccl.send(send_buf, pp_next, send_stream)
 
 
 # ── Backward helpers ─────────────────────────────────────
@@ -871,14 +1071,18 @@ def _bwd_last(
     pp_prev: int | None,
     comp_stream: torch.cuda.Stream,
     send_stream: torch.cuda.Stream,
+    start_group_before_send: bool = False,
 ) -> None:
     with torch.cuda.stream(comp_stream):
         cached_out.backward()
     if pp_prev is not None and input_buf.grad is not None:
         with torch.cuda.stream(send_stream):
             send_stream.wait_stream(comp_stream)
+            grad_clone = input_buf.grad.clone()
+            if start_group_before_send:
+                nccl_group_start()
             nccl.send(
-                input_buf.grad, pp_prev, send_stream
+                grad_clone, pp_prev, send_stream
             )
 
 
@@ -890,6 +1094,7 @@ def _bwd_first(
     comp_stream: torch.cuda.Stream,
     recv_stream: torch.cuda.Stream,
     skip_recv: bool = False,
+    end_group_after_recv: bool = False,
 ) -> None:
     if pp_next is not None:
         if not skip_recv:
@@ -897,6 +1102,8 @@ def _bwd_first(
                 nccl.recv(
                     grad_buf, pp_next, recv_stream
                 )
+                if end_group_after_recv:
+                    nccl_group_end()
         with torch.cuda.stream(comp_stream):
             if not skip_recv:
                 comp_stream.wait_stream(recv_stream)
@@ -917,6 +1124,8 @@ def _bwd_middle(
     recv_stream: torch.cuda.Stream,
     send_stream: torch.cuda.Stream,
     skip_recv: bool = False,
+    start_group_before_send: bool = False,
+    end_group_after_recv: bool = False,
 ) -> None:
     if pp_next is not None:
         if not skip_recv:
@@ -924,6 +1133,8 @@ def _bwd_middle(
                 nccl.recv(
                     grad_buf, pp_next, recv_stream
                 )
+                if end_group_after_recv:
+                    nccl_group_end()
         with torch.cuda.stream(comp_stream):
             if not skip_recv:
                 comp_stream.wait_stream(recv_stream)
@@ -934,8 +1145,11 @@ def _bwd_middle(
     if pp_prev is not None and input_buf.grad is not None:
         with torch.cuda.stream(send_stream):
             send_stream.wait_stream(comp_stream)
+            grad_clone = input_buf.grad.clone()
+            if start_group_before_send:
+                nccl_group_start()
             nccl.send(
-                input_buf.grad, pp_prev, send_stream
+                grad_clone, pp_prev, send_stream
             )
 
 
@@ -1036,6 +1250,10 @@ def _mps_refcount_release(
         finally:
             fcntl.flock(lf, fcntl.LOCK_UN)
 
+# Global handle for the in-flight async checkpoint thread.
+_ckpt_thread: threading.Thread | None = None
+
+
 def _save_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -1043,25 +1261,81 @@ def _save_checkpoint(
     rank: int,
     args: argparse.Namespace,
 ) -> None:
-    """Save per-rank checkpoint."""
+    """Async per-rank checkpoint save.
+
+    Snapshots state_dicts to CPU (fast) on the calling
+    thread, then writes to disk in a background thread
+    so training can continue immediately.
+    """
+    global _ckpt_thread
+
+    # Wait for any previous async save to finish before
+    # snapshotting new state (avoids concurrent writes).
+    if _ckpt_thread is not None:
+        _ckpt_thread.join()
+        _ckpt_thread = None
+
+    # Snapshot to CPU — this is the fast part.
+    model_sd = {
+        k: v.cpu() for k, v in model.state_dict().items()
+    }
+    optim_sd = optimizer.state_dict()
+    # Deep-copy optimizer state tensors to CPU so the
+    # background thread owns all data.
+    cpu_optim_sd = _cpu_optim_state(optim_sd)
+
     ckpt_dir = os.path.join(args.output_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
     path = os.path.join(
         ckpt_dir, f"rank{rank}_iter{iter_num}.pt"
     )
-    torch.save(
-        {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "iter": iter_num,
-        },
-        path,
-    )
-    if rank == 0:
+
+    def _write() -> None:
+        torch.save(
+            {
+                "model": model_sd,
+                "optimizer": cpu_optim_sd,
+                "iter": iter_num,
+            },
+            path,
+        )
         print(
-            f"  Checkpoint saved: {path}",
+            f"  [R{rank}] Checkpoint written: {path}",
             flush=True,
         )
+
+    _ckpt_thread = threading.Thread(
+        target=_write, daemon=True,
+    )
+    _ckpt_thread.start()
+
+
+def _cpu_optim_state(
+    sd: dict,
+) -> dict:
+    """Deep-copy optimizer state dict with all tensors on CPU."""
+    import copy
+    out = copy.copy(sd)
+    if "state" in out:
+        new_state = {}
+        for k, v in out["state"].items():
+            new_v = {}
+            for sk, sv in v.items():
+                if isinstance(sv, torch.Tensor):
+                    new_v[sk] = sv.cpu()
+                else:
+                    new_v[sk] = sv
+            new_state[k] = new_v
+        out["state"] = new_state
+    return out
+
+
+def _flush_checkpoint() -> None:
+    """Wait for any in-flight async checkpoint to finish."""
+    global _ckpt_thread
+    if _ckpt_thread is not None:
+        _ckpt_thread.join()
+        _ckpt_thread = None
 
 
 # ── Strategy factory ─────────────────────────────────────

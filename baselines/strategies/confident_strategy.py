@@ -158,6 +158,14 @@ class ConfidentStrategy(ParallelismStrategy):
         if num_stages <= 1:
             return [], 0.0
 
+        # Minimum layers per stage to avoid degenerate partitions
+        # that cause pipeline bubble and NCCL timing issues
+        MIN_LAYERS_PER_STAGE = max(2, num_layers // (num_stages * 2))
+        logger.info(
+            "DP partition: min_layers_per_stage=%d",
+            MIN_LAYERS_PER_STAGE,
+        )
+
         # Extract memory budgets from device specs (in GB)
         memory_budgets_gb = [
             spec.memory_budget_mb / 1024.0
@@ -195,7 +203,8 @@ class ConfidentStrategy(ParallelismStrategy):
             return prefix[end + 1] - prefix[start]
 
         # Base case: stage 0 (first stage, has embedding)
-        for end in range(num_layers):
+        # Must have at least MIN_LAYERS_PER_STAGE layers
+        for end in range(MIN_LAYERS_PER_STAGE - 1, num_layers):
             num_sublayers = end + 1
             mem_est = self._estimate_stage_memory_gb(
                 model_config,
@@ -211,14 +220,22 @@ class ConfidentStrategy(ParallelismStrategy):
                 break  # Can't fit more layers on device 0
             dp[end][0] = range_cost(0, 0, end)
 
-        # Fill DP table with memory constraints
+        # Fill DP table with memory constraints + min layers
         for stage_idx in range(1, num_stages):
             is_last = stage_idx == num_stages - 1
             mem_budget = memory_budgets_gb[stage_idx]
-            for end in range(stage_idx, num_layers):
-                for cut in range(stage_idx - 1, end):
+            # Minimum end index: need MIN_LAYERS for each stage up to here
+            min_end = (stage_idx + 1) * MIN_LAYERS_PER_STAGE - 1
+            for end in range(max(stage_idx, min_end), num_layers):
+                # Minimum cut: previous stages need their min layers
+                min_cut = stage_idx * MIN_LAYERS_PER_STAGE - 1
+                # Maximum cut: this stage needs at least MIN_LAYERS
+                max_cut = end - MIN_LAYERS_PER_STAGE
+                for cut in range(max(stage_idx - 1, min_cut), min(end, max_cut + 1)):
                     # Layers cut+1..end on this stage
                     num_sublayers = end - cut
+                    if num_sublayers < MIN_LAYERS_PER_STAGE:
+                        continue  # Skip: too few layers
                     mem_est = self._estimate_stage_memory_gb(
                         model_config,
                         num_sublayers,

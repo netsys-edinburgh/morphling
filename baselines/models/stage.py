@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint as ckpt
 
 from baselines.core.config import BaseConfig, ModelConfig
 
@@ -76,7 +77,7 @@ class PipelineStage(nn.Module):
                 x = self.embedding(x) + self.pos_embedding(pos)
                 x = self.drop(x)
         for block in self.blocks:
-            x = block(x)
+            x = ckpt(block, x, use_reentrant=False)
         if self.is_last:
             return self.head(x, targets)
         return x

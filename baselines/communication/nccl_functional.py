@@ -66,15 +66,21 @@ def _type_torch_to_nccl(torch_dtype: object) -> int:
     """Map torch dtype → CuPy NCCL dtype constant."""
     nccl = _import_cupy_nccl()
     torch = _import_torch()
-    return {
+    _map = {
         torch.float32: nccl.NCCL_FLOAT32,
         torch.float: nccl.NCCL_FLOAT32,
         torch.float16: nccl.NCCL_FLOAT16,
+        torch.bfloat16: nccl.NCCL_BFLOAT16,
         torch.float64: nccl.NCCL_FLOAT64,
         torch.int32: nccl.NCCL_INT32,
         torch.int: nccl.NCCL_INT,
         torch.uint8: nccl.NCCL_UINT8,
-    }[torch_dtype]
+    }
+    if torch_dtype not in _map:
+        raise TypeError(
+            f"Unsupported dtype for NCCL: {torch_dtype}"
+        )
+    return _map[torch_dtype]
 
 
 def _nccl_send(
@@ -356,11 +362,36 @@ def has_cupy_nccl() -> bool:
     return _has_cupy
 
 
+def nccl_group_start() -> None:
+    """Begin an NCCL group (CuPy NCCL only).
+
+    All ncclSend/ncclRecv calls between ``nccl_group_start``
+    and ``nccl_group_end`` are submitted atomically, which
+    prevents the serialisation deadlock that occurs when a
+    rank does ``send(peer)`` immediately followed by
+    ``recv(peer)`` without grouping.
+    """
+    if not _has_cupy:
+        return
+    nccl = _import_cupy_nccl()
+    nccl.groupStart()
+
+
+def nccl_group_end() -> None:
+    """End an NCCL group (CuPy NCCL only)."""
+    if not _has_cupy:
+        return
+    nccl = _import_cupy_nccl()
+    nccl.groupEnd()
+
+
 __all__ = [
     "functional_send",
     "functional_recv",
     "functional_recv_async",
     "flush_all_sends",
     "has_cupy_nccl",
+    "nccl_group_start",
+    "nccl_group_end",
     "_PendingRecv",
 ]

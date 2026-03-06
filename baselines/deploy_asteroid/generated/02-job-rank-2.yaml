@@ -16,8 +16,10 @@ metadata:
     stage: "2"
     rank: "2"
 spec:
-  # Retry failed pods up to 3 times
-  backoffLimit: 3
+  # Allow many restarts so a failed rank survives
+  # long enough for peer watchdogs (300 s) to fire
+  # and trigger a coordinated restart.
+  backoffLimit: 50
   # Clean up completed jobs after 1 hour
   ttlSecondsAfterFinished: 3600
   # Only run one pod (no parallelism within job)
@@ -134,19 +136,23 @@ spec:
             - name: NCCL_SOCKET_IFNAME
               value: "eth0"
             - name: NCCL_DEBUG
-              value: "WARN"
+              value: "INFO"
             - name: NCCL_IB_DISABLE
               value: "1"
             - name: NCCL_P2P_DISABLE
-              value: "1"
+              value: "0"
             - name: NCCL_SHM_DISABLE
               value: "0"
+            - name: NCCL_CONNECT_RETRIES
+              value: "10"
 
             # CUDA configuration
             - name: CUDA_VISIBLE_DEVICES
               value: "0"
             - name: CUDA_LAUNCH_BLOCKING
               value: "0"
+            - name: CUBLAS_WORKSPACE_CONFIG
+              value: ":4096:8"
 
             # Baselines plan configuration
             - name: HPP_PLAN_PATH
