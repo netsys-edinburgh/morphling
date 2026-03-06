@@ -111,15 +111,15 @@ class ConfidentStrategy(ParallelismStrategy):
 
         Port of Confidant memory model with GQA support.
         Accounts for: weights, optimizer states, gradients, activations.
+        Works for GPT-2, LLaMA, and OPT via ModelConfig fields.
         """
         h = float(model_config.embedding_dim)
         v = float(model_config.vocab_size)
-        # GQA: num_kv_heads may be less than num_attention_heads
-        a = float(getattr(model_config, "num_attention_heads", h // 128))
-        kv = float(getattr(model_config, "num_kv_heads", a))
-        hff = float(getattr(model_config, "d_ff", 4 * h))
+        a = float(model_config.num_heads)
+        kv = float(model_config.num_kv_heads)
+        hff = float(model_config.d_ff)
         s = float(model_config.seq_length)
-        b = float(getattr(model_config, "micro_batch_size", 1))
+        b = float(model_config.micro_batch_size)
         sublayer = float(num_sublayers)
 
         gqa_ratio = kv / a if a > 0 else 1.0
@@ -127,7 +127,9 @@ class ConfidentStrategy(ParallelismStrategy):
 
         # m1: Model weights (fp32 = 4 bytes)
         attn_params = 2 * h * h * (1 + gqa_ratio)
-        ffn_params = 2 * h * hff
+        # LLaMA SwiGLU has 3 matrices; GPT-2/OPT have 2
+        ffn_mult = 3.0 if model_config.model_type == "llama" else 2.0
+        ffn_params = ffn_mult * h * hff
         transformer_params = attn_params + ffn_params + 12 * h
 
         m1 = (
@@ -374,7 +376,8 @@ class ConfidentStrategy(ParallelismStrategy):
         right_id = topology.device_specs[right_stage].device_id
         bw = self._lookup_link_strict(topology.bandwidths, left_id, right_id, "bandwidth")
         lat = self._lookup_link_strict(topology.latencies, left_id, right_id, "latency")
-        payload = model_config.seq_length * model_config.embedding_dim * 4.0
+        bs = max(1, model_config.micro_batch_size)
+        payload = bs * model_config.seq_length * model_config.embedding_dim * 4.0
         payload_mb = payload / (1024.0 * 1024.0)
         return lat + payload_mb / max(bw, 1e-6) * 1000.0
 

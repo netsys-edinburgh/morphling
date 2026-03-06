@@ -49,10 +49,15 @@ class DistributedConfig:
 
 @dataclass
 class ModelConfig:
-    """Model architecture and task-head configuration."""
+    """Model architecture and task-head configuration.
+
+    Supports GPT-2, LLaMA, OPT, and encoder models.  Every
+    strategy and scheduler pulls model-dependent values from
+    this single config — no hardcoded model sizes elsewhere.
+    """
 
     model_name: str = "gpt2"
-    model_type: str = "gpt2"
+    model_type: str = "gpt2"  # gpt2 | llama | opt | encoder
     task_type: str = "classification"
     task: str = "SeqClassification"
     seq_length: int = 2048
@@ -60,10 +65,12 @@ class ModelConfig:
     embedding_dim: int = 768
     num_layers: int = 12
     num_heads: int = 12
+    num_kv_heads: int = 0  # GQA key/value heads; 0 → MHA (= num_heads)
     d_ff: int = 3072
     vocab_size: int = 50257
     num_classes: int = 2
     dropout: float = 0.1
+    micro_batch_size: int = 1  # for memory estimation
     use_flash_attention: bool = True
 
     def __post_init__(self) -> None:
@@ -73,6 +80,79 @@ class ModelConfig:
             self.seq_length = self.max_seq_len
         elif self.seq_length != 2048 and self.max_seq_len == 2048:
             self.max_seq_len = self.seq_length
+        # num_kv_heads == 0 means MHA (same as num_heads)
+        if self.num_kv_heads <= 0:
+            self.num_kv_heads = self.num_heads
+
+    # ── Model-size helpers (used by strategies / schedulers) ──
+
+    def params_per_layer(self) -> int:
+        """Trainable parameters in one transformer layer.
+
+        Counts: Q/K/V/O projections (attention), gate/up/down or
+        fc/proj (FFN), and LayerNorm / RMSNorm parameters.
+        """
+        h = self.embedding_dim
+        kv = self.num_kv_heads if self.num_kv_heads > 0 else self.num_heads
+        head_dim = h // self.num_heads if self.num_heads > 0 else h
+
+        # Attention projections
+        q_params = h * (self.num_heads * head_dim)     # W_q
+        k_params = h * (kv * head_dim)                 # W_k
+        v_params = h * (kv * head_dim)                 # W_v
+        o_params = (self.num_heads * head_dim) * h     # W_o
+        attn_params = q_params + k_params + v_params + o_params
+
+        # FFN: 2 matrices for GPT-2/OPT, 3 for LLaMA (SwiGLU)
+        if self.model_type == "llama":
+            ffn_params = 3 * h * self.d_ff  # gate + up + down
+        else:
+            ffn_params = 2 * h * self.d_ff  # fc + proj
+
+        # Norms (LayerNorm or RMSNorm): 2 per layer × h each
+        norm_params = 2 * h
+
+        return attn_params + ffn_params + norm_params
+
+    def total_params(self) -> int:
+        """Total trainable parameters in the model.
+
+        Includes: embedding, all transformer layers, and LM head.
+        """
+        h = self.embedding_dim
+        v = self.vocab_size
+        embedding = h * v  # token embedding
+        layers = self.num_layers * self.params_per_layer()
+        head = h * v  # LM head (often tied with embedding)
+        return embedding + layers + head
+
+    def gradient_size_gb(
+        self,
+        num_stages: int = 1,
+        bytes_per_param: int = 4,
+    ) -> float:
+        """Gradient payload in GB for DP allreduce.
+
+        In pipeline-parallel training, each stage holds a
+        fraction of model params.  The gradient to allreduce
+        is proportional to that fraction.
+        """
+        params = self.total_params()
+        per_stage = params / max(num_stages, 1)
+        return per_stage * bytes_per_param / (1024 ** 3)
+
+    def activation_size_gb(
+        self,
+        batch_size: int | None = None,
+        bytes_per_element: int = 4,
+    ) -> float:
+        """Activation tensor payload in GB for PP send/recv.
+
+        Shape = (batch, seq_len, embedding_dim).
+        """
+        bs = batch_size if batch_size is not None else self.micro_batch_size
+        total = bs * self.seq_length * self.embedding_dim
+        return total * bytes_per_element / (1024 ** 3)
 
 
 @dataclass

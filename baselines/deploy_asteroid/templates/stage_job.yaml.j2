@@ -40,6 +40,15 @@ spec:
       restartPolicy: OnFailure
 
       # =========================================
+      # Host networking - bypass Flannel overlay
+      # =========================================
+      # Pods use the host's physical NIC (ens33) directly.
+      # Eliminates veth→flannel→VXLAN encapsulation overhead
+      # for NCCL/Gloo P2P and allreduce traffic.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+
+      # =========================================
       # Node selection - pin to specific hardware
       # =========================================
       nodeSelector:
@@ -65,12 +74,12 @@ spec:
             - sh
             - -c
             - |
-              echo "Waiting for asteroid-master service..."
-              until nslookup asteroid-master.{{ namespace | default('default') }}.svc.cluster.local; do
-                echo "Master not ready, waiting..."
+              echo "Waiting for master ({{ master_ip }}:{{ master_port | default(29500) }})..."
+              until nc -z {{ master_ip }} {{ master_port | default(29500) }} 2>/dev/null; do
+                echo "Master not ready, retrying..."
                 sleep 2
               done
-              echo "Master service is ready!"
+              echo "Master is reachable!"
           resources:
             requests:
               cpu: "10m"
@@ -130,11 +139,16 @@ spec:
             - name: LOCAL_RANK
               value: "0"
             - name: MASTER_ADDR
-              value: "asteroid-master.{{ namespace | default('default') }}.svc.cluster.local"
+              value: "{{ master_ip }}"
             - name: MASTER_PORT
               value: "{{ master_port | default(29500) }}"
 
-            # NCCL configuration
+            # Gloo configuration (full-mesh peer connections)
+            # With hostNetwork, use the physical NIC (ens33)
+            - name: GLOO_SOCKET_IFNAME
+              value: "{{ nccl_ifname }}"
+
+            # NCCL configuration — physical NIC for host networking
             - name: NCCL_SOCKET_IFNAME
               value: "{{ nccl_ifname }}"
             - name: NCCL_DEBUG
@@ -147,6 +161,16 @@ spec:
               value: "{{ nccl_shm_disable | default('0') }}"
             - name: NCCL_CONNECT_RETRIES
               value: "10"
+
+            # NCCL socket tuning for TCP throughput
+            - name: NCCL_NSOCKS_PERTHREAD
+              value: "4"
+            - name: NCCL_SOCKET_NTHREADS
+              value: "4"
+            - name: NCCL_BUFFSIZE
+              value: "8388608"
+            - name: NCCL_NET_GDR_LEVEL
+              value: "0"
 
             # CUDA configuration
             - name: CUDA_VISIBLE_DEVICES
@@ -247,5 +271,5 @@ spec:
             path: /var/lib/baselines/checkpoints/rank-{{ rank }}
             type: DirectoryOrCreate
 
-      # DNS configuration for headless service resolution
-      dnsPolicy: ClusterFirst
+      # DNS policy is set above (ClusterFirstWithHostNet)
+      # to ensure K8s DNS still works with hostNetwork: true

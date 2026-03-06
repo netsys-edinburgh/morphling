@@ -183,6 +183,7 @@ class HFModelAdapter:
             "llama",
             "mistral",
             "qwen2",
+            "opt",
         }
         task_type = "lm" if model_type in lm_types else "classification"
         task = (

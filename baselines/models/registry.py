@@ -9,11 +9,13 @@ from baselines.core.config import BaseConfig, ModelConfig
 from .bert import EncoderBlock
 from .gpt2 import ClassificationHead, GPT2Block, LMHead
 from .llama import LlamaBlock
+from .opt import OPTBlock
 
 MODEL_REGISTRY: dict[str, dict[str, Any]] = {
     "gpt2": {"block": GPT2Block, "causal": True},
     "encoder": {"block": EncoderBlock, "causal": False},
     "llama": {"block": LlamaBlock, "causal": True},
+    "opt": {"block": OPTBlock, "causal": True},
 }
 
 TASK_REGISTRY: dict[str, type] = {

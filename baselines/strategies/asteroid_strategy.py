@@ -164,9 +164,14 @@ class AsteroidStrategy(ParallelismStrategy):
         spec: DeviceConfig,
         layer_idx: int,
     ) -> tuple[float, float]:
+        """Synthetic per-layer time scaled by model params."""
         cap = max(spec.compute_capacity, 0.1)
-        dim = max(1.0, model_config.embedding_dim / 1024.0)
-        base = (0.9 + 0.01 * layer_idx) * dim / cap
+        # Scale by FLOP-proxy: params_per_layer relative to a
+        # GPT-2-small baseline (≈7 M params/layer).
+        baseline_params = 7_000_000.0
+        layer_params = max(1.0, float(model_config.params_per_layer()))
+        scale = layer_params / baseline_params
+        base = (0.9 + 0.01 * layer_idx) * scale / cap
         return base, 2.0 * base
 
     def _dp_plan(
@@ -457,12 +462,15 @@ class AsteroidStrategy(ParallelismStrategy):
         start_l: int,
         end_l: int,
     ) -> float:
+        """Weight memory in MB for layers [start_l, end_l).
+
+        Uses ModelConfig.params_per_layer() which counts
+        attention + FFN + norms for any supported model type.
+        """
         span = max(1, end_l - start_l)
-        num_layers = max(1, model_config.num_layers)
-        params = model_config.embedding_dim * max(1, model_config.d_ff)
-        params *= 2
-        per_layer_mb = params * 4.0 / (1024.0 * 1024.0 * num_layers)
-        return max(1e-6, per_layer_mb * span)
+        params = model_config.params_per_layer() * span
+        # 4 bytes per param (fp32)
+        return max(1e-6, params * 4.0 / (1024.0 * 1024.0))
 
     def _activations_mb(
         self,
@@ -470,6 +478,11 @@ class AsteroidStrategy(ParallelismStrategy):
         start_l: int,
         end_l: int,
     ) -> float:
+        """Activation memory in MB for one sample, layers [start_l, end_l).
+
+        Shape per layer: (1, seq_len, embedding_dim).
+        Callers scale by batch_size as needed.
+        """
         span = max(1, end_l - start_l)
         per_layer = model_config.seq_length * model_config.embedding_dim
         per_layer_mb = per_layer * 4.0 / (1024.0 * 1024.0)

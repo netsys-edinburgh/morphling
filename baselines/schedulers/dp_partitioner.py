@@ -24,6 +24,30 @@ class ModelConfig:
     max_seq_len: int = 512  # s
     batch_size: int = 2  # b (micro-batch size)
     num_layers: int = 32  # total transformer layers
+    model_type: str = "llama"  # gpt2 | llama | opt | encoder
+
+    @classmethod
+    def from_core_config(
+        cls,
+        core_cfg: object,
+    ) -> "ModelConfig":
+        """Construct from baselines.core.config.ModelConfig.
+
+        Bridges the two config representations so the
+        DPPartitioner can be driven directly from the YAML
+        config without manual field mapping.
+        """
+        return cls(
+            hidden_size=getattr(core_cfg, "embedding_dim", 4096),
+            vocab_size=getattr(core_cfg, "vocab_size", 50257),
+            num_attention_heads=getattr(core_cfg, "num_heads", 32),
+            num_kv_heads=getattr(core_cfg, "num_kv_heads", 32),
+            intermediate_size=getattr(core_cfg, "d_ff", 11008),
+            max_seq_len=getattr(core_cfg, "seq_length", 512),
+            batch_size=getattr(core_cfg, "micro_batch_size", 2),
+            num_layers=getattr(core_cfg, "num_layers", 32),
+            model_type=getattr(core_cfg, "model_type", "llama"),
+        )
 
 
 class DPPartitioner:
@@ -256,11 +280,15 @@ class DPPartitioner:
         #   * V projection: h × (h × kv/a) — GQA reduces this
         #   * O projection: h × h
         #   Total attention = h² × (2 + 2×kv/a) = 2h²(1 + kv/a)
-        # - FFN per layer: 2 × h × hff (up + down projections)
+        # - FFN per layer:
+        #   * GPT-2/OPT: 2 × h × hff (fc + proj)
+        #   * LLaMA SwiGLU: 3 × h × hff (gate + up + down)
         # - Biases/LayerNorm: ~12h per layer
         # - Output head: h × v (tied with embedding typically)
         attn_params = 2 * h * h * (1 + gqa_ratio)  # 4h² for MHA, less for GQA
-        ffn_params = 2 * h * hff
+        model_type = getattr(cfg, "model_type", "llama")
+        ffn_mult = 3.0 if model_type == "llama" else 2.0
+        ffn_params = ffn_mult * h * hff
         transformer_params = attn_params + ffn_params + 12 * h
 
         m1 = (

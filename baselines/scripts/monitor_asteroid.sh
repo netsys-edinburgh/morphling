@@ -85,8 +85,37 @@ get_pod_for_rank() {
         --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null | head -1
 }
 
-# Return the last-rank pod name (the one that prints loss)
+# Return the pod that actually prints loss/iter lines.
+# In PP×DP layouts the "last pipeline stage, first DP replica" (rank 1) is the
+# one that logs iter/loss — NOT necessarily the highest-numbered rank.
+# We cache the result after the first successful probe.
+_LOSS_POD=""
 get_last_rank_pod() {
+    # Return cached pod if still running
+    if [[ -n "$_LOSS_POD" ]]; then
+        if kubectl get pod "$_LOSS_POD" -n "${NAMESPACE}" --no-headers 2>/dev/null | grep -q Running; then
+            echo "$_LOSS_POD"
+            return
+        fi
+        _LOSS_POD=""  # pod gone, re-probe
+    fi
+
+    # Probe each pod for iter lines; pick the first one that has them
+    local pod
+    while IFS= read -r pod; do
+        local count
+        count=$(kubectl logs "$pod" --tail=50 -n "${NAMESPACE}" 2>/dev/null \
+            | grep -cE '^\s*iter\s+' || true)
+        count="${count//[^0-9]/}"   # strip whitespace/newlines
+        [[ -z "$count" ]] && count=0
+        if (( count > 0 )); then
+            _LOSS_POD="$pod"
+            echo "$pod"
+            return
+        fi
+    done < <(get_pods | awk '{print $1}' | sort)
+
+    # Fallback: return the last pod alphabetically (original behavior)
     get_pods | sort | tail -1 | awk '{print $1}'
 }
 

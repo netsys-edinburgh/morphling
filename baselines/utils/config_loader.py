@@ -43,11 +43,20 @@ def _parse_config(raw: dict[str, object]) -> BaseConfig:
     parallel_raw = raw.get("parallelism", raw.get("parallel", {}))
     # NOTE: Cluster config does NOT include bandwidth data.
     # All bandwidth must come from iperf3 profiling. NO FALLBACKS.
+    model_cfg = _build_dataclass(ModelConfig, raw.get("model", {}))
+    training_cfg = _build_dataclass(TrainingConfig, raw.get("training", {}))
+
+    # Sync micro_batch_size into ModelConfig so strategies
+    # and schedulers can access it without a separate
+    # TrainingConfig reference.
+    if model_cfg.micro_batch_size <= 1 and training_cfg.micro_batch_size > 1:
+        model_cfg.micro_batch_size = training_cfg.micro_batch_size
+
     return BaseConfig(
         device=_build_dataclass(DeviceConfig, raw.get("device", {})),
         distributed=_build_dataclass(DistributedConfig, raw.get("distributed", {})),
-        model=_build_dataclass(ModelConfig, raw.get("model", {})),
-        training=_build_dataclass(TrainingConfig, raw.get("training", {})),
+        model=model_cfg,
+        training=training_cfg,
         parallel=_build_dataclass(ParallelConfig, parallel_raw),
         fault_tolerance=_build_dataclass(
             FaultToleranceConfig,
@@ -64,15 +73,26 @@ def _build_dataclass(
     cls: type[_DataclassT],
     data: object,
 ) -> _DataclassT:
-    """Build a dataclass from a dict, ignoring unknown keys."""
+    """Build a dataclass from a dict, ignoring unknown keys.
+
+    Supports YAML-to-dataclass field aliases (e.g. ``n_kv_heads``
+    in YAML maps to ``num_kv_heads`` in ModelConfig).
+    """
     if not isinstance(data, dict):
         return cls()
     dataclass_fields = getattr(cls, "__dataclass_fields__", {})
     valid_fields = set(dataclass_fields.keys())
+    # YAML → dataclass field aliases
+    _ALIASES: dict[str, str] = {
+        "n_kv_heads": "num_kv_heads",
+    }
     filtered: dict[str, object] = {}
     for key, value in cast(dict[object, object], data).items():
-        if isinstance(key, str) and key in valid_fields:
-            filtered[key] = value
+        if not isinstance(key, str):
+            continue
+        field_name = _ALIASES.get(key, key)
+        if field_name in valid_fields:
+            filtered[field_name] = value
     return cls(**filtered)
 
 

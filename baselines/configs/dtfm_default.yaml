@@ -2,7 +2,7 @@
 # Strategy: GCMA topology optimizer + DP layer partitioner + GPipe schedule
 model:
   model_name: "gpt2"
-  model_type: "gpt2"
+  model_type: "gpt2"             # gpt2 | llama | opt | encoder
   task_type: "lm"
   task: "Seq2SeqClassification"
   seq_length: 128
@@ -10,6 +10,7 @@ model:
   embedding_dim: 768
   num_layers: 12
   num_heads: 12
+  n_kv_heads: 12                  # GQA heads (0 = MHA)
   d_ff: 3072
   vocab_size: 50257
   num_classes: 2

@@ -9,6 +9,11 @@ metadata:
     component: master-service
 spec:
   clusterIP: None
+  # Publish endpoints even when pods are not Ready yet.
+  # Required for torch.distributed init_process_group:
+  # all ranks must reach the master during startup,
+  # before any pod passes a readiness check.
+  publishNotReadyAddresses: true
   selector:
     app: baselines-asteroid
     rank: "0"

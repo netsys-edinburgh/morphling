@@ -1011,14 +1011,12 @@ phase_manifests() {
     --strategy "${STRATEGY:-asteroid}" \
     --output-dir "${GENERATED_DIR}"
 
-  # Verify NCCL_SOCKET_IFNAME is set to eth0 in manifests (K8s pods use eth0)
-  info "Verifying NCCL_SOCKET_IFNAME is set to eth0 in manifests..."
-  local bad_ifname
-  bad_ifname=$(grep -l 'value: "ens' "${GENERATED_DIR}"/02-job-rank-*.yaml 2>/dev/null || true)
-  if [[ -n "$bad_ifname" ]]; then
-    warn "Found host NIC name in manifests, fixing to eth0..."
-    sed -i 's/value: "ens[0-9]*"/value: "eth0"/g' "${GENERATED_DIR}"/02-job-rank-*.yaml
-  fi
+  # With hostNetwork: true, pods use the host's physical
+  # NIC (ens33) directly — do NOT rewrite to eth0.
+  # The generate_manifests.py reads the NIC name from
+  # hpp_plan.json node_mapping[rank].nic and sets it
+  # correctly for both NCCL_SOCKET_IFNAME and
+  # GLOO_SOCKET_IFNAME.
 
   log "Manifests generated in ${GENERATED_DIR}/"
   ls -la "${GENERATED_DIR}"/*.yaml 2>/dev/null || true

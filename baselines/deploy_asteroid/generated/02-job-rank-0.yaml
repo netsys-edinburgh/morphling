@@ -40,6 +40,15 @@ spec:
       restartPolicy: OnFailure
 
       # =========================================
+      # Host networking - bypass Flannel overlay
+      # =========================================
+      # Pods use the host's physical NIC (ens33) directly.
+      # Eliminates veth→flannel→VXLAN encapsulation overhead
+      # for NCCL/Gloo P2P and allreduce traffic.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+
+      # =========================================
       # Node selection - pin to specific hardware
       # =========================================
       nodeSelector:
@@ -74,7 +83,7 @@ spec:
             - "--config"
             - "/workspace/baselines/configs/asteroid_default.yaml"
             - "--strategy"
-            - "confident"
+            - "dtfm"
             - "--rank"
             - "0"
             - "--world-size"
@@ -108,13 +117,18 @@ spec:
             - name: LOCAL_RANK
               value: "0"
             - name: MASTER_ADDR
-              value: "asteroid-master.default.svc.cluster.local"
+              value: "10.203.54.11"
             - name: MASTER_PORT
               value: "29500"
 
-            # NCCL configuration
+            # Gloo configuration (full-mesh peer connections)
+            # With hostNetwork, use the physical NIC (ens33)
+            - name: GLOO_SOCKET_IFNAME
+              value: "ens33"
+
+            # NCCL configuration — physical NIC for host networking
             - name: NCCL_SOCKET_IFNAME
-              value: "eth0"
+              value: "ens33"
             - name: NCCL_DEBUG
               value: "INFO"
             - name: NCCL_IB_DISABLE
@@ -125,6 +139,16 @@ spec:
               value: "0"
             - name: NCCL_CONNECT_RETRIES
               value: "10"
+
+            # NCCL socket tuning for TCP throughput
+            - name: NCCL_NSOCKS_PERTHREAD
+              value: "4"
+            - name: NCCL_SOCKET_NTHREADS
+              value: "4"
+            - name: NCCL_BUFFSIZE
+              value: "8388608"
+            - name: NCCL_NET_GDR_LEVEL
+              value: "0"
 
             # CUDA configuration
             - name: CUDA_VISIBLE_DEVICES
@@ -220,5 +244,5 @@ spec:
             path: /var/lib/baselines/checkpoints/rank-0
             type: DirectoryOrCreate
 
-      # DNS configuration for headless service resolution
-      dnsPolicy: ClusterFirst
+      # DNS policy is set above (ClusterFirstWithHostNet)
+      # to ensure K8s DNS still works with hostNetwork: true

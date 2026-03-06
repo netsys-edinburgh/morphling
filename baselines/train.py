@@ -226,16 +226,16 @@ def _worker_impl(
         boundaries = [0, cfg.model.num_layers]
 
     # ── Step 5: Init process group ───────────────────────
-    # Determine backend from config: nccl, gloo, or torch_dist (→gloo)
+    # Use Gloo for control-plane collectives (barrier,
+    # new_group).  P2P and allreduce use CuPy NCCL
+    # directly to avoid conflicts between torch.distributed
+    # NCCL communicators and CuPy NCCL communicators.
     _comm_backend = getattr(cfg.parallel, "comm_backend", "gloo")
-    if _comm_backend == "torch_dist":
-        _comm_backend = "gloo"  # torch_dist maps to gloo for control plane
-    # Validate backend availability
-    if _comm_backend == "nccl" and not dist.is_nccl_available():
-        logger.warning("NCCL not available, falling back to gloo")
+    if _comm_backend in ("torch_dist", "nccl"):
         _comm_backend = "gloo"
+    # Validate backend availability
     if _comm_backend == "gloo" and not dist.is_gloo_available():
-        raise RuntimeError("Neither NCCL nor Gloo backends available")
+        raise RuntimeError("Gloo backend not available")
 
     if not dist.is_initialized():
         # Detect K8s / multi-node: if MASTER_ADDR is set in
@@ -447,21 +447,13 @@ def _worker_impl(
         ]
 
     # ── Step 15: Pipeline neighbour ranks ────────────────
-    # Map pp_rank offsets to global ranks via
-    # pp_ranks_in_group so send/recv targets the correct
-    # rank in multi-DP configurations (matching
-    # asteroid_project/worker.py).
-    def _pp_global(pp_r: int | None) -> int | None:
-        if pp_r is None:
-            return None
-        if pp_ranks_in_group:
-            return pp_ranks_in_group[pp_r]
-        return pp_r
-
-    pp_prev = _pp_global(
-        pp_rank - 1 if pp_rank > 0 else None
-    )
-    pp_next = _pp_global(
+    # CuPy NCCL communicators are indexed by group-local
+    # rank (pp_rank 0..pp_size-1), NOT global rank.
+    # Use raw pp_rank offsets directly — the communicator
+    # was created with NcclCommunicator(pp_size, uid,
+    # pp_rank), so peer pp_rank±1 is the correct target.
+    pp_prev = pp_rank - 1 if pp_rank > 0 else None
+    pp_next = (
         pp_rank + 1 if pp_rank < pp_size - 1 else None
     )
 
@@ -542,7 +534,11 @@ def _worker_impl(
         lr = get_lr(iter_num, cfg)
         for pg in optimizer.param_groups:
             pg["lr"] = lr
-        optimizer.zero_grad(set_to_none=True)
+        # MUST use set_to_none=False to preserve the
+        # flat_param grad storage linkage.  set_to_none=True
+        # would detach param.grad from the flat buffer,
+        # causing DP all_reduce to operate on stale data.
+        optimizer.zero_grad(set_to_none=False)
 
         # Zero pre-allocated input grads
         if input_buffers is not None:
@@ -731,11 +727,12 @@ def _worker_impl(
             _group_open = False
 
             for i, (action, m) in enumerate(stage_ops):
-                print(
-                    f"[R{rank}] {action}{m}"
-                    f" ({i+1}/{n_ops})",
-                    flush=True,
-                )
+                if i == 0 or i == n_ops - 1 or i % 8 == 0:
+                    print(
+                        f"[R{rank}] {action}{m}"
+                        f" ({i+1}/{n_ops})",
+                        flush=True,
+                    )
                 # 1) Complete any pre-posted recv
                 if pending_recv is not None:
                     pending_recv.wait()
@@ -834,19 +831,15 @@ def _worker_impl(
                 _do_backward(m)
 
         # ── DP AllReduce ─────────────────────────────────
-        # Use torch.distributed.all_reduce with the DP
-        # process group directly (like asteroid_project).
-        # The nccl.allreduce() fallback path lacks a group
-        # parameter and would all-reduce across ALL ranks.
+        # Use CuPy NCCL allreduce on the DP communicator.
+        # This runs directly on GPU (— no CPU copy) and
+        # avoids torch.distributed backend conflicts.
         if (
             dp_size > 1
             and flat_param is not None
-            and dp_process_group is not None
+            and nccl.dp_nccl_comm is not None
         ):
-            dist.all_reduce(
-                flat_param.grad.data,
-                group=dp_process_group,
-            )
+            nccl.allreduce(flat_param.grad.data)
             flat_param.grad.data.div_(dp_size)
 
         # ── Grad clip + optimizer step ───────────────────
@@ -875,6 +868,15 @@ def _worker_impl(
         # already ensure all P2P is done.  A global barrier
         # here serialises every rank and adds >200 ms/iter.
         torch.cuda.synchronize()
+
+        # Compact timing (every iteration, rank 0 only)
+        if rank == 0:
+            iter_ms = (time.time() - iter_start) * 1000.0
+            print(
+                f"[TIMING] iter {iter_num}"
+                f" {iter_ms:.0f}ms",
+                flush=True,
+            )
 
         # Free cached blocks so the next iteration starts
         # with maximum available memory for activations.
@@ -908,7 +910,6 @@ def _worker_impl(
         should_log = (
             (is_last or is_single)
             and dp_rank == 0
-            and iter_num % cfg.training.log_interval == 0
         )
         if should_log:
             avg = (

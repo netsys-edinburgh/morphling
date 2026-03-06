@@ -143,6 +143,22 @@ def generate_headless_service(
     )
 
 
+def _get_master_ip(plan: Dict[str, Any]) -> str:
+    """Return rank-0's host IP for MASTER_ADDR.
+
+    With hostNetwork: true, rank 0 listens on its
+    host's physical IP, so all ranks must use that
+    IP (not the K8s service DNS) as MASTER_ADDR.
+    """
+    node_mapping = plan.get("node_mapping", {})
+    rank0_info = node_mapping.get("0", {})
+    ip = rank0_info.get("ip", "")
+    if ip:
+        return ip
+    # Fallback to service DNS if no IP in plan
+    return "asteroid-master.default.svc.cluster.local"
+
+
 def generate_job_manifest(
     env: Environment,
     plan: Dict[str, Any],
@@ -206,7 +222,8 @@ def generate_job_manifest(
             "memory_mb", 4096
         ),
         "gpu_id": node_info.get("gpu_id", 0),
-        "nccl_ifname": "eth0",
+        "nccl_ifname": node_info.get("nic", "ens33"),
+        "master_ip": _get_master_ip(plan),
         "micro_batch_size": micro_batch_size,
         "is_last_stage": (
             stage

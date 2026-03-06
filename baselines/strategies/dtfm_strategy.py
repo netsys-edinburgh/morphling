@@ -277,16 +277,18 @@ class DTFMStrategy(ParallelismStrategy):
                     bw_mbps / 1000.0, 1e-6
                 )
 
-        # Estimate gradient and activation sizes
-        # (in GB) from a representative transformer
-        # layer.  These are used for the GCMA cost
-        # function only — approximate values suffice.
+        # Compute gradient and activation sizes (GB)
+        # from model architecture via ModelConfig helpers.
         #
-        # gradient ≈ model params * 4 bytes per
-        # stage (divided across stages).
-        # activation ≈ seq_len * embed_dim * 4 bytes.
-        send_gradient_gb = 0.1
-        send_activation_gb = 0.01
+        # gradient  = params_per_stage × 4 bytes / 1 GB
+        # activation = micro_batch × seq_len × embed_dim × 4 / 1 GB
+        send_gradient_gb = model_config.gradient_size_gb(
+            num_stages=stage_count,
+            bytes_per_param=4,
+        )
+        send_activation_gb = model_config.activation_size_gb(
+            bytes_per_element=4,
+        )
 
         gcma = GCMAScheduler(
             num_devices=num_devices,
@@ -584,9 +586,11 @@ class DTFMStrategy(ParallelismStrategy):
         return max_lat + output_mb / max(min_bw, 1e-6) * 1000.0
 
     def _default_output_mb(self, model_config: ModelConfig) -> float:
-        bytes_per_token = 4.0
-        total = model_config.seq_length * model_config.embedding_dim
-        return max(1e-6, total * bytes_per_token / (1024.0 * 1024.0))
+        """Activation payload in MB for inter-stage send/recv."""
+        bs = max(1, model_config.micro_batch_size)
+        bytes_per_element = 4.0
+        total = bs * model_config.seq_length * model_config.embedding_dim
+        return max(1e-6, total * bytes_per_element / (1024.0 * 1024.0))
 
 
 __all__ = ["DTFMStrategy"]
