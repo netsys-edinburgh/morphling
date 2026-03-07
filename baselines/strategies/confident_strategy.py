@@ -356,13 +356,17 @@ class ConfidentStrategy(ParallelismStrategy):
         if profiler is not None:
             try:
                 out_size = max(profiler.get_output_size(boundary_layer), 1e-6)
-                left_bw = profiler.get_bandwidth(left_stage)
-                right_bw = profiler.get_bandwidth(right_stage)
-                if left_bw <= 0 or right_bw <= 0:
+                left_id = topology.device_specs[left_stage].device_id
+                right_id = topology.device_specs[right_stage].device_id
+                pair_bw = profiler.get_pairwise_bandwidth(
+                    left_id, right_id,
+                )
+                if pair_bw <= 0:
                     raise RuntimeError(
-                        f"Invalid bandwidth: left={left_bw} right={right_bw}"
+                        f"Invalid pairwise bandwidth: "
+                        f"{left_id}->{right_id} = {pair_bw}"
                     )
-                return out_size / min(left_bw, right_bw)
+                return out_size / pair_bw
             except RuntimeError:
                 raise
             except Exception as e:

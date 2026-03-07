@@ -558,13 +558,19 @@ class DTFMStrategy(ParallelismStrategy):
                     profiler.get_output_size(boundary_layer),
                     1e-6,
                 )
-                left_bw = profiler.get_bandwidth(left_group[0])
-                right_bw = profiler.get_bandwidth(right_group[0])
-                if left_bw <= 0 or right_bw <= 0:
+                # Use pairwise bandwidth between
+                # representative devices of each group
+                src_id = left_group[0]
+                dst_id = right_group[0]
+                pair_bw = profiler.get_pairwise_bandwidth(
+                    src_id, dst_id,
+                )
+                if pair_bw <= 0:
                     raise RuntimeError(
-                        f"Invalid bandwidth: left={left_bw} right={right_bw}"
+                        f"Invalid pairwise bandwidth: "
+                        f"{src_id}->{dst_id} = {pair_bw}"
                     )
-                return output_size / min(left_bw, right_bw)
+                return output_size / pair_bw
             except RuntimeError:
                 raise
             except Exception as e:

@@ -209,6 +209,25 @@ class _ProfileDataAdapter(ProfilerBackend):
         mbps = self._bw[device_id]
         return mbps / 8000.0
 
+    def get_pairwise_bandwidth(
+        self, src_id: int, dst_id: int,
+    ) -> float:
+        pair = self._bw_pairs.get(
+            (src_id, dst_id)
+        )
+        if pair is not None:
+            return pair / 8000.0
+        rev = self._bw_pairs.get(
+            (dst_id, src_id)
+        )
+        if rev is not None:
+            return rev / 8000.0
+        # Fall back to per-rank min
+        return min(
+            self.get_bandwidth(src_id),
+            self.get_bandwidth(dst_id),
+        )
+
     def get_computing_capacity(
         self, device_id: int,
     ) -> float:

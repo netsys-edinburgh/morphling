@@ -40,6 +40,19 @@ class ProfilerBackend(ABC):
     @abstractmethod
     def get_bandwidth(self, device_id: int) -> float: ...
 
+    def get_pairwise_bandwidth(
+        self, src_id: int, dst_id: int,
+    ) -> float:
+        """Return measured bandwidth between two specific
+        ranks in MB/ms.  Default falls back to
+        min(get_bandwidth(src), get_bandwidth(dst)).
+        Subclasses should override with iperf3 pairwise
+        data when available."""
+        return min(
+            self.get_bandwidth(src_id),
+            self.get_bandwidth(dst_id),
+        )
+
     @abstractmethod
     def get_computing_capacity(self, device_id: int) -> float: ...
 
