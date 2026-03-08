@@ -194,11 +194,26 @@ spec:
             - name: TRANSFORMERS_CACHE
               value: "/cache/huggingface/transformers"
 
+            # MPS configuration (GPU sharing via NVIDIA MPS)
+            {% if mps_enabled | default(false) %}
+            - name: CUDA_MPS_PIPE_DIRECTORY
+              value: "{{ mps_pipe_dir | default('/tmp/nvidia-mps') }}"
+            {% endif %}
+
             # Python configuration
             - name: PYTHONUNBUFFERED
               value: "1"
             - name: TORCH_NCCL_BLOCKING_WAIT
               value: "1"
+
+            # Experiment metrics collection
+            {% if metrics_enabled | default(false) %}
+            - name: ASTEROID_METRICS
+              value: "1"
+            - name: ASTEROID_METRICS_DIR
+              value: "{{ metrics_dir | default('/tmp/asteroid_metrics') }}"
+            {% endif %}
+
             # TensorBoard log directory (persistent on host)
             - name: TENSORBOARD_LOG_DIR
               value: "/tensorboard"
@@ -223,6 +238,16 @@ spec:
             # Checkpoints (persistent on host)
             - name: checkpoint-volume
               mountPath: /workspace/baselines_output/checkpoints
+            # NVIDIA MPS pipe directory (GPU sharing)
+            {% if mps_enabled | default(false) %}
+            - name: nvidia-mps
+              mountPath: {{ mps_pipe_dir | default('/tmp/nvidia-mps') }}
+            {% endif %}
+            # Experiment metrics directory (JSONL output)
+            {% if metrics_enabled | default(false) %}
+            - name: metrics-volume
+              mountPath: {{ metrics_dir | default('/tmp/asteroid_metrics') }}
+            {% endif %}
 
           # =========================================
           # Startup/liveness probes (optional)
@@ -270,6 +295,20 @@ spec:
           hostPath:
             path: /var/lib/baselines/checkpoints/rank-{{ rank }}
             type: DirectoryOrCreate
+        # NVIDIA MPS control pipe (host daemon socket)
+        {% if mps_enabled | default(false) %}
+        - name: nvidia-mps
+          hostPath:
+            path: {{ mps_pipe_dir | default('/tmp/nvidia-mps') }}
+            type: Directory
+        {% endif %}
+        # Experiment metrics (JSONL files persisted on host)
+        {% if metrics_enabled | default(false) %}
+        - name: metrics-volume
+          hostPath:
+            path: {{ metrics_dir | default('/tmp/asteroid_metrics') }}
+            type: DirectoryOrCreate
+        {% endif %}
 
       # DNS policy is set above (ClusterFirstWithHostNet)
       # to ensure K8s DNS still works with hostNetwork: true

@@ -101,7 +101,7 @@ class DTFMStrategy(ParallelismStrategy):
             try:
                 if num_devices > 1 and pp > 1:
                     device_groups = self._run_gcma(
-                        topology
+                        topology, model_config
                     )
                 else:
                     device_ids = [
@@ -110,7 +110,7 @@ class DTFMStrategy(ParallelismStrategy):
                     ]
                     device_groups = {0: device_ids}
 
-                pts, lat = self._dp_partition(
+                pts, lat = self._equal_partition(
                     model_config,
                     topology,
                     device_groups,
@@ -203,6 +203,7 @@ class DTFMStrategy(ParallelismStrategy):
     def _run_gcma(
         self,
         topology: DeviceTopology,
+        model_config: ModelConfig,
     ) -> dict[int, list[int]]:
         """Delegate to the paper-faithful GCMAScheduler.
 
@@ -365,6 +366,111 @@ class DTFMStrategy(ParallelismStrategy):
             f"NO FALLBACK VALUES ALLOWED."
         )
 
+    def _equal_partition(
+        self,
+        model_config: ModelConfig,
+        topology: DeviceTopology,
+        device_groups: dict[int, list[int]],
+        profiler: ProfilerBackend | None,
+    ) -> tuple[list[int], float]:
+        """Paper-faithful equal layer partition: L / D_PP.
+
+        The DTFM paper specifies equal partitioning of
+        layers across pipeline stages, not heterogeneous
+        DP-based partitioning.
+        """
+        num_layers = max(1, model_config.num_layers)
+        stage_ids = sorted(device_groups)
+        num_stages = min(len(stage_ids), num_layers)
+
+        if num_stages <= 1:
+            # Single stage — same as _dp_partition
+            spec_by_id = {
+                spec.device_id: spec
+                for spec in topology.device_specs
+            }
+            group = device_groups.get(
+                stage_ids[0] if stage_ids else 0,
+                [],
+            )
+            if not group:
+                return [], 0.0
+            worst_total = 0.0
+            for did in group:
+                sp = spec_by_id.get(
+                    did,
+                    DeviceConfig(device_id=did),
+                )
+                total = sum(
+                    self._layer_time(
+                        li, did, sp,
+                        model_config, profiler,
+                    )
+                    for li in range(num_layers)
+                )
+                worst_total = max(
+                    worst_total, total
+                )
+            return [], worst_total
+
+        # Equal split: each stage gets L // D_PP layers,
+        # remainder distributed to first stages.
+        base = num_layers // num_stages
+        remainder = num_layers % num_stages
+        partition_points: list[int] = []
+        cum = 0
+        for s in range(num_stages - 1):
+            cum += base + (1 if s < remainder else 0)
+            partition_points.append(cum)
+
+        # Compute bottleneck latency across stages
+        spec_by_id = {
+            spec.device_id: spec
+            for spec in topology.device_specs
+        }
+        boundaries = [0] + partition_points + [num_layers]
+        bottleneck = 0.0
+        for s in range(num_stages):
+            start_layer = boundaries[s]
+            end_layer = boundaries[s + 1]
+            stage = stage_ids[s]
+            group = device_groups[stage]
+            # Bottleneck device in group
+            worst_t = 0.0
+            for did in group:
+                sp = spec_by_id.get(
+                    did,
+                    DeviceConfig(device_id=did),
+                )
+                t = sum(
+                    self._layer_time(
+                        li, did, sp,
+                        model_config, profiler,
+                    )
+                    for li in range(
+                        start_layer, end_layer
+                    )
+                )
+                worst_t = max(worst_t, t)
+
+            # Add inter-stage comm for non-last stages
+            if s < num_stages - 1:
+                comm = self._boundary_comm_time(
+                    boundary_layer=end_layer - 1,
+                    left_group=group,
+                    right_group=device_groups[
+                        stage_ids[s + 1]
+                    ],
+                    model_config=model_config,
+                    topology=topology,
+                    profiler=profiler,
+                )
+                worst_t += comm
+
+            bottleneck = max(bottleneck, worst_t)
+
+        return partition_points, bottleneck
+
     def _dp_partition(
         self,
         model_config: ModelConfig,
@@ -484,7 +590,9 @@ class DTFMStrategy(ParallelismStrategy):
             cut = split[end][stage_idx]
             if cut < 0:
                 break
-            points.append(cut)
+            # cut is the inclusive end index of the previous stage.
+            # train.py uses exclusive boundaries, so store cut + 1.
+            points.append(cut + 1)
             end = cut
             stage_idx -= 1
         points.reverse()

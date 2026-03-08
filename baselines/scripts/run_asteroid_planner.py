@@ -406,9 +406,16 @@ def _build_strategy_plan(
     elif strategy_name == "confident":
         # Confident uses ALL devices as PP stages
         # (matches notebook ConfidantScheduler)
+        topology_aware = getattr(
+            args, "topology_aware_ordering",
+            False,
+        )
         strategy = ConfidentStrategy(
             pp_size=world_size,
             dp_size=1,
+            topology_aware_ordering=bool(
+                topology_aware
+            ),
         )
     else:
         return None
@@ -743,11 +750,23 @@ def build_profiler_data(
             float(attn_bytes + ff_bytes + ln_bytes)
         )
 
+    # Boundary tensor: the inter-stage output tensor
+    # that is actually communicated between stages.
+    # Shape = (1, seq_len, embed_dim) per sample.
+    # This is MUCH smaller than the full backward-pass
+    # activation storage (activation_sizes) which
+    # includes Q/K/V, attention matrices, FFN, etc.
+    boundary_size = seq_len * embed_dim * 4  # bytes
+    boundary_sizes: List[float] = [
+        float(boundary_size)
+    ] * num_layers
+
     profiler_data: Dict[str, Any] = {
         "exec_times": exec_times,
         "bandwidths": bandwidths,
         "activation_sizes": activation_sizes,
         "weight_sizes": weight_sizes,
+        "boundary_sizes": boundary_sizes,
     }
 
     # Build device specs - GPU memory from profiles (not cluster.conf)
@@ -1003,6 +1022,9 @@ def main() -> int:
             and args.strategy is None
         ):
             args.strategy = par_cfg["strategy"]
+        args.topology_aware_ordering = par_cfg.get(
+            "topology_aware_ordering", False,
+        )
         if train_cfg.get("micro_batch_size"):
             args.micro_batch_size = (
                 train_cfg["micro_batch_size"]

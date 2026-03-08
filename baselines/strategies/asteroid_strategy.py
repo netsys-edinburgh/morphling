@@ -23,6 +23,10 @@ class _DPState(TypedDict):
     ranges: list[tuple[int, int]]
     groups: list[list[int]]
     allocs: list[dict[int, int]]
+    step_ef: list[float]
+    step_eb: list[float]
+    step_ar: list[float]
+    dominant_step: int
 
 
 class AsteroidStrategy(ParallelismStrategy):
@@ -208,16 +212,18 @@ class AsteroidStrategy(ParallelismStrategy):
                 group = device_ids[num_devices - devices_tail :]
                 start = num_layers - layers_tail
                 end = num_layers
-                alloc, stage_exec = self._alloc_microbatch(
-                    model_config,
-                    topology,
-                    exec_profiles,
-                    num_stages - 1,
-                    num_stages,
-                    group,
-                    start,
-                    end,
-                    self.micro_batch_size,
+                alloc, exec_fwd, exec_bwd = (
+                    self._alloc_microbatch(
+                        model_config,
+                        topology,
+                        exec_profiles,
+                        num_stages - 1,
+                        num_stages,
+                        group,
+                        start,
+                        end,
+                        self.micro_batch_size,
+                    )
                 )
                 if not alloc:
                     continue
@@ -228,12 +234,26 @@ class AsteroidStrategy(ParallelismStrategy):
                     start,
                     end,
                 )
-                stage_latency = self.num_microbatches * stage_exec + allreduce
-                latency[layers_tail][devices_tail][1] = stage_latency
+                s_ef = [exec_fwd]
+                s_eb = [exec_bwd]
+                s_ar = [allreduce]
+                dm = 0
+                stage_latency = (
+                    self._compute_hpp_latency(
+                        s_ef, s_eb, s_ar, dm,
+                    )
+                )
+                latency[layers_tail][devices_tail][1] = (
+                    stage_latency
+                )
                 config[layers_tail][devices_tail][1] = {
                     "ranges": [(start, end)],
                     "groups": [group],
                     "allocs": [alloc],
+                    "step_ef": s_ef,
+                    "step_eb": s_eb,
+                    "step_ar": s_ar,
+                    "dominant_step": dm,
                 }
 
         for stages_tail in range(2, num_stages + 1):
@@ -260,55 +280,126 @@ class AsteroidStrategy(ParallelismStrategy):
                             start = num_layers - layers_tail
                             end = num_layers - prev_layers_tail
                             stage_idx = num_stages - stages_tail
-                            alloc, stage_exec = self._alloc_microbatch(
-                                model_config,
-                                topology,
-                                exec_profiles,
-                                stage_idx,
-                                num_stages,
-                                group,
-                                start,
-                                end,
-                                self.micro_batch_size,
+                            alloc, exec_fwd, exec_bwd = (
+                                self._alloc_microbatch(
+                                    model_config,
+                                    topology,
+                                    exec_profiles,
+                                    stage_idx,
+                                    num_stages,
+                                    group,
+                                    start,
+                                    end,
+                                    self.micro_batch_size,
+                                )
                             )
                             if not alloc:
                                 continue
 
                             prev_cfg = config[
                                 prev_layers_tail
-                            ][prev_devices_tail][stages_tail - 1]
+                            ][prev_devices_tail][
+                                stages_tail - 1
+                            ]
                             if prev_cfg is None:
                                 continue
-                            next_group = prev_cfg["groups"][0]
-                            comm = self._comm_time_inter_stage(
-                                model_config,
-                                topology,
-                                end - 1,
-                                group,
-                                next_group,
-                                sum(alloc.values()),
+                            next_group = (
+                                prev_cfg["groups"][0]
                             )
-                            allreduce = self._allreduce_time(
-                                model_config,
-                                topology,
-                                group,
-                                start,
-                                end,
+                            comm_fwd, comm_bwd = (
+                                self._comm_time_inter_stage(
+                                    model_config,
+                                    topology,
+                                    end - 1,
+                                    group,
+                                    next_group,
+                                    sum(alloc.values()),
+                                )
                             )
-                            step_latency = self.num_microbatches * stage_exec
-                            total = max(prev_latency, step_latency + comm)
-                            total += allreduce
+                            allreduce = (
+                                self._allreduce_time(
+                                    model_config,
+                                    topology,
+                                    group,
+                                    start,
+                                    end,
+                                )
+                            )
 
-                            latency_slot = latency[layers_tail][devices_tail]
-                            config_slot = config[layers_tail][devices_tail]
-                            if total < latency_slot[stages_tail]:
-                                latency_slot[stages_tail] = total
-                                config_slot[stages_tail] = {
+                            # Build step lists
+                            old_ef = prev_cfg.get(
+                                "step_ef", [],
+                            )
+                            old_eb = prev_cfg.get(
+                                "step_eb", [],
+                            )
+                            old_ar = prev_cfg.get(
+                                "step_ar", [],
+                            )
+                            new_ef = (
+                                [exec_fwd, comm_fwd]
+                                + list(old_ef)
+                            )
+                            new_eb = (
+                                [exec_bwd, comm_bwd]
+                                + list(old_eb)
+                            )
+                            new_ar = (
+                                [allreduce, 0.0]
+                                + list(old_ar)
+                            )
+                            new_dm = (
+                                self._determine_dominant_step(
+                                    new_ef, new_eb,
+                                )
+                            )
+                            total = (
+                                self._compute_hpp_latency(
+                                    new_ef, new_eb,
+                                    new_ar, new_dm,
+                                )
+                            )
+
+                            latency_slot = (
+                                latency[layers_tail][
+                                    devices_tail
+                                ]
+                            )
+                            config_slot = (
+                                config[layers_tail][
+                                    devices_tail
+                                ]
+                            )
+                            if total < latency_slot[
+                                stages_tail
+                            ]:
+                                latency_slot[
+                                    stages_tail
+                                ] = total
+                                config_slot[
+                                    stages_tail
+                                ] = {
                                     "ranges": [
-                                        (start, end)
-                                    ] + prev_cfg["ranges"],
-                                    "groups": [group] + prev_cfg["groups"],
-                                    "allocs": [alloc] + prev_cfg["allocs"],
+                                        (start, end),
+                                    ] + prev_cfg[
+                                        "ranges"
+                                    ],
+                                    "groups": [
+                                        group,
+                                    ] + prev_cfg[
+                                        "groups"
+                                    ],
+                                    "allocs": [
+                                        alloc,
+                                    ] + prev_cfg[
+                                        "allocs"
+                                    ],
+                                    "step_ef": new_ef,
+                                    "step_eb": new_eb,
+                                    "step_ar": new_ar,
+                                    "dominant_step": (
+                                        new_dm
+                                    ),
                                 }
 
         best = latency[num_layers][num_devices][num_stages]
@@ -345,12 +436,13 @@ class AsteroidStrategy(ParallelismStrategy):
         start_l: int,
         end_l: int,
         micro_bs: int,
-    ) -> tuple[dict[int, int], float]:
+    ) -> tuple[dict[int, int], float, float]:
         if not device_group:
-            return {}, float("inf")
+            return {}, float("inf"), float("inf")
 
         spec_by_id = {
-            spec.device_id: spec for spec in topology.device_specs
+            spec.device_id: spec
+            for spec in topology.device_specs
         }
         alloc = {did: 0 for did in device_group}
         remaining = micro_bs
@@ -359,7 +451,9 @@ class AsteroidStrategy(ParallelismStrategy):
             best_id: int | None = None
             best_cost = float("inf")
             for did in device_group:
-                spec = spec_by_id.get(did, DeviceConfig(device_id=did))
+                spec = spec_by_id.get(
+                    did, DeviceConfig(device_id=did),
+                )
                 next_bs = alloc[did] + 1
                 mem_need = self._memory_footprint(
                     model_config,
@@ -398,24 +492,100 @@ class AsteroidStrategy(ParallelismStrategy):
             )
             alloc[fastest] += remaining
 
-        active = {did: bs for did, bs in alloc.items() if bs > 0}
+        # Alg. 1 Phase 2: straggler offloading
+        while True:
+            active = {
+                did: bs
+                for did, bs in alloc.items()
+                if bs > 0
+            }
+            if len(active) < 2:
+                break
+            times = {
+                did: self._device_exec_time(
+                    exec_profiles, did,
+                    start_l, end_l, bs,
+                    spec_by_id.get(
+                        did,
+                        DeviceConfig(device_id=did),
+                    ).compute_capacity,
+                )
+                for did, bs in active.items()
+            }
+            slowest = max(
+                times, key=times.__getitem__,
+            )
+            fastest_d = min(
+                times, key=times.__getitem__,
+            )
+            if (
+                slowest == fastest_d
+                or alloc[slowest] <= 1
+            ):
+                break
+            old_time = times[slowest]
+            alloc[slowest] -= 1
+            alloc[fastest_d] += 1
+            new_time = max(
+                self._device_exec_time(
+                    exec_profiles, slowest,
+                    start_l, end_l,
+                    alloc[slowest],
+                    spec_by_id.get(
+                        slowest,
+                        DeviceConfig(
+                            device_id=slowest,
+                        ),
+                    ).compute_capacity,
+                ),
+                self._device_exec_time(
+                    exec_profiles, fastest_d,
+                    start_l, end_l,
+                    alloc[fastest_d],
+                    spec_by_id.get(
+                        fastest_d,
+                        DeviceConfig(
+                            device_id=fastest_d,
+                        ),
+                    ).compute_capacity,
+                ),
+            )
+            if new_time >= old_time:
+                alloc[slowest] += 1
+                alloc[fastest_d] -= 1
+                break
+
+        active = {
+            did: bs
+            for did, bs in alloc.items()
+            if bs > 0
+        }
         if not active:
-            return {}, float("inf")
-        straggler = max(
-            self._device_exec_time(
-                exec_profiles,
-                did,
-                start_l,
-                end_l,
-                bs,
+            return {}, float("inf"), float("inf")
+        # Eq. (8): E_f = max_d, E_b = max_d
+        straggler_fwd = max(
+            self._device_exec_time_split(
+                exec_profiles, did,
+                start_l, end_l, bs,
                 spec_by_id.get(
                     did,
                     DeviceConfig(device_id=did),
                 ).compute_capacity,
-            )
+            )[0]
             for did, bs in active.items()
         )
-        return alloc, straggler
+        straggler_bwd = max(
+            self._device_exec_time_split(
+                exec_profiles, did,
+                start_l, end_l, bs,
+                spec_by_id.get(
+                    did,
+                    DeviceConfig(device_id=did),
+                ).compute_capacity,
+            )[1]
+            for did, bs in active.items()
+        )
+        return alloc, straggler_fwd, straggler_bwd
 
     def _memory_footprint(
         self,
@@ -455,6 +625,32 @@ class AsteroidStrategy(ParallelismStrategy):
                 fwd, bwd = profile[idx]
             total += (fwd + bwd) * max(batch_size, 0)
         return total / max(capacity, 0.1)
+
+    def _device_exec_time_split(
+        self,
+        exec_profiles: dict[int, list[tuple[float, float]]],
+        device_id: int,
+        start_l: int,
+        end_l: int,
+        batch_size: int,
+        capacity: float,
+    ) -> tuple[float, float]:
+        """Split forward / backward exec time."""
+        profile = exec_profiles.get(device_id, [])
+        total_fwd = 0.0
+        total_bwd = 0.0
+        for layer_idx in range(start_l, end_l):
+            if not profile:
+                fwd, bwd = (1.0, 2.0)
+            else:
+                idx = min(
+                    layer_idx, len(profile) - 1,
+                )
+                fwd, bwd = profile[idx]
+            total_fwd += fwd * max(batch_size, 0)
+            total_bwd += bwd * max(batch_size, 0)
+        cap = max(capacity, 0.1)
+        return total_fwd / cap, total_bwd / cap
 
     def _weights_mb(
         self,
@@ -510,6 +706,63 @@ class AsteroidStrategy(ParallelismStrategy):
         ring_factor = 2.0 * (group_size - 1) / group_size
         return ring_factor * weights_mb / max(min_bw, 1e-6) * 1000.0
 
+    def _determine_dominant_step(
+        self,
+        step_ef: list[float],
+        step_eb: list[float],
+    ) -> int:
+        """Eq. (11): dominant step via aligned time."""
+        M = self.num_microbatches
+        best_idx = 0
+        best_aligned = 0.0
+        prefix_sum = 0.0
+        for c in range(len(step_ef)):
+            aligned = (
+                M * (step_ef[c] + step_eb[c])
+                + prefix_sum
+            )
+            if aligned > best_aligned:
+                best_aligned = aligned
+                best_idx = c
+            prefix_sum += step_ef[c] + step_eb[c]
+        return best_idx
+
+    def _compute_hpp_latency(
+        self,
+        step_ef: list[float],
+        step_eb: list[float],
+        step_ar: list[float],
+        dominant_step: int,
+    ) -> float:
+        """Eqs. (4)-(6): HPP-Round Latency."""
+        S = len(step_ef)
+        if S == 0:
+            return float("inf")
+        M = self.num_microbatches
+        dm = dominant_step
+        dm_exec = step_ef[dm] + step_eb[dm]
+        max_lat = 0.0
+        for s in range(S):
+            Tw = sum(step_ef[i] for i in range(s))
+            if s < dm:
+                offset = sum(
+                    step_ef[i] + step_eb[i]
+                    for i in range(s, dm)
+                )
+                Te = M * dm_exec + offset
+            elif s == dm:
+                Te = M * dm_exec
+            else:
+                offset = sum(
+                    step_ef[i] + step_eb[i]
+                    for i in range(dm, s)
+                )
+                Te = max(0.0, M * dm_exec - offset)
+            Ta = step_ar[s]
+            total = Tw + Te + Ta
+            max_lat = max(max_lat, total)
+        return max_lat
+
     def _comm_time_inter_stage(
         self,
         model_config: ModelConfig,
@@ -518,9 +771,10 @@ class AsteroidStrategy(ParallelismStrategy):
         src_group: list[int],
         dst_group: list[int],
         batch_size: int,
-    ) -> float:
+    ) -> tuple[float, float]:
+        """Inter-stage comm split (fwd, bwd)."""
         if not src_group or not dst_group:
-            return 0.0
+            return 0.0, 0.0
         act_mb = self._activations_mb(
             model_config,
             boundary_layer,
@@ -531,12 +785,21 @@ class AsteroidStrategy(ParallelismStrategy):
         max_lat = 0.0
         for src in src_group:
             for dst in dst_group:
-                bw = self._lookup_link(topology.bandwidths, src, dst, 1000.0)
-                lat = self._lookup_link(topology.latencies, src, dst, 0.1)
+                bw = self._lookup_link(
+                    topology.bandwidths,
+                    src, dst, 1000.0,
+                )
+                lat = self._lookup_link(
+                    topology.latencies,
+                    src, dst, 0.1,
+                )
                 min_bw = min(min_bw, max(bw, 1e-6))
                 max_lat = max(max_lat, lat)
-        transfer = 2.0 * act_mb / max(min_bw, 1e-6) * 1000.0
-        return transfer + max_lat
+        per_dir = (
+            act_mb / max(min_bw, 1e-6) * 1000.0
+        )
+        comm = per_dir + max_lat
+        return comm, comm
 
     def _lookup_link(
         self,
@@ -586,19 +849,21 @@ class AsteroidStrategy(ParallelismStrategy):
         allocs: dict[int, dict[int, int]] = {}
         est = 0.0
         for stage_idx, (start_l, end_l) in enumerate(ranges):
-            alloc, stage_exec = self._alloc_microbatch(
-                model_config,
-                topology,
-                exec_profiles,
-                stage_idx,
-                stages,
-                groups[stage_idx],
-                start_l,
-                end_l,
-                self.micro_batch_size,
+            alloc, s_fwd, s_bwd = (
+                self._alloc_microbatch(
+                    model_config,
+                    topology,
+                    exec_profiles,
+                    stage_idx,
+                    stages,
+                    groups[stage_idx],
+                    start_l,
+                    end_l,
+                    self.micro_batch_size,
+                )
             )
             allocs[stage_idx] = alloc
-            est = max(est, stage_exec)
+            est = max(est, s_fwd + s_bwd)
         partition_points = [rng[1] - 1 for rng in ranges[:-1]]
         return ParallelismPlan(
             partition_points=partition_points,

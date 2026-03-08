@@ -75,7 +75,7 @@ model:
   n_kv_heads: 32          # MHA
   d_ff: 8192              # 4 × 2048
   vocab_size: 50272
-  max_seq_len: 2048
+  max_seq_len: 1024
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
   global_batch_size: 32
@@ -83,23 +83,25 @@ training:
   lr: 3.0e-4
   min_lr: 1.0e-5
   weight_decay: 0.01
-  max_iters: 500
+  max_iters: 5
   warmup_iters: 50
   grad_clip: 1.0
   eval_interval: 40
   log_interval: 1
   seed: 42
   dataset: sst2
+  save_checkpoints: false       # enable/disable model checkpoint saving
 
 # ── Parallelism ──────────────────────────────────────────────────────────────
 parallelism:
   strategy: dtfm            # asteroid | confident | dtfm
   schedule_type: "1f1b"                 # gpipe | 1f1b  (auto-set by strategy if empty)
   num_stages: 2                     # pipeline stages per pipeline (pp_size); dp_size = world_size / num_stages
-  world_size: 6
+  world_size: 8
   comm_backend: torch_dist     # torch_dist | nccl | gloo
   dist_url: "tcp://127.0.0.1:29600"
   d2d_bandwidth_mbps: 100.0
+  topology_aware_ordering: true    # reorder pipeline stages to minimise cross-subnet comm (Confident only)
 
 # ── Fault Tolerance (unified — applied to ALL strategies) ────────────────────
 fault_tolerance:
@@ -176,30 +178,30 @@ cluster:
       rank: 5
       location: Leeds
       mps:
+        active_thread_percentage: 30
+        memory_limit_mb: 12288
+
+    - ip: 10.203.57.14
+      hostname: bangor1
+      nic: ens33
+      gpu_id: 0
+      memory_mb: 46068
+      rank: 6
+      location: Bangor
+      mps:
         active_thread_percentage: 100
         memory_limit_mb: 40960
 
-    # - ip: 10.203.57.14
-    #   hostname: bangor1
-    #   nic: ens33
-    #   gpu_id: 0
-    #   memory_mb: 46068
-    #   rank: 6
-    #   location: Bangor
-    #   mps:
-    #     active_thread_percentage: 100
-    #     memory_limit_mb: 40960
-
-    # - ip: 10.203.57.15
-    #   hostname: bangor2
-    #   nic: ens33
-    #   gpu_id: 0
-    #   memory_mb: 46068
-    #   rank: 7
-    #   location: Bangor
-    #   mps:
-    #     active_thread_percentage: 100
-    #     memory_limit_mb: 40960
+    - ip: 10.203.57.15
+      hostname: bangor2
+      nic: ens33
+      gpu_id: 0
+      memory_mb: 46068
+      rank: 7
+      location: Bangor
+      mps:
+        active_thread_percentage: 100
+        memory_limit_mb: 40960
 
     # - ip: 10.203.67.13
     #   hostname: belfast
@@ -225,7 +227,7 @@ cluster:
 
 # ── MPS (NVIDIA Multi-Process Service) — global defaults ────────────────────
 mps:
-  enabled: false
+  enabled: true
   active_thread_percentage: 100   # overridden per-node above
   pipe_directory: ""              # default: /tmp/nvidia-mps-<gpu_id>
   log_directory: ""               # default: /tmp/nvidia-log-<gpu_id>

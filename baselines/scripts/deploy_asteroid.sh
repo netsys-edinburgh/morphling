@@ -514,10 +514,18 @@ _detect_and_join_new_nodes() {
     exit 2
   fi
 
+  # Ensure /etc/rancher/k3s exists on new nodes before join
+  # (needed for config.yaml with node-name, created before k3s install)
+  local new_limit
+  new_limit="$(IFS=,; echo "${new_node_names[*]}")"
+  run_ansible_adhoc "${new_limit}" -m file \
+    -a "path=/etc/rancher/k3s state=directory mode=0755" \
+    --become
+
   # Join new nodes using the join_new_workers playbook
   # (ansible handles auth via vault secrets — no SSH key required)
   local limit_arg
-  limit_arg="worker2_node,$(IFS=,; echo "${new_node_names[*]}")"
+  limit_arg="worker2_node,${new_limit}"
 
   info "Joining new nodes to K3s cluster..."
   run_ansible_playbook "join_new_workers.yaml" -v --limit "${limit_arg}"
@@ -1189,24 +1197,99 @@ phase_mps() {
     return 0
   fi
 
-  local thread_pct
-  thread_pct=$(yaml_get "mps.active_thread_percentage")
-  [[ -z "$thread_pct" ]] && thread_pct=50
+  # Extract per-node MPS config (ip, thread%, memory_limit_mb)
+  # from cluster.nodes[].mps in the YAML config.
+  local node_mps_list
+  node_mps_list=$("${VENV_DIR}/bin/python" - "${ASTEROID_CONFIG}" <<'PYEOF'
+import yaml, sys
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f)
+gpu_mem = 45459  # L40S total MB
+default_pct = cfg.get("mps", {}).get("active_thread_percentage", 100)
+for node in cfg.get("cluster", {}).get("nodes", []):
+    ip = node.get("ip", "")
+    if not ip:
+        continue
+    mps = node.get("mps", {})
+    pct = mps.get("active_thread_percentage", default_pct)
+    mem = mps.get("memory_limit_mb", int(gpu_mem * pct / 100))
+    print(f"{ip} {pct} {mem}")
+PYEOF
+)
 
-  info "Starting NVIDIA MPS on all nodes (active_thread_percentage=${thread_pct})..."
+  if [[ -z "$node_mps_list" ]]; then
+    err "No cluster nodes found in config"
+    return 1
+  fi
 
+  info "Starting NVIDIA MPS with per-node thread/memory limits..."
+
+  # Step 1: Set Exclusive_Process mode, force-kill any stale MPS daemon, restart
+  # The cleanup runs in a subshell to suppress shell "Killed" messages that
+  # leak into stdout and break the && chain.
   run_ansible_adhoc "cluster" -m shell \
     -a "nvidia-smi -i 0 -c EXCLUSIVE_PROCESS 2>/dev/null; \
-        nvidia-cuda-mps-control -d 2>/dev/null || true; \
-        echo 'set_active_thread_percentage ${thread_pct}' | nvidia-cuda-mps-control 2>/dev/null || true" \
+        ( timeout 3 bash -c 'echo quit | nvidia-cuda-mps-control' ; \
+          sleep 1; \
+          killall -9 nvidia-cuda-mps-control nvidia-cuda-mps-server; \
+          rm -rf /tmp/nvidia-mps /tmp/nvidia-log \
+        ) >/dev/null 2>&1 || true; \
+        sleep 2; \
+        nvidia-cuda-mps-control -d && sleep 1 && echo MPS_STARTED || echo MPS_FAILED" \
     --become
 
+  sleep 2
+
+  # Step 2: Set per-node active_thread_percentage and memory limit
+  # Must use ansible --become because the MPS daemon runs as root.
+  # Build IP→ansible_host mapping from inventory.
+  local -A ip_to_ansible
+  while IFS= read -r line; do
+    local _ahost _aip
+    _ahost=$(echo "$line" | awk '{print $1}')
+    _aip=$(echo "$line" | grep -oP 'ansible_host=\K[^ ]+')
+    if [[ -n "$_ahost" && -n "$_aip" ]]; then
+      ip_to_ansible["$_aip"]="$_ahost"
+    fi
+  done < <(grep 'ansible_host=' "${ANSIBLE_INVENTORY}" | grep -v '^#')
+
+  while IFS=' ' read -r ip pct mem; do
+    [[ -z "$ip" ]] && continue
+    local ansible_host="${ip_to_ansible[$ip]:-}"
+    if [[ -z "$ansible_host" ]]; then
+      warn "  No ansible host found for ${ip}, skipping MPS config"
+      continue
+    fi
+    info "  Node ${ip} (${ansible_host}): thread=${pct}% memory=${mem}MB"
+    run_ansible_adhoc "${ansible_host}" -m shell \
+      -a "echo 'set_default_active_thread_percentage ${pct}' | nvidia-cuda-mps-control; \
+          echo 'set_default_device_pinned_mem_limit 0 ${mem}M' | nvidia-cuda-mps-control" \
+      --become 2>/dev/null || warn "  Failed to set MPS on ${ip}"
+  done <<< "$node_mps_list"
+
+  # Step 3: Verify MPS on all nodes
   info "Verifying MPS on all nodes..."
-  run_ansible_adhoc "cluster" -m shell \
-    -a "echo 'get_server_list' | nvidia-cuda-mps-control 2>/dev/null && echo 'MPS running' || echo 'MPS not running'" \
-    --become
+  while IFS=' ' read -r ip pct mem; do
+    [[ -z "$ip" ]] && continue
+    local ansible_host="${ip_to_ansible[$ip]:-}"
+    if [[ -z "$ansible_host" ]]; then
+      warn "  ${ip}: no ansible host mapping, skipping verify"
+      continue
+    fi
+    local verify_out
+    verify_out=$(run_ansible_adhoc "${ansible_host}" -m shell \
+      -a "echo get_default_active_thread_percentage | nvidia-cuda-mps-control && echo MPS_OK" \
+      --become 2>/dev/null || echo "FAIL")
+    local actual_pct
+    actual_pct=$(echo "$verify_out" | grep -oP '^\d+\.\d+' | head -1)
+    if echo "$verify_out" | grep -q "MPS_OK"; then
+      log "  ${ip}: MPS running, thread=${actual_pct:-?}% (expected ${pct}%)"
+    else
+      warn "  ${ip}: MPS NOT running!"
+    fi
+  done <<< "$node_mps_list"
 
-  log "MPS setup complete (${thread_pct}% active threads)"
+  log "MPS setup complete (per-node thread/memory limits applied)"
 }
 
 # ============================================================================
@@ -1428,9 +1511,12 @@ REMOTE_CLEAN
     log "Generated manifests removed"
   fi
 
-  rm -f "${PROFILES_DIR}"/profile_*.json 2>/dev/null || true
+  # NOTE: Profiles (iperf3 bandwidth data) are intentionally
+  # preserved across --stop. Network properties don't change
+  # between experiments (MPS only affects compute, not network).
+  # Use --clean (deep_clean) to remove profiles.
   rm -f "${PLAN_FILE}" 2>/dev/null || true
-  log "Profiles and HPP plan removed"
+  log "HPP plan removed (profiles preserved)"
 
   rm -rf /tmp/baselines_tb_logs 2>/dev/null || true
   rm -rf "${BASELINES_DIR}/tb_logs" 2>/dev/null || true
@@ -1471,11 +1557,12 @@ REMOTE_CLEAN
   echo "    - All GPU processes on every cluster node"
   echo "    - NCCL/torch shared memory on every node"
   echo "    - Remote checkpoint files on every node"
-  echo "    - Generated manifests, profiles, HPP plan"
+  echo "    - Generated manifests, HPP plan"
   echo "    - TensorBoard logs, local background processes"
   echo "    - Temp bundles, deploy logs"
   echo ""
   echo "  Preserved:"
+  echo "    - Cluster profiles (iperf3 bandwidth data)"
   echo "    - K3s cluster (nodes still Ready)"
   echo "    - Docker images (cached on nodes)"
   echo "    - NVIDIA device plugin (still running)"
@@ -1659,6 +1746,14 @@ REMOTE_DATA
   rm -rf "${BASELINES_DIR}/checkpoints_collected" 2>/dev/null || true
   log "  Local checkpoints removed"
 
+  # Experiment runner artifacts (DB, data, progress, tmp config)
+  rm -f "${BASELINES_DIR}/experiments.db" 2>/dev/null || true
+  rm -f "${BASELINES_DIR}/experiments.db-wal" 2>/dev/null || true
+  rm -f "${BASELINES_DIR}/experiments.db-shm" 2>/dev/null || true
+  rm -rf "${BASELINES_DIR}/experiment_data" 2>/dev/null || true
+  rm -f "${BASELINES_DIR}/configs/_experiment.yaml" 2>/dev/null || true
+  log "  Experiment runner artifacts removed (DB, data, progress)"
+
   log "[7/9] Local artifacts removed"
 
   # ── 8. Kill local background processes ─────────────────
@@ -1693,6 +1788,7 @@ REMOTE_DATA
   echo "    - Checkpoint files on every node"
   echo "    - Generated manifests, profiles, HPP plan"
   echo "    - TensorBoard logs, output directories"
+  echo "    - Experiment DB, collected data, progress tracker"
   echo "    - All local temp bundles and deploy logs"
   echo "    - All background monitor processes"
   echo ""
@@ -1997,6 +2093,10 @@ main() {
   if [[ "${RUN_GPU}" -eq 1 ]]; then
     phase_gpu
   fi
+
+  # MPS must be set up before profiling so that layer timings
+  # reflect the actual thread-percentage throttling.
+  phase_mps
 
   if [[ "${RUN_PROFILE}" -eq 1 ]]; then
     phase_profile

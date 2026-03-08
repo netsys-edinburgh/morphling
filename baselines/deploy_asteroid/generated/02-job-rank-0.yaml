@@ -83,11 +83,11 @@ spec:
             - "--config"
             - "/workspace/baselines/configs/asteroid_default.yaml"
             - "--strategy"
-            - "dtfm"
+            - "asteroid"
             - "--rank"
             - "0"
             - "--world-size"
-            - "6"
+            - "8"
             - "--cuda-id"
             - "0"
             - "--output-dir"
@@ -113,7 +113,7 @@ spec:
             - name: RANK
               value: "0"
             - name: WORLD_SIZE
-              value: "6"
+              value: "8"
             - name: LOCAL_RANK
               value: "0"
             - name: MASTER_ADDR
@@ -164,7 +164,7 @@ spec:
             - name: STAGE_IDX
               value: "0"
             - name: MICRO_BATCH_SIZE
-              value: "4"
+              value: "1"
 
             # HuggingFace cache
             - name: HF_HOME
@@ -172,11 +172,22 @@ spec:
             - name: TRANSFORMERS_CACHE
               value: "/cache/huggingface/transformers"
 
+            # MPS configuration (GPU sharing via NVIDIA MPS)
+            - name: CUDA_MPS_PIPE_DIRECTORY
+              value: "/tmp/nvidia-mps"
+
             # Python configuration
             - name: PYTHONUNBUFFERED
               value: "1"
             - name: TORCH_NCCL_BLOCKING_WAIT
               value: "1"
+
+            # Experiment metrics collection
+            - name: ASTEROID_METRICS
+              value: "1"
+            - name: ASTEROID_METRICS_DIR
+              value: "/tmp/asteroid_metrics"
+
             # TensorBoard log directory (persistent on host)
             - name: TENSORBOARD_LOG_DIR
               value: "/tensorboard"
@@ -201,6 +212,12 @@ spec:
             # Checkpoints (persistent on host)
             - name: checkpoint-volume
               mountPath: /workspace/baselines_output/checkpoints
+            # NVIDIA MPS pipe directory (GPU sharing)
+            - name: nvidia-mps
+              mountPath: /tmp/nvidia-mps
+            # Experiment metrics directory (JSONL output)
+            - name: metrics-volume
+              mountPath: /tmp/asteroid_metrics
 
           # =========================================
           # Startup/liveness probes (optional)
@@ -242,6 +259,16 @@ spec:
         - name: checkpoint-volume
           hostPath:
             path: /var/lib/baselines/checkpoints/rank-0
+            type: DirectoryOrCreate
+        # NVIDIA MPS control pipe (host daemon socket)
+        - name: nvidia-mps
+          hostPath:
+            path: /tmp/nvidia-mps
+            type: Directory
+        # Experiment metrics (JSONL files persisted on host)
+        - name: metrics-volume
+          hostPath:
+            path: /tmp/asteroid_metrics
             type: DirectoryOrCreate
 
       # DNS policy is set above (ClusterFirstWithHostNet)

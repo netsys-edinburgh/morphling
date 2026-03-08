@@ -1,0 +1,22 @@
+{
+  "partition_points": [
+    6
+  ],
+  "device_groups": {
+    "0": [
+      0
+    ],
+    "1": []
+  },
+  "micro_batch_alloc": {
+    "0": {
+      "0": 4
+    },
+    "1": {}
+  },
+  "schedule_type": "1f1b",
+  "estimated_latency_ms": 0.0,
+  "node_mapping": {},
+  "num_stages": 2,
+  "world_size": 1
+}

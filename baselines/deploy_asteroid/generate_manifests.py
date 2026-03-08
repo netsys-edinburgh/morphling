@@ -469,6 +469,40 @@ def main() -> int:
                     f"  Loaded {len(cluster_nodes)}"
                     " cluster node(s) from config"
                 )
+            # Pass MPS config to templates
+            mps_cfg = ast_cfg.get("mps", {})
+            mps_enabled = str(
+                mps_cfg.get("enabled", False)
+            ).lower() == "true"
+            if mps_enabled:
+                extra_vars["mps_enabled"] = True
+                extra_vars["mps_pipe_dir"] = (
+                    mps_cfg.get(
+                        "pipe_directory", ""
+                    )
+                    or "/tmp/nvidia-mps"
+                )
+                print(
+                    "  MPS enabled — pipe dir: "
+                    f"{extra_vars['mps_pipe_dir']}"
+                )
+
+            # Pass metrics collection config
+            metrics_on = os.environ.get(
+                "ASTEROID_METRICS", ""
+            ) in ("1", "true", "yes")
+            if metrics_on:
+                extra_vars["metrics_enabled"] = True
+                extra_vars["metrics_dir"] = (
+                    os.environ.get(
+                        "ASTEROID_METRICS_DIR",
+                        "/tmp/asteroid_metrics",
+                    )
+                )
+                print(
+                    "  Metrics enabled — dir: "
+                    f"{extra_vars['metrics_dir']}"
+                )
 
     print("\nGenerating ConfigMap...")
     cm = generate_configmap(

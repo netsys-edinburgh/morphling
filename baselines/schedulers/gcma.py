@@ -8,8 +8,6 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import linear_sum_assignment
 
-from .dp_partitioner import DPPartitioner
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -23,7 +21,7 @@ class GCMAScheduler:
         - Open-loop TSP (DP-based)
         - Evolutionary population search
 
-    Stage 2 — DP partition (uses DPPartitioner)
+    Stage 2 — Equal layer partition (paper-faithful L / D_PP)
     """
 
     def __init__(
@@ -578,16 +576,16 @@ class GCMAScheduler:
         }
 
         num_layers = getattr(self, "num_layers", None)
-        profiler_data = getattr(self, "profiler_data", None)
         if isinstance(num_layers, int) and num_layers > 0:
-            partitioner = DPPartitioner(
-                num_layers=num_layers,
-                num_devices=self.way,
-                profiler_data=profiler_data,
-            )
-            result["layer_partition_points"] = partitioner.partition(
-                is_average=True
-            )
+            # Paper-faithful: equal partition L / D_PP
+            base = num_layers // self.way
+            remainder = num_layers % self.way
+            pts: list[int] = []
+            cum = 0
+            for s in range(self.way - 1):
+                cum += base + (1 if s < remainder else 0)
+                pts.append(cum)
+            result["layer_partition_points"] = pts
 
         _LOGGER.info(
             "GCMA solved. total=%.6f dp=%.6f pp=%.6f",

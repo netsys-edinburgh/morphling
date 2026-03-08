@@ -1,33 +1,47 @@
 {
   "partition_points": [
-    12
+    2,
+    8,
+    14
   ],
   "device_groups": {
     "0": [
       0,
-      1,
-      2
+      1
     ],
     "1": [
-      3,
-      4,
+      2,
       5
+    ],
+    "2": [
+      3,
+      4
+    ],
+    "3": [
+      6,
+      7
     ]
   },
   "micro_batch_alloc": {
     "0": {
-      "0": 4,
-      "1": 4,
-      "2": 4
+      "0": 1,
+      "1": 1
     },
     "1": {
-      "3": 4,
-      "4": 4,
-      "5": 4
+      "2": 1,
+      "5": 1
+    },
+    "2": {
+      "3": 1,
+      "4": 1
+    },
+    "3": {
+      "6": 1,
+      "7": 1
     }
   },
   "schedule_type": "1f1b",
-  "estimated_latency_ms": 0.0,
+  "estimated_latency_ms": 13992.577846639148,
   "node_mapping": {
     "0": {
       "hostname": "ubuntu-2404-desktop-template",
@@ -76,8 +90,24 @@
       "gpu_id": 0,
       "memory_mb": 45459,
       "architecture": "x86_64"
+    },
+    "6": {
+      "hostname": "ubuntu-2404-desktop-template",
+      "ip": "10.203.57.14",
+      "nic": "ens33",
+      "gpu_id": 0,
+      "memory_mb": 45459,
+      "architecture": "x86_64"
+    },
+    "7": {
+      "hostname": "ubuntu-2404-desktop-template",
+      "ip": "10.203.57.15",
+      "nic": "ens33",
+      "gpu_id": 0,
+      "memory_mb": 45459,
+      "architecture": "x86_64"
     }
   },
-  "num_stages": 2,
-  "world_size": 6
+  "num_stages": 4,
+  "world_size": 8
 }

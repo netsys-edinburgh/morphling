@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from itertools import permutations
 from typing_extensions import override
 
 from baselines.core.config import (
@@ -17,13 +18,24 @@ from .base import ParallelismStrategy
 
 logger = logging.getLogger(__name__)
 
+# Threshold for brute-force vs greedy TSP.
+# 10! = 3.6M which is still fast; above that use
+# nearest-neighbour heuristic.
+_MAX_BRUTE_FORCE = 10
+
 
 class ConfidentStrategy(ParallelismStrategy):
     """Confident baseline with DP bottleneck-minimizing stage partition."""
 
-    def __init__(self, pp_size: int, dp_size: int) -> None:
+    def __init__(
+        self,
+        pp_size: int,
+        dp_size: int,
+        topology_aware_ordering: bool = False,
+    ) -> None:
         self.pp_size: int = max(1, pp_size)
         self.dp_size: int = max(1, dp_size)
+        self.topology_aware_ordering: bool = topology_aware_ordering
         self.parallel_config: ParallelConfig = ParallelConfig(
             pp_size=self.pp_size,
             dp_size=self.dp_size,
@@ -44,8 +56,44 @@ class ConfidentStrategy(ParallelismStrategy):
         num_devices = len(topology.device_specs)
         num_stages = min(num_devices, num_layers)
         num_stages = max(1, num_stages)
+
+        # ── Topology-aware reordering ────────────────────
+        # Find the pipeline ordering that minimises total
+        # inter-stage communication cost.  Uses a TSP-style
+        # shortest Hamiltonian path over the pairwise
+        # bandwidth graph, following the DTFM reference
+        # (compute_pipeline_parallel_cost in GCMA).
+        if (
+            self.topology_aware_ordering
+            and num_stages > 1
+            and profiler is not None
+        ):
+            order = self._find_optimal_device_order(
+                topology, num_stages, profiler,
+            )
+            logger.info(
+                "Topology-aware reorder: %s",
+                order,
+            )
+            # Reorder topology.device_specs so that
+            # stage i ↔ device_specs[i] follows the
+            # optimal path.
+            reordered_specs = [
+                topology.device_specs[idx]
+                for idx in order
+            ]
+            topology = DeviceTopology(
+                device_specs=reordered_specs,
+                bandwidths=dict(topology.bandwidths),
+                latencies=dict(topology.latencies),
+            )
+
+        # device_groups maps stage → [physical device_id]
         device_groups = {
-            stage_idx: [stage_idx] for stage_idx in range(num_stages)
+            stage_idx: [
+                topology.device_specs[stage_idx].device_id
+            ]
+            for stage_idx in range(num_stages)
         }
 
         partition_points, est_latency = self._dp_partition(
@@ -83,6 +131,109 @@ class ConfidentStrategy(ParallelismStrategy):
             replication_interval=20,
             ft_check_interval=5,
         )
+
+    # ── Topology-aware ordering ───────────────────────────────
+
+    def _find_optimal_device_order(
+        self,
+        topology: DeviceTopology,
+        num_stages: int,
+        profiler: ProfilerBackend,
+    ) -> list[int]:
+        """Find the pipeline stage ordering that minimises
+        total inter-stage communication cost.
+
+        For N <= _MAX_BRUTE_FORCE (10) uses exact brute-force
+        over all N! permutations.  Beyond that falls back to a
+        nearest-neighbour heuristic starting from every node.
+
+        Based on the DTFM reference's
+        ``compute_pipeline_parallel_cost`` (TSP / Hamiltonian
+        path on the pairwise bandwidth graph).
+
+        Returns a list of indices into ``topology.device_specs``
+        giving the stage order (stage 0 first, stage N-1 last).
+        """
+        n = min(num_stages, len(topology.device_specs))
+        if n <= 1:
+            return list(range(n))
+
+        # Pre-compute pairwise comm cost (MB / (MB/ms) = ms)
+        # between every pair of positions in device_specs.
+        activation_size = max(
+            profiler.get_output_size(0), 1e-6,
+        )
+        cost: list[list[float]] = [
+            [0.0] * n for _ in range(n)
+        ]
+        for i in range(n):
+            src_id = topology.device_specs[i].device_id
+            for j in range(n):
+                if i == j:
+                    continue
+                dst_id = topology.device_specs[j].device_id
+                bw = profiler.get_pairwise_bandwidth(
+                    src_id, dst_id,
+                )
+                cost[i][j] = (
+                    activation_size / max(bw, 1e-9)
+                )
+
+        if n <= _MAX_BRUTE_FORCE:
+            return self._tsp_brute_force(n, cost)
+        return self._tsp_nearest_neighbour(n, cost)
+
+    @staticmethod
+    def _tsp_brute_force(
+        n: int,
+        cost: list[list[float]],
+    ) -> list[int]:
+        """Exact shortest Hamiltonian path via brute-force
+        over all permutations (feasible for N <= 10)."""
+        best_cost = float("inf")
+        best_perm: list[int] = list(range(n))
+        for perm in permutations(range(n)):
+            total = sum(
+                cost[perm[k]][perm[k + 1]]
+                for k in range(n - 1)
+            )
+            if total < best_cost:
+                best_cost = total
+                best_perm = list(perm)
+        return best_perm
+
+    @staticmethod
+    def _tsp_nearest_neighbour(
+        n: int,
+        cost: list[list[float]],
+    ) -> list[int]:
+        """Nearest-neighbour heuristic starting from every
+        node; returns the best path found."""
+        best_cost = float("inf")
+        best_path: list[int] = list(range(n))
+        for start in range(n):
+            visited = [False] * n
+            path = [start]
+            visited[start] = True
+            total = 0.0
+            cur = start
+            for _ in range(n - 1):
+                nearest = -1
+                nearest_c = float("inf")
+                for j in range(n):
+                    if not visited[j] and cost[cur][j] < nearest_c:
+                        nearest_c = cost[cur][j]
+                        nearest = j
+                if nearest < 0:
+                    break
+                visited[nearest] = True
+                path.append(nearest)
+                total += nearest_c
+                cur = nearest
+            if total < best_cost and len(path) == n:
+                best_cost = total
+                best_path = path
+        return best_path
 
     def _normalize_topology(self, topology: DeviceTopology) -> DeviceTopology:
         specs = list(topology.device_specs)
@@ -268,7 +419,9 @@ class ConfidentStrategy(ParallelismStrategy):
             cut = split[end][stage_idx]
             if cut < 0:
                 break
-            points.append(cut)
+            # cut is the inclusive end index of the previous stage.
+            # train.py uses exclusive boundaries, so store cut + 1.
+            points.append(cut + 1)
             end = cut
             stage_idx -= 1
         points.reverse()
