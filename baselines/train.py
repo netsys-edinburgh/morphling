@@ -54,6 +54,7 @@ from baselines.utils.flatten import flatten_params
 from baselines.utils.lr_schedule import get_lr
 from baselines.utils.seed import seed_everything
 from baselines.core.pipeline_schedule import build_schedule
+from baselines.utils.metrics import MetricsCollector
 from baselines.utils.mps import (
     get_mps_client_env,
     start_mps,
@@ -307,6 +308,7 @@ def _worker_impl(
     )
 
     # ── Step 7: CuPy NCCL communicators ──────────────────
+    _nccl_init_start_ts = MetricsCollector._now_iso()
     nccl = NCCLBackend(
         rank=rank,
         world_size=world_size,
@@ -320,7 +322,10 @@ def _worker_impl(
         dist_store=None,
     )
 
+    _nccl_init_end_ts = MetricsCollector._now_iso()
+
     # ── Step 8: Create PipelineStage model ───────────────
+    _model_load_start_ts = MetricsCollector._now_iso()
     model = PipelineStage(
         model_config=cfg.model,
         start_layer=boundaries[pp_rank],
@@ -342,6 +347,8 @@ def _worker_impl(
         flush=True,
     )
 
+    _model_load_end_ts = MetricsCollector._now_iso()
+
     # ── Step 9: Broadcast weights dp_rank=0 → others ────
     if dp_size > 1 and dp_ranks_in_group:
         for param in model.parameters():
@@ -352,6 +359,29 @@ def _worker_impl(
                 group=dp_process_group,
             )
             param.data.copy_(param_cpu.to(device))
+
+    # ── Metrics collector ────────────────────────────────
+    _mc_enabled = os.environ.get(
+        "ASTEROID_METRICS", ""
+    ) in ("1", "true", "yes")
+    mc = MetricsCollector(
+        rank=rank,
+        out_dir=os.environ.get(
+            "ASTEROID_METRICS_DIR",
+            "/tmp/asteroid_metrics",
+        ),
+        enabled=_mc_enabled,
+    )
+    _mem_after = (
+        torch.cuda.memory_allocated(device) / 1024**2
+    )
+    mc.log_load(
+        model_load_start_ts=_model_load_start_ts,
+        model_load_end_ts=_model_load_end_ts,
+        nccl_init_start_ts=_nccl_init_start_ts,
+        nccl_init_end_ts=_nccl_init_end_ts,
+        memory_after_load_mb=_mem_after,
+    )
 
     # ── Step 10: Re-seed for data diversity ──────────────
     torch.manual_seed(cfg.training.seed * 31 + rank)
@@ -423,6 +453,11 @@ def _worker_impl(
         cfg.model.seq_length,
         cfg.model.embedding_dim,
     )
+    # PP activation size in bytes (bfloat16 = 2 bytes/elem)
+    _act_elems = 1
+    for _d in act_shape:
+        _act_elems *= _d
+    _pp_act_bytes = _act_elems * 2  # bfloat16
     input_buffers: list[torch.Tensor] | None = None
     if not is_first:
         input_buffers = [
@@ -513,6 +548,7 @@ def _worker_impl(
     for iter_num in range(cfg.training.max_iters):
         _wd_ts = time.time()           # pet the watchdog
         iter_start = time.time()
+        mc.iter_start(iter_num)
 
         # Green context: update streams for this step
         _gc_prev_sm = None
@@ -585,6 +621,7 @@ def _worker_impl(
                 cached[m] = cached.pop()
             elif is_first:
                 out_list: list[torch.Tensor] = []
+                mc.pp_send_start()
                 _fwd_first(
                     model,
                     micro_inputs[m],
@@ -597,10 +634,13 @@ def _worker_impl(
                         start_group_before_send
                     ),
                 )
+                mc.pp_send_end(nbytes=_pp_act_bytes)
                 cached[m] = out_list[0]
             elif is_last:
                 assert input_buffers is not None
                 out_list2: list[torch.Tensor] = []
+                if not skip_recv:
+                    mc.pp_recv_start()
                 _fwd_last(
                     model,
                     input_buffers[m],
@@ -617,10 +657,15 @@ def _worker_impl(
                         end_group_after_recv
                     ),
                 )
+                if not skip_recv:
+                    mc.pp_recv_end(nbytes=_pp_act_bytes)
                 cached[m] = out_list2[0]
             else:
                 assert input_buffers is not None
                 out_list3: list[torch.Tensor] = []
+                if not skip_recv:
+                    mc.pp_recv_start()
+                mc.pp_send_start()
                 _fwd_middle(
                     model,
                     input_buffers[m],
@@ -639,6 +684,9 @@ def _worker_impl(
                         end_group_after_recv
                     ),
                 )
+                mc.pp_send_end(nbytes=_pp_act_bytes)
+                if not skip_recv:
+                    mc.pp_recv_end(nbytes=_pp_act_bytes)
                 cached[m] = out_list3[0]
 
         def _do_backward(
@@ -651,6 +699,7 @@ def _worker_impl(
                 _bwd_single(cached[m], comp_stream)
             elif is_last:
                 assert input_buffers is not None
+                mc.pp_send_start()
                 _bwd_last(
                     cached[m],
                     input_buffers[m],
@@ -662,8 +711,11 @@ def _worker_impl(
                         start_group_before_send
                     ),
                 )
+                mc.pp_send_end(nbytes=_pp_act_bytes)
             elif is_first:
                 assert grad_buffers is not None
+                if not skip_recv:
+                    mc.pp_recv_start()
                 _bwd_first(
                     cached[m],
                     grad_buffers[m],
@@ -676,9 +728,14 @@ def _worker_impl(
                         end_group_after_recv
                     ),
                 )
+                if not skip_recv:
+                    mc.pp_recv_end(nbytes=_pp_act_bytes)
             else:
                 assert input_buffers is not None
                 assert grad_buffers is not None
+                if not skip_recv:
+                    mc.pp_recv_start()
+                mc.pp_send_start()
                 _bwd_middle(
                     cached[m],
                     input_buffers[m],
@@ -697,9 +754,15 @@ def _worker_impl(
                         end_group_after_recv
                     ),
                 )
+                mc.pp_send_end(nbytes=_pp_act_bytes)
+                if not skip_recv:
+                    mc.pp_recv_end(nbytes=_pp_act_bytes)
 
         if use_1f1b and stage_ops is not None:
             # ── 1F1B Interleaved Schedule ────────────────
+            # In 1F1B, forward and backward are interleaved.
+            # We mark the whole block as fwd→bwd.
+            mc.fwd_start()
             # NCCL group notes:
             #   Without ncclGroupStart/End, NCCL serialises
             #   ALL P2P ops on the same communicator.
@@ -820,15 +883,22 @@ def _worker_impl(
             # Drain any in-flight async sends before
             # the optimizer step / DP allreduce.
             nccl.flush_sends()
+            mc.fwd_end()
+            mc.bwd_start()
         else:
             # ── GPipe Schedule ───────────────────────────
+            mc.fwd_start()
             for m in range(num_micro):
                 _do_forward(m)
+            mc.fwd_end()
 
             dist.barrier()
 
+            mc.bwd_start()
             for m in reversed(range(num_micro)):
                 _do_backward(m)
+
+        mc.bwd_end()
 
         # ── DP AllReduce ─────────────────────────────────
         # Use CuPy NCCL allreduce on the DP communicator.
@@ -839,16 +909,28 @@ def _worker_impl(
             and flat_param is not None
             and nccl.dp_nccl_comm is not None
         ):
+            _dp_bytes = (
+                flat_param.grad.data.nelement()
+                * flat_param.grad.data.element_size()
+            )
+            mc.dp_allreduce_start()
             nccl.allreduce(flat_param.grad.data)
             flat_param.grad.data.div_(dp_size)
+            # Synchronize so the end-timestamp reflects
+            # actual GPU allreduce completion, not just the
+            # async stream-enqueue return.
+            torch.cuda.synchronize()
+            mc.dp_allreduce_end(nbytes=_dp_bytes)
 
         # ── Grad clip + optimizer step ───────────────────
+        mc.opt_start()
         if cfg.training.grad_clip > 0:
             nn.utils.clip_grad_norm_(
                 model.parameters(),
                 cfg.training.grad_clip,
             )
         optimizer.step()
+        mc.opt_end()
 
         # ── GPU mem after optimizer step (first 3 iters) ─
         if iter_num < 3:
@@ -868,6 +950,51 @@ def _worker_impl(
         # already ensure all P2P is done.  A global barrier
         # here serialises every rank and adds >200 ms/iter.
         torch.cuda.synchronize()
+
+        # ── Emit JSONL step record ───────────────────────
+        _ma_mb = (
+            torch.cuda.memory_allocated(device) / 1024**2
+        )
+        _mr_mb = (
+            torch.cuda.memory_reserved(device) / 1024**2
+        )
+        _mp_mb = (
+            torch.cuda.max_memory_allocated(device)
+            / 1024**2
+        )
+        _step_loss: float | None = None
+        if (is_last or is_single) and micro_losses:
+            _step_loss = (
+                sum(
+                    t.item() if hasattr(t, 'item') else t
+                    for t in micro_losses
+                ) / len(micro_losses)
+            )
+        # PP byte counts (constant per step)
+        if pp_next is not None:
+            mc._pp_send_bytes = _pp_act_bytes * num_micro
+            mc._pp_send_count = num_micro
+        if pp_prev is not None:
+            mc._pp_recv_bytes = _pp_act_bytes * num_micro
+            mc._pp_recv_count = num_micro
+        mc.iter_end(
+            loss=_step_loss,
+            lr=lr,
+            memory_allocated_mb=_ma_mb,
+            memory_reserved_mb=_mr_mb,
+            memory_peak_mb=_mp_mb,
+        )
+
+        # ── Rank 0 global step raw ───────────────────────
+        if rank == 0:
+            _iter_end_ts = MetricsCollector._now_iso()
+            mc.log_global_step_raw(
+                iter_num=iter_num,
+                loss=_step_loss,
+                lr=lr,
+                iter_start_ts=mc._iter_start_ts,
+                iter_end_ts=_iter_end_ts,
+            )
 
         # Compact timing (every iteration, rank 0 only)
         if rank == 0:
@@ -927,7 +1054,8 @@ def _worker_impl(
 
         # ── Checkpoint ───────────────────────────────────
         should_ckpt = (
-            iter_num > 0
+            getattr(cfg.training, "save_checkpoints", False)
+            and iter_num > 0
             and iter_num % cfg.training.eval_interval == 0
         )
         if should_ckpt:
@@ -936,7 +1064,11 @@ def _worker_impl(
             )
 
     # ── Flush any in-flight async checkpoint ─────────
-    _flush_checkpoint()
+    if getattr(cfg.training, "save_checkpoints", False):
+        _flush_checkpoint()
+
+    # ── Close metrics collector ──────────────────────────
+    mc.close()
 
     # ── Green context cleanup (before process group) ──
     if gc_controller is not None:
