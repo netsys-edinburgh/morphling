@@ -86,6 +86,10 @@ class MetricsCollector:
         self._pp_send_count: int = 0
         self._pp_recv_count: int = 0
         self._dp_ar_bytes: int = 0
+        self._pp_send_cumulative_ms: float = 0.0
+        self._pp_recv_cumulative_ms: float = 0.0
+        self._forward_compute_ms: float = 0.0
+        self._backward_compute_ms: float = 0.0
 
         if not enabled:
             return
@@ -149,6 +153,10 @@ class MetricsCollector:
         self._pp_send_count = 0
         self._pp_recv_count = 0
         self._dp_ar_bytes = 0
+        self._pp_send_cumulative_ms = 0.0
+        self._pp_recv_cumulative_ms = 0.0
+        self._forward_compute_ms = 0.0
+        self._backward_compute_ms = 0.0
 
     def fwd_start(self) -> None:
         if not self._enabled:
@@ -217,6 +225,58 @@ class MetricsCollector:
         self._dp_ar_end_ts = _now_iso()
         self._dp_ar_bytes = nbytes
 
+    def set_cumulative_timings(
+        self,
+        *,
+        pp_send_cumulative_ms: float = 0.0,
+        pp_recv_cumulative_ms: float = 0.0,
+        forward_compute_ms: float = 0.0,
+        backward_compute_ms: float = 0.0,
+    ) -> None:
+        """Set per-iteration cumulative timing counters."""
+        if not self._enabled:
+            return
+        self._pp_send_cumulative_ms = float(
+            pp_send_cumulative_ms
+        )
+        self._pp_recv_cumulative_ms = float(
+            pp_recv_cumulative_ms
+        )
+        self._forward_compute_ms = float(
+            forward_compute_ms
+        )
+        self._backward_compute_ms = float(
+            backward_compute_ms
+        )
+
+    def log_micro_ops(
+        self,
+        iter_num: int,
+        micro_ops: list[dict[str, Any]],
+    ) -> None:
+        """Emit per-microbatch op timeline rows for this iteration."""
+        if not self._enabled:
+            return
+        for rec in micro_ops:
+            self._write(
+                {
+                    "type": "micro_op",
+                    "rank": self._rank,
+                    "iter": iter_num,
+                    "microbatch": rec.get("microbatch"),
+                    "op_seq": rec.get("op_seq"),
+                    "op_kind": rec.get("op_kind"),
+                    "stream": rec.get("stream"),
+                    "start_offset_ms": rec.get(
+                        "start_offset_ms"
+                    ),
+                    "end_offset_ms": rec.get("end_offset_ms"),
+                    "duration_ms": rec.get("duration_ms"),
+                    "nbytes": rec.get("nbytes", 0),
+                    "peer_rank": rec.get("peer_rank"),
+                }
+            )
+
     def iter_end(
         self,
         loss: float | None = None,
@@ -257,6 +317,10 @@ class MetricsCollector:
             "pp_recv_count": self._pp_recv_count,
             "pp_send_bytes": self._pp_send_bytes,
             "pp_recv_bytes": self._pp_recv_bytes,
+            "pp_send_cumulative_ms": self._pp_send_cumulative_ms,
+            "pp_recv_cumulative_ms": self._pp_recv_cumulative_ms,
+            "forward_compute_ms": self._forward_compute_ms,
+            "backward_compute_ms": self._backward_compute_ms,
             "dp_allreduce_start_ts": (
                 self._dp_ar_start_ts or None
             ),

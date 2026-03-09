@@ -127,7 +127,9 @@ CREATE TABLE load_metrics (
 -- ═══════════════════════════════════════════════════════════════════
 -- TABLE 4: step_metrics
 -- One row per (experiment, rank, iteration). The bulk data table.
--- Raw timestamps logged during training; all *_ms columns derived post-training.
+-- Raw timestamps logged during training. Most legacy `*_ms` values are
+-- still derived post-training; selected cumulative `*_ms` values are
+-- now logged directly from CUDA events.
 -- ═══════════════════════════════════════════════════════════════════
 CREATE TABLE step_metrics (
     experiment_id       TEXT NOT NULL,
@@ -157,6 +159,10 @@ CREATE TABLE step_metrics (
     pp_recv_start_ts    TIMESTAMP,
     pp_recv_end_ts      TIMESTAMP,
     pp_recv_ms          REAL,                         -- DERIVED
+    pp_send_cumulative_ms REAL,                       -- RAW (CUDA events sum)
+    pp_recv_cumulative_ms REAL,                       -- RAW (CUDA events sum)
+    forward_compute_ms  REAL,                         -- RAW (CUDA events sum)
+    backward_compute_ms REAL,                         -- RAW (CUDA events sum)
     pp_send_count       INTEGER,                      -- raw
     pp_recv_count       INTEGER,                      -- raw
     pp_send_bytes       BIGINT,                       -- raw
@@ -224,9 +230,15 @@ CREATE TABLE global_step_metrics (
 
     total_pp_send_ms    REAL,                         -- DERIVED: SUM(pp_send_ms)
     total_pp_recv_ms    REAL,                         -- DERIVED: SUM(pp_recv_ms)
+    total_pp_send_cumulative_ms REAL,                 -- DERIVED: SUM(pp_send_cumulative_ms)
+    total_pp_recv_cumulative_ms REAL,                 -- DERIVED: SUM(pp_recv_cumulative_ms)
     total_pp_bytes      BIGINT,                       -- DERIVED: SUM(pp_send_bytes)
     max_pp_send_ms      REAL,                         -- DERIVED: MAX(pp_send_ms)
     max_pp_recv_ms      REAL,                         -- DERIVED: MAX(pp_recv_ms)
+    max_pp_send_cumulative_ms REAL,                   -- DERIVED: MAX(pp_send_cumulative_ms)
+    max_pp_recv_cumulative_ms REAL,                   -- DERIVED: MAX(pp_recv_cumulative_ms)
+    total_forward_compute_ms REAL,                    -- DERIVED: SUM(forward_compute_ms)
+    total_backward_compute_ms REAL,                   -- DERIVED: SUM(backward_compute_ms)
 
     total_dp_allreduce_ms   REAL,                     -- DERIVED: SUM
     max_dp_allreduce_ms     REAL,                     -- DERIVED: MAX
@@ -281,8 +293,8 @@ ORDER BY avg_step_ms DESC;
 
 -- Per-step communication breakdown for one experiment
 SELECT iter,
-       AVG(pp_send_ms) AS avg_pp_send,
-       AVG(pp_recv_ms) AS avg_pp_recv,
+       AVG(pp_send_cumulative_ms) AS avg_pp_send,
+       AVG(pp_recv_cumulative_ms) AS avg_pp_recv,
        AVG(dp_allreduce_ms) AS avg_dp_allreduce,
        MAX(duration_ms) - MIN(duration_ms) AS step_skew_ms
 FROM   step_metrics
@@ -291,7 +303,9 @@ GROUP BY iter
 ORDER BY iter;
 
 -- Identify the bottleneck rank per step
-SELECT iter, rank, duration_ms, pp_send_ms, pp_recv_ms, dp_allreduce_ms
+SELECT iter, rank, duration_ms,
+       pp_send_cumulative_ms, pp_recv_cumulative_ms,
+       dp_allreduce_ms
 FROM   step_metrics
 WHERE  experiment_id = ?
   AND  (experiment_id, iter, duration_ms) IN (
@@ -329,7 +343,7 @@ ORDER BY avg_iter_ms;
 
 ### Raw vs Derived columns
 
-During training, only raw values are recorded (timestamps, byte counts, memory readings). All `*_ms` duration columns and aggregated metrics are computed post-training. This ensures zero computational overhead on the training pipeline.
+During training, raw values are recorded (timestamps, byte counts, memory readings) plus CUDA-event cumulative timings (`pp_send_cumulative_ms`, `pp_recv_cumulative_ms`, `forward_compute_ms`, `backward_compute_ms`). Legacy span durations (`pp_send_ms`, `pp_recv_ms`, etc.) and all global aggregates are still computed post-training.
 
 ### Why `mps_pct` controls both thread% AND memory?
 

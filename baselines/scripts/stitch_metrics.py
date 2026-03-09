@@ -38,10 +38,13 @@ from typing import Any
 # migration, because those are authored by
 # run_experiments.py and should be preserved.
 _EXPECTED_COLS: dict[str, int] = {
-    "load_metrics":          9,
-    "step_metrics":         34,
-    "global_load_metrics":  10,
-    "global_step_metrics":  21,
+    "load_metrics":              9,
+    "step_metrics":             38,
+    "microbatch_op_metrics":    12,
+    "microbatch_metrics":       10,
+    "global_load_metrics":      10,
+    "global_step_metrics":      27,
+    "global_microbatch_metrics": 15,
 }
 
 
@@ -149,19 +152,23 @@ CREATE TABLE IF NOT EXISTS step_metrics (
     duration_ms             REAL,
     forward_start_ts        TIMESTAMP,
     forward_end_ts          TIMESTAMP,
-    fwd_ms                  REAL,
+    forward_ms              REAL,
     backward_start_ts       TIMESTAMP,
     backward_end_ts         TIMESTAMP,
-    bwd_ms                  REAL,
+    backward_ms             REAL,
     optimizer_start_ts      TIMESTAMP,
     optimizer_end_ts        TIMESTAMP,
-    opt_ms                  REAL,
+    optimizer_step_ms       REAL,
     pp_send_start_ts        TIMESTAMP,
     pp_send_end_ts          TIMESTAMP,
     pp_send_ms              REAL,
     pp_recv_start_ts        TIMESTAMP,
     pp_recv_end_ts          TIMESTAMP,
     pp_recv_ms              REAL,
+    pp_send_cumulative_ms   REAL,
+    pp_recv_cumulative_ms   REAL,
+    forward_compute_ms      REAL,
+    backward_compute_ms     REAL,
     pp_send_count           INTEGER,
     pp_recv_count           INTEGER,
     pp_send_bytes           BIGINT,
@@ -176,6 +183,40 @@ CREATE TABLE IF NOT EXISTS step_metrics (
     memory_reserved_mb      REAL,
     memory_peak_mb          REAL,
     PRIMARY KEY (experiment_id, rank, iter),
+    FOREIGN KEY (experiment_id)
+        REFERENCES experiments(experiment_id)
+);
+
+CREATE TABLE IF NOT EXISTS microbatch_op_metrics (
+    experiment_id           TEXT,
+    rank                    INTEGER,
+    iter                    INTEGER,
+    microbatch              INTEGER,
+    op_seq                  INTEGER,
+    op_kind                 TEXT,
+    stream                  TEXT,
+    start_offset_ms         REAL,
+    end_offset_ms           REAL,
+    duration_ms             REAL,
+    nbytes                  BIGINT,
+    peer_rank               INTEGER,
+    PRIMARY KEY (experiment_id, rank, iter, microbatch, op_seq),
+    FOREIGN KEY (experiment_id)
+        REFERENCES experiments(experiment_id)
+);
+
+CREATE TABLE IF NOT EXISTS microbatch_metrics (
+    experiment_id           TEXT,
+    rank                    INTEGER,
+    iter                    INTEGER,
+    microbatch              INTEGER,
+    compute_nonoverlap_ms   REAL,
+    comm_nonoverlap_ms      REAL,
+    total_union_ms          REAL,
+    compute_sum_ms          REAL,
+    comm_sum_ms             REAL,
+    total_sum_ms            REAL,
+    PRIMARY KEY (experiment_id, rank, iter, microbatch),
     FOREIGN KEY (experiment_id)
         REFERENCES experiments(experiment_id)
 );
@@ -208,9 +249,15 @@ CREATE TABLE IF NOT EXISTS global_step_metrics (
     total_optimizer_ms      REAL,
     total_pp_send_ms        REAL,
     total_pp_recv_ms        REAL,
+    total_pp_send_cumulative_ms REAL,
+    total_pp_recv_cumulative_ms REAL,
     total_pp_bytes          BIGINT,
     max_pp_send_ms          REAL,
     max_pp_recv_ms          REAL,
+    max_pp_send_cumulative_ms REAL,
+    max_pp_recv_cumulative_ms REAL,
+    total_forward_compute_ms REAL,
+    total_backward_compute_ms REAL,
     total_dp_allreduce_ms   REAL,
     max_dp_allreduce_ms     REAL,
     dp_allreduce_bytes      BIGINT,
@@ -218,6 +265,26 @@ CREATE TABLE IF NOT EXISTS global_step_metrics (
     fastest_rank            INTEGER,
     straggler_ratio         REAL,
     PRIMARY KEY (experiment_id, iter)
+);
+
+CREATE TABLE IF NOT EXISTS global_microbatch_metrics (
+    experiment_id               TEXT NOT NULL
+        REFERENCES experiments(experiment_id),
+    iter                        INTEGER NOT NULL,
+    microbatch                  INTEGER NOT NULL,
+    total_compute_nonoverlap_ms REAL,
+    total_comm_nonoverlap_ms    REAL,
+    total_union_ms              REAL,
+    total_compute_sum_ms        REAL,
+    total_comm_sum_ms           REAL,
+    total_sum_ms                REAL,
+    max_compute_nonoverlap_ms   REAL,
+    max_comm_nonoverlap_ms      REAL,
+    max_total_union_ms          REAL,
+    slowest_rank                INTEGER,
+    fastest_rank                INTEGER,
+    straggler_ratio             REAL,
+    PRIMARY KEY (experiment_id, iter, microbatch)
 );
 
 CREATE INDEX IF NOT EXISTS idx_experiments_scheduler
@@ -228,12 +295,22 @@ CREATE INDEX IF NOT EXISTS idx_step_metrics_exp_rank
     ON step_metrics(experiment_id, rank);
 CREATE INDEX IF NOT EXISTS idx_step_metrics_duration
     ON step_metrics(duration_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_micro_op_exp_iter
+    ON microbatch_op_metrics(experiment_id, iter);
+CREATE INDEX IF NOT EXISTS idx_micro_op_rank_iter
+    ON microbatch_op_metrics(experiment_id, rank, iter);
+CREATE INDEX IF NOT EXISTS idx_micro_metrics_exp_iter
+    ON microbatch_metrics(experiment_id, iter);
+CREATE INDEX IF NOT EXISTS idx_micro_metrics_rank_iter
+    ON microbatch_metrics(experiment_id, rank, iter);
 CREATE INDEX IF NOT EXISTS idx_rank_config_mps
     ON rank_config(mps_pct);
 CREATE INDEX IF NOT EXISTS idx_global_step_exp
     ON global_step_metrics(experiment_id, iter);
 CREATE INDEX IF NOT EXISTS idx_global_step_straggler
     ON global_step_metrics(straggler_ratio DESC);
+CREATE INDEX IF NOT EXISTS idx_global_micro_exp_iter
+    ON global_microbatch_metrics(experiment_id, iter);
 """)
     conn.commit()
 
@@ -260,6 +337,45 @@ def _duration_ms(
     if s is None or e is None:
         return None
     return (e - s).total_seconds() * 1000.0
+
+
+def _to_float(value: Any) -> float | None:
+    """Convert numeric-like input to float, else None."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _interval_union_ms(
+    intervals: list[tuple[float, float]],
+) -> float:
+    """Union length (ms) of [start, end] intervals."""
+    cleaned: list[tuple[float, float]] = []
+    for start, end in intervals:
+        if (
+            not isinstance(start, (int, float))
+            or not isinstance(end, (int, float))
+        ):
+            continue
+        s = float(start)
+        e = float(end)
+        if e < s:
+            continue
+        cleaned.append((s, e))
+    if not cleaned:
+        return 0.0
+    cleaned.sort(key=lambda x: x[0])
+    cur_s, cur_e = cleaned[0]
+    total = 0.0
+    for s, e in cleaned[1:]:
+        if s <= cur_e:
+            cur_e = max(cur_e, e)
+            continue
+        total += cur_e - cur_s
+        cur_s, cur_e = s, e
+    total += cur_e - cur_s
+    return float(total)
 
 
 # ── JSONL reader ─────────────────────────────────────────
@@ -304,6 +420,9 @@ def stitch_experiment(
     load_count = 0
     step_count = 0
     global_raw_count = 0
+    micro_op_count = 0
+    microbatch_count = 0
+    global_microbatch_count = 0
 
     # ── Process load records ────────────────────────
     load_data: dict[int, dict] = {}
@@ -345,6 +464,70 @@ def stitch_experiment(
 
     # ── Process step records ────────────────────────
     # Group by (rank, iter) for step_metrics
+    step_cols = {
+        row[1]
+        for row in conn.execute(
+            "PRAGMA table_info(step_metrics)"
+        ).fetchall()
+    }
+    fwd_col = (
+        "forward_ms" if "forward_ms" in step_cols else "fwd_ms"
+    )
+    bwd_col = (
+        "backward_ms" if "backward_ms" in step_cols else "bwd_ms"
+    )
+    opt_col = (
+        "optimizer_step_ms"
+        if "optimizer_step_ms" in step_cols
+        else "opt_ms"
+    )
+    step_insert_sql = f"""INSERT OR REPLACE INTO step_metrics
+                (
+                    experiment_id,
+                    rank,
+                    iter,
+                    start_ts,
+                    end_ts,
+                    duration_ms,
+                    forward_start_ts,
+                    forward_end_ts,
+                    {fwd_col},
+                    backward_start_ts,
+                    backward_end_ts,
+                    {bwd_col},
+                    optimizer_start_ts,
+                    optimizer_end_ts,
+                    {opt_col},
+                    pp_send_start_ts,
+                    pp_send_end_ts,
+                    pp_send_ms,
+                    pp_recv_start_ts,
+                    pp_recv_end_ts,
+                    pp_recv_ms,
+                    pp_send_cumulative_ms,
+                    pp_recv_cumulative_ms,
+                    forward_compute_ms,
+                    backward_compute_ms,
+                    pp_send_count,
+                    pp_recv_count,
+                    pp_send_bytes,
+                    pp_recv_bytes,
+                    dp_allreduce_start_ts,
+                    dp_allreduce_end_ts,
+                    dp_allreduce_ms,
+                    dp_allreduce_bytes,
+                    loss,
+                    lr,
+                    memory_allocated_mb,
+                    memory_reserved_mb,
+                    memory_peak_mb
+                )
+                VALUES (
+                    ?,?,?,?,?,?,?,?,?,?,
+                    ?,?,?,?,?,?,?,?,?,?,
+                    ?,?,?,?,?,?,?,?,?,?,
+                    ?,?,?,?,?,?,?,?
+                )"""
     step_data: dict[int, dict[int, dict]] = {}
     for rank, records in all_records.items():
         step_data[rank] = {}
@@ -375,16 +558,25 @@ def stitch_experiment(
                 rec.get("pp_recv_start_ts"),
                 rec.get("pp_recv_end_ts"),
             )
+            pp_send_cum_ms = _to_float(
+                rec.get("pp_send_cumulative_ms")
+            )
+            pp_recv_cum_ms = _to_float(
+                rec.get("pp_recv_cumulative_ms")
+            )
+            fwd_compute_ms = _to_float(
+                rec.get("forward_compute_ms")
+            )
+            bwd_compute_ms = _to_float(
+                rec.get("backward_compute_ms")
+            )
             dp_ar_ms = _duration_ms(
                 rec.get("dp_allreduce_start_ts"),
                 rec.get("dp_allreduce_end_ts"),
             )
 
             conn.execute(
-                """INSERT OR REPLACE INTO step_metrics
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-                        ?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-                        ?,?,?,?,?)""",
+                step_insert_sql,
                 (
                     experiment_id,
                     rank,
@@ -407,6 +599,10 @@ def stitch_experiment(
                     rec.get("pp_recv_start_ts"),
                     rec.get("pp_recv_end_ts"),
                     pp_recv_ms,
+                    pp_send_cum_ms,
+                    pp_recv_cum_ms,
+                    fwd_compute_ms,
+                    bwd_compute_ms,
                     rec.get("pp_send_count", 0),
                     rec.get("pp_recv_count", 0),
                     rec.get("pp_send_bytes", 0),
@@ -429,6 +625,10 @@ def stitch_experiment(
                 "opt_ms": opt_ms,
                 "pp_send_ms": pp_send_ms,
                 "pp_recv_ms": pp_recv_ms,
+                "pp_send_cum_ms": pp_send_cum_ms,
+                "pp_recv_cum_ms": pp_recv_cum_ms,
+                "fwd_compute_ms": fwd_compute_ms,
+                "bwd_compute_ms": bwd_compute_ms,
                 "dp_ar_ms": dp_ar_ms,
                 "pp_send_bytes": rec.get(
                     "pp_send_bytes", 0
@@ -438,6 +638,191 @@ def stitch_experiment(
                 ),
             }
             step_count += 1
+
+    # ── Process per-microbatch op timeline records ───────
+    micro_ops_by_key: dict[
+        tuple[int, int, int], list[dict[str, Any]]
+    ] = {}
+    for rank, records in all_records.items():
+        for rec in records:
+            if rec.get("type") != "micro_op":
+                continue
+            it = int(rec.get("iter", -1))
+            mb = int(rec.get("microbatch", -1))
+            op_seq = int(rec.get("op_seq", -1))
+            op_kind = str(rec.get("op_kind", ""))
+            stream = str(rec.get("stream", ""))
+            start_off = _to_float(rec.get("start_offset_ms"))
+            end_off = _to_float(rec.get("end_offset_ms"))
+            dur_ms = _to_float(rec.get("duration_ms"))
+            nbytes = int(rec.get("nbytes", 0) or 0)
+            peer_rank = rec.get("peer_rank")
+            if peer_rank is not None:
+                try:
+                    peer_rank = int(peer_rank)
+                except Exception:
+                    peer_rank = None
+
+            conn.execute(
+                """INSERT OR REPLACE INTO microbatch_op_metrics
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    experiment_id,
+                    rank,
+                    it,
+                    mb,
+                    op_seq,
+                    op_kind,
+                    stream,
+                    start_off,
+                    end_off,
+                    dur_ms,
+                    nbytes,
+                    peer_rank,
+                ),
+            )
+            micro_op_count += 1
+            micro_ops_by_key.setdefault(
+                (rank, it, mb), []
+            ).append(
+                {
+                    "op_kind": op_kind,
+                    "start_offset_ms": start_off,
+                    "end_offset_ms": end_off,
+                    "duration_ms": dur_ms,
+                }
+            )
+
+    compute_kinds = {"fwd_compute", "bwd_compute"}
+    comm_kinds = {
+        "fwd_pp_send",
+        "fwd_pp_recv",
+        "bwd_pp_send",
+        "bwd_pp_recv",
+    }
+    global_micro_data: dict[
+        tuple[int, int], list[dict[str, Any]]
+    ] = {}
+    for (rank, it, mb), ops in micro_ops_by_key.items():
+        compute_intervals: list[tuple[float, float]] = []
+        comm_intervals: list[tuple[float, float]] = []
+        all_intervals: list[tuple[float, float]] = []
+        compute_sum = 0.0
+        comm_sum = 0.0
+
+        for op in ops:
+            s = _to_float(op.get("start_offset_ms"))
+            e = _to_float(op.get("end_offset_ms"))
+            d = _to_float(op.get("duration_ms"))
+            kind = str(op.get("op_kind", ""))
+            if s is not None and e is not None:
+                all_intervals.append((s, e))
+                if kind in compute_kinds:
+                    compute_intervals.append((s, e))
+                if kind in comm_kinds:
+                    comm_intervals.append((s, e))
+            if d is not None:
+                if kind in compute_kinds:
+                    compute_sum += d
+                if kind in comm_kinds:
+                    comm_sum += d
+
+        compute_nonoverlap = _interval_union_ms(compute_intervals)
+        comm_nonoverlap = _interval_union_ms(comm_intervals)
+        total_union = _interval_union_ms(all_intervals)
+        total_sum = compute_sum + comm_sum
+
+        conn.execute(
+            """INSERT OR REPLACE INTO microbatch_metrics
+            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                experiment_id,
+                rank,
+                it,
+                mb,
+                compute_nonoverlap,
+                comm_nonoverlap,
+                total_union,
+                compute_sum,
+                comm_sum,
+                total_sum,
+            ),
+        )
+        microbatch_count += 1
+        global_micro_data.setdefault((it, mb), []).append(
+            {
+                "rank": rank,
+                "compute_nonoverlap_ms": compute_nonoverlap,
+                "comm_nonoverlap_ms": comm_nonoverlap,
+                "total_union_ms": total_union,
+                "compute_sum_ms": compute_sum,
+                "comm_sum_ms": comm_sum,
+                "total_sum_ms": total_sum,
+            }
+        )
+
+    for (it, mb) in sorted(global_micro_data.keys()):
+        rows = global_micro_data[(it, mb)]
+        c_non = [
+            float(r["compute_nonoverlap_ms"]) for r in rows
+        ]
+        k_non = [
+            float(r["comm_nonoverlap_ms"]) for r in rows
+        ]
+        t_non = [float(r["total_union_ms"]) for r in rows]
+        c_sum = [float(r["compute_sum_ms"]) for r in rows]
+        k_sum = [float(r["comm_sum_ms"]) for r in rows]
+        t_sum = [float(r["total_sum_ms"]) for r in rows]
+
+        total_union_by_rank = {
+            int(r["rank"]): float(r["total_union_ms"])
+            for r in rows
+        }
+        slowest_rank = (
+            max(
+                total_union_by_rank,
+                key=total_union_by_rank.get,
+            )
+            if total_union_by_rank
+            else None
+        )
+        fastest_rank = (
+            min(
+                total_union_by_rank,
+                key=total_union_by_rank.get,
+            )
+            if total_union_by_rank
+            else None
+        )
+        straggler = None
+        if slowest_rank is not None and fastest_rank is not None:
+            fast_v = total_union_by_rank[fastest_rank]
+            slow_v = total_union_by_rank[slowest_rank]
+            if fast_v > 0:
+                straggler = slow_v / fast_v
+
+        conn.execute(
+            """INSERT OR REPLACE INTO global_microbatch_metrics
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                experiment_id,
+                it,
+                mb,
+                sum(c_non) if c_non else None,
+                sum(k_non) if k_non else None,
+                sum(t_non) if t_non else None,
+                sum(c_sum) if c_sum else None,
+                sum(k_sum) if k_sum else None,
+                sum(t_sum) if t_sum else None,
+                max(c_non) if c_non else None,
+                max(k_non) if k_non else None,
+                max(t_non) if t_non else None,
+                slowest_rank,
+                fastest_rank,
+                straggler,
+            ),
+        )
+        global_microbatch_count += 1
 
     # ── Compute global_load_metrics ─────────────────
     if load_data:
@@ -529,9 +914,21 @@ def stitch_experiment(
         total_opt = 0.0
         total_pp_send = 0.0
         total_pp_recv = 0.0
+        total_pp_send_cum = 0.0
+        total_pp_recv_cum = 0.0
+        has_pp_send_cum = False
+        has_pp_recv_cum = False
         total_pp_bytes = 0
         max_pp_send = 0.0
         max_pp_recv = 0.0
+        max_pp_send_cum = 0.0
+        max_pp_recv_cum = 0.0
+        has_max_pp_send_cum = False
+        has_max_pp_recv_cum = False
+        total_fwd_compute = 0.0
+        total_bwd_compute = 0.0
+        has_fwd_compute = False
+        has_bwd_compute = False
         total_dp_ar = 0.0
         max_dp_ar = 0.0
         dp_ar_bytes = 0
@@ -559,6 +956,26 @@ def stitch_experiment(
                 max_pp_recv = max(
                     max_pp_recv, sd["pp_recv_ms"]
                 )
+            if sd.get("pp_send_cum_ms") is not None:
+                has_pp_send_cum = True
+                has_max_pp_send_cum = True
+                total_pp_send_cum += sd["pp_send_cum_ms"]
+                max_pp_send_cum = max(
+                    max_pp_send_cum, sd["pp_send_cum_ms"]
+                )
+            if sd.get("pp_recv_cum_ms") is not None:
+                has_pp_recv_cum = True
+                has_max_pp_recv_cum = True
+                total_pp_recv_cum += sd["pp_recv_cum_ms"]
+                max_pp_recv_cum = max(
+                    max_pp_recv_cum, sd["pp_recv_cum_ms"]
+                )
+            if sd.get("fwd_compute_ms") is not None:
+                has_fwd_compute = True
+                total_fwd_compute += sd["fwd_compute_ms"]
+            if sd.get("bwd_compute_ms") is not None:
+                has_bwd_compute = True
+                total_bwd_compute += sd["bwd_compute_ms"]
             total_pp_bytes += sd.get(
                 "pp_send_bytes", 0
             )
@@ -597,8 +1014,40 @@ def stitch_experiment(
 
         conn.execute(
             """INSERT OR REPLACE INTO global_step_metrics
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-                    ?,?,?,?)""",
+            (
+                experiment_id,
+                iter,
+                iter_start_ts,
+                iter_end_ts,
+                loss,
+                lr,
+                iter_duration_ms,
+                total_forward_ms,
+                total_backward_ms,
+                total_optimizer_ms,
+                total_pp_send_ms,
+                total_pp_recv_ms,
+                total_pp_send_cumulative_ms,
+                total_pp_recv_cumulative_ms,
+                total_pp_bytes,
+                max_pp_send_ms,
+                max_pp_recv_ms,
+                max_pp_send_cumulative_ms,
+                max_pp_recv_cumulative_ms,
+                total_forward_compute_ms,
+                total_backward_compute_ms,
+                total_dp_allreduce_ms,
+                max_dp_allreduce_ms,
+                dp_allreduce_bytes,
+                slowest_rank,
+                fastest_rank,
+                straggler_ratio
+            )
+            VALUES (
+                ?,?,?,?,?,?,?,?,?,?,
+                ?,?,?,?,?,?,?,?,?,?,
+                ?,?,?,?,?,?,?
+            )""",
             (
                 experiment_id,
                 it,
@@ -612,9 +1061,39 @@ def stitch_experiment(
                 total_opt or None,
                 total_pp_send or None,
                 total_pp_recv or None,
+                (
+                    total_pp_send_cum
+                    if has_pp_send_cum
+                    else None
+                ),
+                (
+                    total_pp_recv_cum
+                    if has_pp_recv_cum
+                    else None
+                ),
                 total_pp_bytes or None,
                 max_pp_send or None,
                 max_pp_recv or None,
+                (
+                    max_pp_send_cum
+                    if has_max_pp_send_cum
+                    else None
+                ),
+                (
+                    max_pp_recv_cum
+                    if has_max_pp_recv_cum
+                    else None
+                ),
+                (
+                    total_fwd_compute
+                    if has_fwd_compute
+                    else None
+                ),
+                (
+                    total_bwd_compute
+                    if has_bwd_compute
+                    else None
+                ),
                 total_dp_ar or None,
                 max_dp_ar or None,
                 dp_ar_bytes or None,
@@ -630,6 +1109,9 @@ def stitch_experiment(
         "ranks": len(all_records),
         "load_records": load_count,
         "step_records": step_count,
+        "micro_op_records": micro_op_count,
+        "microbatch_records": microbatch_count,
+        "global_microbatch_records": global_microbatch_count,
         "global_raw_records": global_raw_count,
         "iterations": len(all_iters),
     }
@@ -685,6 +1167,8 @@ def main() -> None:
         total = 0
         for exp_dir in sorted(output_dir.iterdir()):
             if not exp_dir.is_dir():
+                continue
+            if not any(exp_dir.glob("rank_*.jsonl")):
                 continue
             eid = exp_dir.name
             print(f"Stitching {eid}...", end=" ")

@@ -67,6 +67,128 @@ logger = logging.getLogger(__name__)
 # ── Synthetic data loader ────────────────────────────────
 
 
+def _record_cuda_event_pair(
+    event_pairs: list[tuple[Any, Any]] | None,
+    stream: torch.cuda.Stream,
+) -> tuple[Any | None, Any | None]:
+    """Record start event on stream and return (start, end)."""
+    if event_pairs is None:
+        return None, None
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record(stream)
+    return start, end
+
+
+def _finish_cuda_event_pair(
+    event_pairs: list[tuple[Any, Any]] | None,
+    stream: torch.cuda.Stream,
+    start: Any | None,
+    end: Any | None,
+) -> None:
+    """Record end event on stream and append pair."""
+    if (
+        event_pairs is None
+        or start is None
+        or end is None
+    ):
+        return
+    end.record(stream)
+    event_pairs.append((start, end))
+
+
+def _sum_cuda_event_pairs_ms(
+    event_pairs: list[tuple[Any, Any]] | None,
+) -> float:
+    """Resolve elapsed time (ms) for all event pairs."""
+    if not event_pairs:
+        return 0.0
+    total_ms = 0.0
+    for start, end in event_pairs:
+        try:
+            total_ms += float(start.elapsed_time(end))
+        except Exception:
+            continue
+    return total_ms
+
+
+def _append_micro_op_event(
+    micro_op_events: list[dict[str, Any]] | None,
+    *,
+    microbatch: int | None,
+    op_kind: str,
+    stream_name: str,
+    start_event: Any | None,
+    end_event: Any | None,
+    nbytes: int = 0,
+    peer_rank: int | None = None,
+) -> None:
+    """Attach metadata to an event pair for per-microbatch export."""
+    if (
+        micro_op_events is None
+        or microbatch is None
+        or start_event is None
+        or end_event is None
+    ):
+        return
+    micro_op_events.append(
+        {
+            "microbatch": int(microbatch),
+            "op_kind": op_kind,
+            "stream": stream_name,
+            "nbytes": int(nbytes),
+            "peer_rank": (
+                int(peer_rank)
+                if peer_rank is not None
+                else None
+            ),
+            "start_event": start_event,
+            "end_event": end_event,
+        }
+    )
+
+
+def _resolve_micro_op_records(
+    iter_anchor_event: Any | None,
+    micro_op_events: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Resolve per-op event metadata to numeric timing records."""
+    if iter_anchor_event is None or not micro_op_events:
+        return []
+
+    resolved: list[dict[str, Any]] = []
+    for op_seq, rec in enumerate(micro_op_events):
+        start_event = rec.get("start_event")
+        end_event = rec.get("end_event")
+        if start_event is None or end_event is None:
+            continue
+        try:
+            start_ms = float(
+                iter_anchor_event.elapsed_time(start_event)
+            )
+            end_ms = float(
+                iter_anchor_event.elapsed_time(end_event)
+            )
+            dur_ms = float(start_event.elapsed_time(end_event))
+        except Exception:
+            continue
+
+        resolved.append(
+            {
+                "microbatch": int(rec["microbatch"]),
+                "op_seq": int(op_seq),
+                "op_kind": str(rec["op_kind"]),
+                "stream": str(rec["stream"]),
+                "start_offset_ms": start_ms,
+                "end_offset_ms": end_ms,
+                "duration_ms": dur_ms,
+                "nbytes": int(rec.get("nbytes", 0)),
+                "peer_rank": rec.get("peer_rank"),
+            }
+        )
+    return resolved
+
+
 class SyntheticDataLoader:
     """Wraps pre-generated tensors into micro-batch iteration."""
 
@@ -600,6 +722,28 @@ def _worker_impl(
         # Whether this stage needs recv for F / B ops.
         _needs_fwd_recv = pp_prev is not None
         _needs_bwd_recv = pp_next is not None
+        _event_metrics_enabled = _mc_enabled
+        _pp_send_event_pairs: list[tuple[Any, Any]] | None = (
+            [] if _event_metrics_enabled else None
+        )
+        _pp_recv_event_pairs: list[tuple[Any, Any]] | None = (
+            [] if _event_metrics_enabled else None
+        )
+        _fwd_compute_event_pairs: list[tuple[Any, Any]] | None = (
+            [] if _event_metrics_enabled else None
+        )
+        _bwd_compute_event_pairs: list[tuple[Any, Any]] | None = (
+            [] if _event_metrics_enabled else None
+        )
+        _micro_op_event_records: list[dict[str, Any]] | None = (
+            [] if _event_metrics_enabled else None
+        )
+        _iter_anchor_event: Any | None = None
+        if _event_metrics_enabled:
+            _iter_anchor_event = torch.cuda.Event(
+                enable_timing=True
+            )
+            _iter_anchor_event.record(comp_stream)
 
         def _do_forward(
             m: int,
@@ -616,6 +760,9 @@ def _worker_impl(
                     micro_losses,
                     num_micro,
                     comp_stream,
+                    compute_event_pairs=_fwd_compute_event_pairs,
+                    microbatch_idx=m,
+                    micro_op_events=_micro_op_event_records,
                 )
                 # _fwd_single appends → fix slot
                 cached[m] = cached.pop()
@@ -633,6 +780,10 @@ def _worker_impl(
                     start_group_before_send=(
                         start_group_before_send
                     ),
+                    send_event_pairs=_pp_send_event_pairs,
+                    compute_event_pairs=_fwd_compute_event_pairs,
+                    microbatch_idx=m,
+                    micro_op_events=_micro_op_event_records,
                 )
                 mc.pp_send_end(nbytes=_pp_act_bytes)
                 cached[m] = out_list[0]
@@ -656,6 +807,10 @@ def _worker_impl(
                     end_group_after_recv=(
                         end_group_after_recv
                     ),
+                    recv_event_pairs=_pp_recv_event_pairs,
+                    compute_event_pairs=_fwd_compute_event_pairs,
+                    microbatch_idx=m,
+                    micro_op_events=_micro_op_event_records,
                 )
                 if not skip_recv:
                     mc.pp_recv_end(nbytes=_pp_act_bytes)
@@ -683,6 +838,11 @@ def _worker_impl(
                     end_group_after_recv=(
                         end_group_after_recv
                     ),
+                    recv_event_pairs=_pp_recv_event_pairs,
+                    send_event_pairs=_pp_send_event_pairs,
+                    compute_event_pairs=_fwd_compute_event_pairs,
+                    microbatch_idx=m,
+                    micro_op_events=_micro_op_event_records,
                 )
                 mc.pp_send_end(nbytes=_pp_act_bytes)
                 if not skip_recv:
@@ -696,7 +856,13 @@ def _worker_impl(
             end_group_after_recv: bool = False,
         ) -> None:
             if is_single:
-                _bwd_single(cached[m], comp_stream)
+                _bwd_single(
+                    cached[m],
+                    comp_stream,
+                    compute_event_pairs=_bwd_compute_event_pairs,
+                    microbatch_idx=m,
+                    micro_op_events=_micro_op_event_records,
+                )
             elif is_last:
                 assert input_buffers is not None
                 mc.pp_send_start()
@@ -710,6 +876,10 @@ def _worker_impl(
                     start_group_before_send=(
                         start_group_before_send
                     ),
+                    send_event_pairs=_pp_send_event_pairs,
+                    compute_event_pairs=_bwd_compute_event_pairs,
+                    microbatch_idx=m,
+                    micro_op_events=_micro_op_event_records,
                 )
                 mc.pp_send_end(nbytes=_pp_act_bytes)
             elif is_first:
@@ -727,6 +897,10 @@ def _worker_impl(
                     end_group_after_recv=(
                         end_group_after_recv
                     ),
+                    recv_event_pairs=_pp_recv_event_pairs,
+                    compute_event_pairs=_bwd_compute_event_pairs,
+                    microbatch_idx=m,
+                    micro_op_events=_micro_op_event_records,
                 )
                 if not skip_recv:
                     mc.pp_recv_end(nbytes=_pp_act_bytes)
@@ -753,6 +927,11 @@ def _worker_impl(
                     end_group_after_recv=(
                         end_group_after_recv
                     ),
+                    recv_event_pairs=_pp_recv_event_pairs,
+                    send_event_pairs=_pp_send_event_pairs,
+                    compute_event_pairs=_bwd_compute_event_pairs,
+                    microbatch_idx=m,
+                    micro_op_events=_micro_op_event_records,
                 )
                 mc.pp_send_end(nbytes=_pp_act_bytes)
                 if not skip_recv:
@@ -951,6 +1130,27 @@ def _worker_impl(
         # here serialises every rank and adds >200 ms/iter.
         torch.cuda.synchronize()
 
+        mc.set_cumulative_timings(
+            pp_send_cumulative_ms=_sum_cuda_event_pairs_ms(
+                _pp_send_event_pairs
+            ),
+            pp_recv_cumulative_ms=_sum_cuda_event_pairs_ms(
+                _pp_recv_event_pairs
+            ),
+            forward_compute_ms=_sum_cuda_event_pairs_ms(
+                _fwd_compute_event_pairs
+            ),
+            backward_compute_ms=_sum_cuda_event_pairs_ms(
+                _bwd_compute_event_pairs
+            ),
+        )
+        _micro_ops_resolved = _resolve_micro_op_records(
+            iter_anchor_event=_iter_anchor_event,
+            micro_op_events=_micro_op_event_records,
+        )
+        if _micro_ops_resolved:
+            mc.log_micro_ops(iter_num, _micro_ops_resolved)
+
         # ── Emit JSONL step record ───────────────────────
         _ma_mb = (
             torch.cuda.memory_allocated(device) / 1024**2
@@ -1095,10 +1295,30 @@ def _fwd_single(
     micro_losses: list,
     num_micro: int,
     comp_stream: torch.cuda.Stream,
+    compute_event_pairs: list[tuple[Any, Any]] | None = None,
+    microbatch_idx: int | None = None,
+    micro_op_events: list[dict[str, Any]] | None = None,
 ) -> None:
     with torch.cuda.stream(comp_stream):
+        _ev_s, _ev_e = _record_cuda_event_pair(
+            compute_event_pairs, comp_stream
+        )
+        _append_micro_op_event(
+            micro_op_events,
+            microbatch=microbatch_idx,
+            op_kind="fwd_compute",
+            stream_name="comp",
+            start_event=_ev_s,
+            end_event=_ev_e,
+        )
         loss = model(micro_input, micro_target)
         scaled_loss = loss / num_micro
+        _finish_cuda_event_pair(
+            compute_event_pairs,
+            comp_stream,
+            _ev_s,
+            _ev_e,
+        )
     micro_losses.append(loss.detach())
     cached.append(scaled_loss)
 
@@ -1112,9 +1332,30 @@ def _fwd_first(
     comp_stream: torch.cuda.Stream,
     send_stream: torch.cuda.Stream,
     start_group_before_send: bool = False,
+    send_event_pairs: list[tuple[Any, Any]] | None = None,
+    compute_event_pairs: list[tuple[Any, Any]] | None = None,
+    microbatch_idx: int | None = None,
+    micro_op_events: list[dict[str, Any]] | None = None,
 ) -> None:
     with torch.cuda.stream(comp_stream):
+        _cmp_s, _cmp_e = _record_cuda_event_pair(
+            compute_event_pairs, comp_stream
+        )
+        _append_micro_op_event(
+            micro_op_events,
+            microbatch=microbatch_idx,
+            op_kind="fwd_compute",
+            stream_name="comp",
+            start_event=_cmp_s,
+            end_event=_cmp_e,
+        )
         out = model(micro_input)
+        _finish_cuda_event_pair(
+            compute_event_pairs,
+            comp_stream,
+            _cmp_s,
+            _cmp_e,
+        )
     cached.append(out)
     if pp_next is not None:
         with torch.cuda.stream(send_stream):
@@ -1122,7 +1363,27 @@ def _fwd_first(
             send_buf = out.data.clone()
             if start_group_before_send:
                 nccl_group_start()
+            _snd_s, _snd_e = _record_cuda_event_pair(
+                send_event_pairs, send_stream
+            )
+            _append_micro_op_event(
+                micro_op_events,
+                microbatch=microbatch_idx,
+                op_kind="fwd_pp_send",
+                stream_name="send",
+                start_event=_snd_s,
+                end_event=_snd_e,
+                nbytes=send_buf.nelement()
+                * send_buf.element_size(),
+                peer_rank=pp_next,
+            )
             nccl.send(send_buf, pp_next, send_stream)
+            _finish_cuda_event_pair(
+                send_event_pairs,
+                send_stream,
+                _snd_s,
+                _snd_e,
+            )
 
 
 def _fwd_last(
@@ -1138,17 +1399,58 @@ def _fwd_last(
     recv_stream: torch.cuda.Stream,
     skip_recv: bool = False,
     end_group_after_recv: bool = False,
+    recv_event_pairs: list[tuple[Any, Any]] | None = None,
+    compute_event_pairs: list[tuple[Any, Any]] | None = None,
+    microbatch_idx: int | None = None,
+    micro_op_events: list[dict[str, Any]] | None = None,
 ) -> None:
     if pp_prev is not None and not skip_recv:
         with torch.cuda.stream(recv_stream):
+            _rcv_s, _rcv_e = _record_cuda_event_pair(
+                recv_event_pairs, recv_stream
+            )
+            _append_micro_op_event(
+                micro_op_events,
+                microbatch=microbatch_idx,
+                op_kind="fwd_pp_recv",
+                stream_name="recv",
+                start_event=_rcv_s,
+                end_event=_rcv_e,
+                nbytes=input_buf.nelement()
+                * input_buf.element_size(),
+                peer_rank=pp_prev,
+            )
             nccl.recv(input_buf, pp_prev, recv_stream)
+            _finish_cuda_event_pair(
+                recv_event_pairs,
+                recv_stream,
+                _rcv_s,
+                _rcv_e,
+            )
             if end_group_after_recv:
                 nccl_group_end()
     with torch.cuda.stream(comp_stream):
         if pp_prev is not None and not skip_recv:
             comp_stream.wait_stream(recv_stream)
+        _cmp_s, _cmp_e = _record_cuda_event_pair(
+            compute_event_pairs, comp_stream
+        )
+        _append_micro_op_event(
+            micro_op_events,
+            microbatch=microbatch_idx,
+            op_kind="fwd_compute",
+            stream_name="comp",
+            start_event=_cmp_s,
+            end_event=_cmp_e,
+        )
         loss = model(input_buf, micro_target)
         scaled_loss = loss / num_micro
+        _finish_cuda_event_pair(
+            compute_event_pairs,
+            comp_stream,
+            _cmp_s,
+            _cmp_e,
+        )
     micro_losses.append(loss.detach())
     cached.append(scaled_loss)
 
@@ -1166,16 +1468,58 @@ def _fwd_middle(
     skip_recv: bool = False,
     start_group_before_send: bool = False,
     end_group_after_recv: bool = False,
+    recv_event_pairs: list[tuple[Any, Any]] | None = None,
+    send_event_pairs: list[tuple[Any, Any]] | None = None,
+    compute_event_pairs: list[tuple[Any, Any]] | None = None,
+    microbatch_idx: int | None = None,
+    micro_op_events: list[dict[str, Any]] | None = None,
 ) -> None:
     if pp_prev is not None and not skip_recv:
         with torch.cuda.stream(recv_stream):
+            _rcv_s, _rcv_e = _record_cuda_event_pair(
+                recv_event_pairs, recv_stream
+            )
+            _append_micro_op_event(
+                micro_op_events,
+                microbatch=microbatch_idx,
+                op_kind="fwd_pp_recv",
+                stream_name="recv",
+                start_event=_rcv_s,
+                end_event=_rcv_e,
+                nbytes=input_buf.nelement()
+                * input_buf.element_size(),
+                peer_rank=pp_prev,
+            )
             nccl.recv(input_buf, pp_prev, recv_stream)
+            _finish_cuda_event_pair(
+                recv_event_pairs,
+                recv_stream,
+                _rcv_s,
+                _rcv_e,
+            )
             if end_group_after_recv:
                 nccl_group_end()
     with torch.cuda.stream(comp_stream):
         if pp_prev is not None and not skip_recv:
             comp_stream.wait_stream(recv_stream)
+        _cmp_s, _cmp_e = _record_cuda_event_pair(
+            compute_event_pairs, comp_stream
+        )
+        _append_micro_op_event(
+            micro_op_events,
+            microbatch=microbatch_idx,
+            op_kind="fwd_compute",
+            stream_name="comp",
+            start_event=_cmp_s,
+            end_event=_cmp_e,
+        )
         out = model(input_buf)
+        _finish_cuda_event_pair(
+            compute_event_pairs,
+            comp_stream,
+            _cmp_s,
+            _cmp_e,
+        )
     cached.append(out)
     if pp_next is not None:
         with torch.cuda.stream(send_stream):
@@ -1183,7 +1527,27 @@ def _fwd_middle(
             send_buf = out.data.clone()
             if start_group_before_send:
                 nccl_group_start()
+            _snd_s, _snd_e = _record_cuda_event_pair(
+                send_event_pairs, send_stream
+            )
+            _append_micro_op_event(
+                micro_op_events,
+                microbatch=microbatch_idx,
+                op_kind="fwd_pp_send",
+                stream_name="send",
+                start_event=_snd_s,
+                end_event=_snd_e,
+                nbytes=send_buf.nelement()
+                * send_buf.element_size(),
+                peer_rank=pp_next,
+            )
             nccl.send(send_buf, pp_next, send_stream)
+            _finish_cuda_event_pair(
+                send_event_pairs,
+                send_stream,
+                _snd_s,
+                _snd_e,
+            )
 
 
 # ── Backward helpers ─────────────────────────────────────
@@ -1192,9 +1556,29 @@ def _fwd_middle(
 def _bwd_single(
     cached_out: torch.Tensor,
     comp_stream: torch.cuda.Stream,
+    compute_event_pairs: list[tuple[Any, Any]] | None = None,
+    microbatch_idx: int | None = None,
+    micro_op_events: list[dict[str, Any]] | None = None,
 ) -> None:
     with torch.cuda.stream(comp_stream):
+        _cmp_s, _cmp_e = _record_cuda_event_pair(
+            compute_event_pairs, comp_stream
+        )
+        _append_micro_op_event(
+            micro_op_events,
+            microbatch=microbatch_idx,
+            op_kind="bwd_compute",
+            stream_name="comp",
+            start_event=_cmp_s,
+            end_event=_cmp_e,
+        )
         cached_out.backward()
+        _finish_cuda_event_pair(
+            compute_event_pairs,
+            comp_stream,
+            _cmp_s,
+            _cmp_e,
+        )
 
 
 def _bwd_last(
@@ -1205,17 +1589,58 @@ def _bwd_last(
     comp_stream: torch.cuda.Stream,
     send_stream: torch.cuda.Stream,
     start_group_before_send: bool = False,
+    send_event_pairs: list[tuple[Any, Any]] | None = None,
+    compute_event_pairs: list[tuple[Any, Any]] | None = None,
+    microbatch_idx: int | None = None,
+    micro_op_events: list[dict[str, Any]] | None = None,
 ) -> None:
     with torch.cuda.stream(comp_stream):
+        _cmp_s, _cmp_e = _record_cuda_event_pair(
+            compute_event_pairs, comp_stream
+        )
+        _append_micro_op_event(
+            micro_op_events,
+            microbatch=microbatch_idx,
+            op_kind="bwd_compute",
+            stream_name="comp",
+            start_event=_cmp_s,
+            end_event=_cmp_e,
+        )
         cached_out.backward()
+        _finish_cuda_event_pair(
+            compute_event_pairs,
+            comp_stream,
+            _cmp_s,
+            _cmp_e,
+        )
     if pp_prev is not None and input_buf.grad is not None:
         with torch.cuda.stream(send_stream):
             send_stream.wait_stream(comp_stream)
             grad_clone = input_buf.grad.clone()
             if start_group_before_send:
                 nccl_group_start()
+            _snd_s, _snd_e = _record_cuda_event_pair(
+                send_event_pairs, send_stream
+            )
+            _append_micro_op_event(
+                micro_op_events,
+                microbatch=microbatch_idx,
+                op_kind="bwd_pp_send",
+                stream_name="send",
+                start_event=_snd_s,
+                end_event=_snd_e,
+                nbytes=grad_clone.nelement()
+                * grad_clone.element_size(),
+                peer_rank=pp_prev,
+            )
             nccl.send(
                 grad_clone, pp_prev, send_stream
+            )
+            _finish_cuda_event_pair(
+                send_event_pairs,
+                send_stream,
+                _snd_s,
+                _snd_e,
             )
 
 
@@ -1228,22 +1653,80 @@ def _bwd_first(
     recv_stream: torch.cuda.Stream,
     skip_recv: bool = False,
     end_group_after_recv: bool = False,
+    recv_event_pairs: list[tuple[Any, Any]] | None = None,
+    compute_event_pairs: list[tuple[Any, Any]] | None = None,
+    microbatch_idx: int | None = None,
+    micro_op_events: list[dict[str, Any]] | None = None,
 ) -> None:
     if pp_next is not None:
         if not skip_recv:
             with torch.cuda.stream(recv_stream):
+                _rcv_s, _rcv_e = _record_cuda_event_pair(
+                    recv_event_pairs, recv_stream
+                )
+                _append_micro_op_event(
+                    micro_op_events,
+                    microbatch=microbatch_idx,
+                    op_kind="bwd_pp_recv",
+                    stream_name="recv",
+                    start_event=_rcv_s,
+                    end_event=_rcv_e,
+                    nbytes=grad_buf.nelement()
+                    * grad_buf.element_size(),
+                    peer_rank=pp_next,
+                )
                 nccl.recv(
                     grad_buf, pp_next, recv_stream
+                )
+                _finish_cuda_event_pair(
+                    recv_event_pairs,
+                    recv_stream,
+                    _rcv_s,
+                    _rcv_e,
                 )
                 if end_group_after_recv:
                     nccl_group_end()
         with torch.cuda.stream(comp_stream):
             if not skip_recv:
                 comp_stream.wait_stream(recv_stream)
+            _cmp_s, _cmp_e = _record_cuda_event_pair(
+                compute_event_pairs, comp_stream
+            )
+            _append_micro_op_event(
+                micro_op_events,
+                microbatch=microbatch_idx,
+                op_kind="bwd_compute",
+                stream_name="comp",
+                start_event=_cmp_s,
+                end_event=_cmp_e,
+            )
             cached_out.backward(gradient=grad_buf)
+            _finish_cuda_event_pair(
+                compute_event_pairs,
+                comp_stream,
+                _cmp_s,
+                _cmp_e,
+            )
     else:
         with torch.cuda.stream(comp_stream):
+            _cmp_s, _cmp_e = _record_cuda_event_pair(
+                compute_event_pairs, comp_stream
+            )
+            _append_micro_op_event(
+                micro_op_events,
+                microbatch=microbatch_idx,
+                op_kind="bwd_compute",
+                stream_name="comp",
+                start_event=_cmp_s,
+                end_event=_cmp_e,
+            )
             cached_out.backward()
+            _finish_cuda_event_pair(
+                compute_event_pairs,
+                comp_stream,
+                _cmp_s,
+                _cmp_e,
+            )
 
 
 def _bwd_middle(
@@ -1259,30 +1742,109 @@ def _bwd_middle(
     skip_recv: bool = False,
     start_group_before_send: bool = False,
     end_group_after_recv: bool = False,
+    recv_event_pairs: list[tuple[Any, Any]] | None = None,
+    send_event_pairs: list[tuple[Any, Any]] | None = None,
+    compute_event_pairs: list[tuple[Any, Any]] | None = None,
+    microbatch_idx: int | None = None,
+    micro_op_events: list[dict[str, Any]] | None = None,
 ) -> None:
     if pp_next is not None:
         if not skip_recv:
             with torch.cuda.stream(recv_stream):
+                _rcv_s, _rcv_e = _record_cuda_event_pair(
+                    recv_event_pairs, recv_stream
+                )
+                _append_micro_op_event(
+                    micro_op_events,
+                    microbatch=microbatch_idx,
+                    op_kind="bwd_pp_recv",
+                    stream_name="recv",
+                    start_event=_rcv_s,
+                    end_event=_rcv_e,
+                    nbytes=grad_buf.nelement()
+                    * grad_buf.element_size(),
+                    peer_rank=pp_next,
+                )
                 nccl.recv(
                     grad_buf, pp_next, recv_stream
+                )
+                _finish_cuda_event_pair(
+                    recv_event_pairs,
+                    recv_stream,
+                    _rcv_s,
+                    _rcv_e,
                 )
                 if end_group_after_recv:
                     nccl_group_end()
         with torch.cuda.stream(comp_stream):
             if not skip_recv:
                 comp_stream.wait_stream(recv_stream)
+            _cmp_s, _cmp_e = _record_cuda_event_pair(
+                compute_event_pairs, comp_stream
+            )
+            _append_micro_op_event(
+                micro_op_events,
+                microbatch=microbatch_idx,
+                op_kind="bwd_compute",
+                stream_name="comp",
+                start_event=_cmp_s,
+                end_event=_cmp_e,
+            )
             cached_out.backward(gradient=grad_buf)
+            _finish_cuda_event_pair(
+                compute_event_pairs,
+                comp_stream,
+                _cmp_s,
+                _cmp_e,
+            )
     else:
         with torch.cuda.stream(comp_stream):
+            _cmp_s, _cmp_e = _record_cuda_event_pair(
+                compute_event_pairs, comp_stream
+            )
+            _append_micro_op_event(
+                micro_op_events,
+                microbatch=microbatch_idx,
+                op_kind="bwd_compute",
+                stream_name="comp",
+                start_event=_cmp_s,
+                end_event=_cmp_e,
+            )
             cached_out.backward()
+            _finish_cuda_event_pair(
+                compute_event_pairs,
+                comp_stream,
+                _cmp_s,
+                _cmp_e,
+            )
     if pp_prev is not None and input_buf.grad is not None:
         with torch.cuda.stream(send_stream):
             send_stream.wait_stream(comp_stream)
             grad_clone = input_buf.grad.clone()
             if start_group_before_send:
                 nccl_group_start()
+            _snd_s, _snd_e = _record_cuda_event_pair(
+                send_event_pairs, send_stream
+            )
+            _append_micro_op_event(
+                micro_op_events,
+                microbatch=microbatch_idx,
+                op_kind="bwd_pp_send",
+                stream_name="send",
+                start_event=_snd_s,
+                end_event=_snd_e,
+                nbytes=grad_clone.nelement()
+                * grad_clone.element_size(),
+                peer_rank=pp_prev,
+            )
             nccl.send(
                 grad_clone, pp_prev, send_stream
+            )
+            _finish_cuda_event_pair(
+                send_event_pairs,
+                send_stream,
+                _snd_s,
+                _snd_e,
             )
 
 
