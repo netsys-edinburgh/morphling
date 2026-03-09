@@ -1,0 +1,289 @@
+{
+  "rank": 1,
+  "hostname": "ubuntu-2404-desktop-template",
+  "hardware": {
+    "hostname": "ubuntu-2404-desktop-template",
+    "architecture": "x86_64",
+    "cpu_cores": 32,
+    "system_memory_mb": 128769,
+    "gpu_available": true,
+    "gpu_count": 1,
+    "gpu_name": "NVIDIA L40S",
+    "gpu_memory_mb": 45459,
+    "compute_capability": "8.9",
+    "nvidia_driver": "590.48.01"
+  },
+  "model": {
+    "num_layers": 32,
+    "embed_dim": 4096,
+    "num_heads": 32,
+    "d_ff": 11008,
+    "seq_len": 512
+  },
+  "layer_profile": {
+    "1": {
+      "latency_ms_mean": 15.024144138442352,
+      "latency_ms_p50": 15.015205484814942,
+      "latency_ms_p90": 15.371203050017357,
+      "latency_ms_std": 0.24155292579334317,
+      "tokens_per_sec": 34078.48029692041,
+      "steps": 20.0,
+      "estimated_total_latency_ms": 480.7726124301553,
+      "estimated_model_tokens_per_sec": 1064.9525092787628,
+      "num_layers": 32.0
+    },
+    "2": {
+      "latency_ms_mean": 29.61308935773559,
+      "latency_ms_p50": 29.508098028600216,
+      "latency_ms_p90": 30.26245206128806,
+      "latency_ms_std": 0.46364045633008616,
+      "tokens_per_sec": 34579.303348926296,
+      "steps": 20.0,
+      "estimated_total_latency_ms": 947.6188594475389,
+      "estimated_model_tokens_per_sec": 1080.6032296539468,
+      "num_layers": 32.0
+    },
+    "4": {
+      "latency_ms_mean": 59.65579205658287,
+      "latency_ms_p50": 59.646935551427305,
+      "latency_ms_p90": 60.164497524965554,
+      "latency_ms_std": 0.7958983654411041,
+      "tokens_per_sec": 34330.2792469421,
+      "steps": 20.0,
+      "estimated_total_latency_ms": 1908.9853458106518,
+      "estimated_model_tokens_per_sec": 1072.8212264669405,
+      "num_layers": 32.0
+    }
+  },
+  "network": {
+    "10.203.54.11:5201": {
+      "ok": true,
+      "method": "iperf3",
+      "peer": "10.203.54.11:5201",
+      "bandwidth_mbps": 18301.987236551213,
+      "attempts": 1,
+      "latency_ok": true,
+      "latency_method": "ping",
+      "latency_peer": "10.203.54.11:5201",
+      "latency_ms_mean": 0.878,
+      "latency_ms_p50": 0.878,
+      "latency_ms_p90": 1.219,
+      "latency_ms_std": 0.138,
+      "latency_ms_min": 0.772,
+      "latency_ms_max": 1.219,
+      "latency_samples": 8
+    },
+    "10.203.53.10:5201": {
+      "ok": true,
+      "method": "iperf3",
+      "peer": "10.203.53.10:5201",
+      "bandwidth_mbps": 345.1174526865793,
+      "attempts": 1,
+      "latency_ok": true,
+      "latency_method": "ping",
+      "latency_peer": "10.203.53.10:5201",
+      "latency_ms_mean": 25.595,
+      "latency_ms_p50": 25.595,
+      "latency_ms_p90": 25.957,
+      "latency_ms_std": 0.253,
+      "latency_ms_min": 25.219,
+      "latency_ms_max": 25.957,
+      "latency_samples": 8
+    },
+    "10.203.56.10:5201": {
+      "ok": true,
+      "method": "iperf3",
+      "peer": "10.203.56.10:5201",
+      "bandwidth_mbps": 966.9639890827315,
+      "attempts": 1,
+      "latency_ok": true,
+      "latency_method": "ping",
+      "latency_peer": "10.203.56.10:5201",
+      "latency_ms_mean": 26.647,
+      "latency_ms_p50": 26.647,
+      "latency_ms_p90": 26.861,
+      "latency_ms_std": 0.305,
+      "latency_ms_min": 25.857,
+      "latency_ms_max": 26.861,
+      "latency_samples": 8
+    },
+    "10.203.56.12:5201": {
+      "ok": true,
+      "method": "iperf3",
+      "peer": "10.203.56.12:5201",
+      "bandwidth_mbps": 966.9009181711665,
+      "attempts": 1,
+      "latency_ok": true,
+      "latency_method": "ping",
+      "latency_peer": "10.203.56.12:5201",
+      "latency_ms_mean": 26.728,
+      "latency_ms_p50": 26.728,
+      "latency_ms_p90": 26.982,
+      "latency_ms_std": 0.193,
+      "latency_ms_min": 26.376,
+      "latency_ms_max": 26.982,
+      "latency_samples": 8
+    },
+    "10.203.53.11:5201": {
+      "ok": true,
+      "method": "iperf3",
+      "peer": "10.203.53.11:5201",
+      "bandwidth_mbps": 940.2490499128365,
+      "attempts": 1,
+      "latency_ok": true,
+      "latency_method": "ping",
+      "latency_peer": "10.203.53.11:5201",
+      "latency_ms_mean": 25.754,
+      "latency_ms_p50": 25.754,
+      "latency_ms_p90": 26.349,
+      "latency_ms_std": 0.316,
+      "latency_ms_min": 25.157,
+      "latency_ms_max": 26.349,
+      "latency_samples": 8
+    },
+    "10.203.57.14:5201": {
+      "ok": true,
+      "method": "iperf3",
+      "peer": "10.203.57.14:5201",
+      "bandwidth_mbps": 1036.0134243279629,
+      "attempts": 1,
+      "latency_ok": true,
+      "latency_method": "ping",
+      "latency_peer": "10.203.57.14:5201",
+      "latency_ms_mean": 23.575,
+      "latency_ms_p50": 23.575,
+      "latency_ms_p90": 23.751,
+      "latency_ms_std": 0.193,
+      "latency_ms_min": 23.105,
+      "latency_ms_max": 23.751,
+      "latency_samples": 8
+    },
+    "10.203.57.15:5201": {
+      "ok": true,
+      "method": "iperf3",
+      "peer": "10.203.57.15:5201",
+      "bandwidth_mbps": 1044.0528833825408,
+      "attempts": 1,
+      "latency_ok": true,
+      "latency_method": "ping",
+      "latency_peer": "10.203.57.15:5201",
+      "latency_ms_mean": 23.625,
+      "latency_ms_p50": 23.625,
+      "latency_ms_p90": 23.807,
+      "latency_ms_std": 0.115,
+      "latency_ms_min": 23.421,
+      "latency_ms_max": 23.807,
+      "latency_samples": 8
+    }
+  },
+  "timestamp_unix": 1773022976.5978475,
+  "layer_profiles_by_mps": {
+    "20": {
+      "1": {
+        "latency_ms_mean": 14.826816570712253,
+        "latency_ms_p50": 14.840019517578185,
+        "latency_ms_p90": 15.15509255696088,
+        "latency_ms_std": 0.2559182437565315,
+        "tokens_per_sec": 34532.02496693493,
+        "steps": 20.0,
+        "estimated_total_latency_ms": 474.4581302627921,
+        "estimated_model_tokens_per_sec": 1079.1257802167165,
+        "num_layers": 32.0
+      },
+      "2": {
+        "latency_ms_mean": 29.537641810020432,
+        "latency_ms_p50": 29.50964105548337,
+        "latency_ms_p90": 30.330394092015922,
+        "latency_ms_std": 0.45211372137247524,
+        "tokens_per_sec": 34667.62873577184,
+        "steps": 20.0,
+        "estimated_total_latency_ms": 945.2045379206538,
+        "estimated_model_tokens_per_sec": 1083.36339799287,
+        "num_layers": 32.0
+      },
+      "4": {
+        "latency_ms_mean": 57.78394520748407,
+        "latency_ms_p50": 57.902545493561774,
+        "latency_ms_p90": 59.04002577299252,
+        "latency_ms_std": 1.0100170417047407,
+        "tokens_per_sec": 35442.3705866097,
+        "steps": 20.0,
+        "estimated_total_latency_ms": 1849.0862466394901,
+        "estimated_model_tokens_per_sec": 1107.5740808315531,
+        "num_layers": 32.0
+      }
+    },
+    "50": {
+      "1": {
+        "latency_ms_mean": 15.1196856983006,
+        "latency_ms_p50": 15.096454008016735,
+        "latency_ms_p90": 15.31783138634637,
+        "latency_ms_std": 0.14973920452521444,
+        "tokens_per_sec": 33863.13778053912,
+        "steps": 20.0,
+        "estimated_total_latency_ms": 483.8299423456192,
+        "estimated_model_tokens_per_sec": 1058.2230556418474,
+        "num_layers": 32.0
+      },
+      "2": {
+        "latency_ms_mean": 29.59162425249815,
+        "latency_ms_p50": 29.47159350151196,
+        "latency_ms_p90": 30.37006112281233,
+        "latency_ms_std": 0.5383846578167986,
+        "tokens_per_sec": 34604.38640550638,
+        "steps": 20.0,
+        "estimated_total_latency_ms": 946.9319760799408,
+        "estimated_model_tokens_per_sec": 1081.3870751720744,
+        "num_layers": 32.0
+      },
+      "4": {
+        "latency_ms_mean": 57.95995488879271,
+        "latency_ms_p50": 58.239453996066004,
+        "latency_ms_p90": 59.23003271454945,
+        "latency_ms_std": 0.9756324767075529,
+        "tokens_per_sec": 35334.741097184786,
+        "steps": 20.0,
+        "estimated_total_latency_ms": 1854.7185564413667,
+        "estimated_model_tokens_per_sec": 1104.2106592870246,
+        "num_layers": 32.0
+      }
+    },
+    "70": {
+      "1": {
+        "latency_ms_mean": 15.024144138442352,
+        "latency_ms_p50": 15.015205484814942,
+        "latency_ms_p90": 15.371203050017357,
+        "latency_ms_std": 0.24155292579334317,
+        "tokens_per_sec": 34078.48029692041,
+        "steps": 20.0,
+        "estimated_total_latency_ms": 480.7726124301553,
+        "estimated_model_tokens_per_sec": 1064.9525092787628,
+        "num_layers": 32.0
+      },
+      "2": {
+        "latency_ms_mean": 29.61308935773559,
+        "latency_ms_p50": 29.508098028600216,
+        "latency_ms_p90": 30.26245206128806,
+        "latency_ms_std": 0.46364045633008616,
+        "tokens_per_sec": 34579.303348926296,
+        "steps": 20.0,
+        "estimated_total_latency_ms": 947.6188594475389,
+        "estimated_model_tokens_per_sec": 1080.6032296539468,
+        "num_layers": 32.0
+      },
+      "4": {
+        "latency_ms_mean": 59.65579205658287,
+        "latency_ms_p50": 59.646935551427305,
+        "latency_ms_p90": 60.164497524965554,
+        "latency_ms_std": 0.7958983654411041,
+        "tokens_per_sec": 34330.2792469421,
+        "steps": 20.0,
+        "estimated_total_latency_ms": 1908.9853458106518,
+        "estimated_model_tokens_per_sec": 1072.8212264669405,
+        "num_layers": 32.0
+      }
+    }
+  },
+  "layer_profile_mps_pct": 70,
+  "network_timestamp_unix": 1773008975.0889835
+}

@@ -83,7 +83,7 @@ spec:
             - "--config"
             - "/workspace/baselines/configs/asteroid_default.yaml"
             - "--strategy"
-            - "asteroid"
+            - "dtfm"
             - "--rank"
             - "0"
             - "--world-size"
@@ -164,7 +164,7 @@ spec:
             - name: STAGE_IDX
               value: "0"
             - name: MICRO_BATCH_SIZE
-              value: "1"
+              value: "4"
 
             # HuggingFace cache
             - name: HF_HOME

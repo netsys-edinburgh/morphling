@@ -11,48 +11,25 @@ data:
   hpp_plan.json: |
     {
       "partition_points": [
-        2,
-        8,
-        14
+        12
       ],
       "device_groups": {
         "0": [
           0,
-          1
-        ],
-        "1": [
+          1,
           2,
           5
         ],
-        "2": [
+        "1": [
+          7,
           3,
-          4
-        ],
-        "3": [
           6,
-          7
+          4
         ]
       },
-      "micro_batch_alloc": {
-        "0": {
-          "0": 1,
-          "1": 1
-        },
-        "1": {
-          "2": 1,
-          "5": 1
-        },
-        "2": {
-          "3": 1,
-          "4": 1
-        },
-        "3": {
-          "6": 1,
-          "7": 1
-        }
-      },
+      "micro_batch_alloc": {},
       "schedule_type": "1f1b",
-      "estimated_latency_ms": 13992.577846639148,
+      "estimated_latency_ms": 4483.128225516736,
       "node_mapping": {
         "0": {
           "hostname": "ubuntu-2404-desktop-template",
@@ -119,6 +96,6 @@ data:
           "architecture": "x86_64"
         }
       },
-      "num_stages": 4,
+      "num_stages": 2,
       "world_size": 8
     }
