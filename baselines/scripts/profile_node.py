@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import socket
 import subprocess
 import time
@@ -407,6 +408,215 @@ def measure_network_bandwidth(
     }
 
 
+def _summarize_ms_samples(samples: list[float]) -> dict[str, float]:
+    values = np.array(samples, dtype=np.float64)
+    return {
+        "latency_ms_mean": float(values.mean()),
+        "latency_ms_p50": float(np.percentile(values, 50)),
+        "latency_ms_p90": float(np.percentile(values, 90)),
+        "latency_ms_std": float(values.std()),
+        "latency_ms_min": float(values.min()),
+        "latency_ms_max": float(values.max()),
+    }
+
+
+def measure_latency_ping(
+    peer: str,
+    count: int = 8,
+    timeout_sec: int = 2,
+) -> dict[str, Any]:
+    host, _ = _split_peer(peer)
+    if not host:
+        return {
+            "ok": False,
+            "method": "ping",
+            "peer": peer,
+            "error": "empty peer",
+        }
+
+    cmd = [
+        "ping",
+        "-n",
+        "-q",
+        "-c",
+        str(count),
+        "-W",
+        str(timeout_sec),
+        host,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=count * (timeout_sec + 1) + 5,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {
+            "ok": False,
+            "method": "ping",
+            "peer": peer,
+            "error": "ping not installed",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "method": "ping",
+            "peer": peer,
+            "error": str(exc),
+        }
+
+    if proc.returncode != 0:
+        return {
+            "ok": False,
+            "method": "ping",
+            "peer": peer,
+            "error": proc.stderr.strip()
+            or proc.stdout.strip()
+            or "ping failed",
+        }
+
+    match = re.search(
+        r"(?:rtt|round-trip)[^=]*=\s*"
+        r"([0-9.]+)/([0-9.]+)/([0-9.]+)/([0-9.]+)\s*ms",
+        proc.stdout,
+    )
+    if not match:
+        return {
+            "ok": False,
+            "method": "ping",
+            "peer": peer,
+            "error": "unable to parse ping RTT summary",
+        }
+
+    return {
+        "ok": True,
+        "method": "ping",
+        "peer": peer,
+        "latency_ms_min": float(match.group(1)),
+        "latency_ms_mean": float(match.group(2)),
+        "latency_ms_p50": float(match.group(2)),
+        "latency_ms_p90": float(match.group(3)),
+        "latency_ms_max": float(match.group(3)),
+        "latency_ms_std": float(match.group(4)),
+        "latency_samples": int(count),
+    }
+
+
+def measure_latency_tcp_connect(
+    peer: str,
+    samples: int = 8,
+    timeout_sec: float = 2.0,
+) -> dict[str, Any]:
+    host, port = _split_peer(peer)
+    if not host:
+        return {
+            "ok": False,
+            "method": "tcp_connect",
+            "peer": peer,
+            "error": "empty peer",
+        }
+
+    latencies_ms: list[float] = []
+    for _ in range(samples):
+        sock: socket.socket | None = None
+        try:
+            t0 = time.perf_counter()
+            sock = socket.create_connection(
+                (host, port), timeout=timeout_sec
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            latencies_ms.append(elapsed_ms)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "method": "tcp_connect",
+                "peer": peer,
+                "error": str(exc),
+            }
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+    if not latencies_ms:
+        return {
+            "ok": False,
+            "method": "tcp_connect",
+            "peer": peer,
+            "error": "no latency samples collected",
+        }
+
+    summary = _summarize_ms_samples(latencies_ms)
+    return {
+        "ok": True,
+        "method": "tcp_connect",
+        "peer": peer,
+        "latency_samples": int(samples),
+        **summary,
+    }
+
+
+def measure_network_latency(peer: str) -> dict[str, Any]:
+    ping_result = measure_latency_ping(peer)
+    if ping_result.get("ok"):
+        return ping_result
+
+    tcp_result = measure_latency_tcp_connect(peer)
+    if tcp_result.get("ok"):
+        tcp_result["fallback_from"] = ping_result.get(
+            "error", "ping failed"
+        )
+        return tcp_result
+
+    return {
+        "ok": False,
+        "method": "none",
+        "peer": peer,
+        "error": {
+            "ping": ping_result.get("error", "unknown"),
+            "tcp_connect": tcp_result.get("error", "unknown"),
+        },
+    }
+
+
+def measure_network_peer(
+    peer: str,
+    strict_iperf: bool = False,
+) -> dict[str, Any]:
+    bandwidth = measure_network_bandwidth(
+        peer, strict_iperf=strict_iperf
+    )
+    latency = measure_network_latency(peer)
+
+    merged: dict[str, Any] = dict(bandwidth)
+    merged["latency_ok"] = bool(latency.get("ok"))
+    merged["latency_method"] = latency.get("method", "none")
+    merged["latency_peer"] = latency.get("peer", peer)
+
+    if latency.get("ok"):
+        for key in (
+            "latency_ms_mean",
+            "latency_ms_p50",
+            "latency_ms_p90",
+            "latency_ms_std",
+            "latency_ms_min",
+            "latency_ms_max",
+            "latency_samples",
+        ):
+            if key in latency:
+                merged[key] = latency[key]
+        if "fallback_from" in latency:
+            merged["latency_fallback_from"] = latency["fallback_from"]
+    else:
+        merged["latency_error"] = latency.get("error", "unknown")
+
+    return merged
+
+
 def profile_all_layers(
     args: argparse.Namespace,
     device: torch.device,
@@ -477,7 +687,7 @@ def profile_network_peers(
 
     results: dict[str, Any] = {}
     for peer in peer_list:
-        results[peer] = measure_network_bandwidth(
+        results[peer] = measure_network_peer(
             peer, strict_iperf=strict_iperf,
         )
     return results
@@ -503,6 +713,16 @@ def main() -> int:
     parser.add_argument("--seq-len", type=int, default=128)
     parser.add_argument("--batch-sizes", type=str, default="1,2,4,8,16")
     parser.add_argument("--network-peers", type=str, default="")
+    parser.add_argument(
+        "--mps-pct",
+        type=int,
+        default=None,
+        help=(
+            "MPS active thread percentage used for this profiling run. "
+            "When provided, layer_profile is also stored under "
+            "layer_profiles_by_mps[<pct>]."
+        ),
+    )
     parser.add_argument("--skip-gpu", action="store_true")
     parser.add_argument(
         "--skip-network",
@@ -513,6 +733,14 @@ def main() -> int:
         "--network-only",
         action="store_true",
         help="Run only network profiling and merge into existing profile",
+    )
+    parser.add_argument(
+        "--preserve-network",
+        action="store_true",
+        help=(
+            "When using --skip-network, keep existing "
+            "network measurements from the current profile file."
+        ),
     )
     args = parser.parse_args()
 
@@ -530,6 +758,18 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     hostname = socket.gethostname()
     output_path = output_dir / f"profile_{hostname}_rank{args.rank}.json"
+    if args.mps_pct is not None and not (1 <= args.mps_pct <= 100):
+        raise ValueError("--mps-pct must be between 1 and 100")
+
+    prior_payload: dict[str, Any] = {}
+    if output_path.exists():
+        try:
+            with open(output_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                prior_payload = loaded
+        except Exception:
+            prior_payload = {}
 
     # --network-only: just measure network and merge
     # into existing profile JSON.
@@ -539,10 +779,7 @@ def main() -> int:
             args.network_peers,
             strict_iperf=args.strict_iperf,
         )
-        payload: dict[str, Any] = {}
-        if output_path.exists():
-            with open(output_path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
+        payload: dict[str, Any] = dict(prior_payload)
         payload["network"] = network_profile
         payload["network_timestamp_unix"] = time.time()
         with open(output_path, "w", encoding="utf-8") as f:
@@ -551,9 +788,14 @@ def main() -> int:
             1 for v in network_profile.values()
             if v.get("ok")
         )
+        lat_ok = sum(
+            1 for v in network_profile.values()
+            if v.get("latency_ok")
+        )
         print(
             f"Network profiling done: {ok}/"
-            f"{len(network_profile)} peers OK"
+            f"{len(network_profile)} peers BW OK, "
+            f"{lat_ok}/{len(network_profile)} peers latency OK"
         )
         print(f"Updated profile: {output_path}")
         return 0
@@ -562,11 +804,28 @@ def main() -> int:
     layer_profile = profile_all_layers(args=args, device=device)
 
     network_profile: dict[str, Any] = {}
+    existing_network_ts: Any = None
+    existing_profiles_by_mps: dict[str, Any] = {}
+    prior_profiles_by_mps = prior_payload.get(
+        "layer_profiles_by_mps", {}
+    )
+    if isinstance(prior_profiles_by_mps, dict):
+        existing_profiles_by_mps = dict(prior_profiles_by_mps)
     if not args.skip_network:
         network_profile = profile_network_peers(
             args.network_peers,
             strict_iperf=args.strict_iperf,
         )
+    elif args.preserve_network:
+        try:
+            prior_network = prior_payload.get("network", {})
+            if isinstance(prior_network, dict):
+                network_profile = prior_network
+            existing_network_ts = prior_payload.get(
+                "network_timestamp_unix"
+            )
+        except Exception:
+            network_profile = {}
 
     payload = {
         "rank": args.rank,
@@ -583,6 +842,19 @@ def main() -> int:
         "network": network_profile,
         "timestamp_unix": time.time(),
     }
+    if existing_profiles_by_mps:
+        payload["layer_profiles_by_mps"] = existing_profiles_by_mps
+    if args.mps_pct is not None:
+        by_mps: dict[str, Any] = dict(existing_profiles_by_mps)
+        by_mps[str(args.mps_pct)] = layer_profile
+        payload["layer_profiles_by_mps"] = by_mps
+        payload["layer_profile_mps_pct"] = int(args.mps_pct)
+    if (
+        args.skip_network
+        and args.preserve_network
+        and existing_network_ts is not None
+    ):
+        payload["network_timestamp_unix"] = existing_network_ts
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)

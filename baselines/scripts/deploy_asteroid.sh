@@ -190,6 +190,57 @@ except (KeyError, TypeError):
 PYEOF
 }
 
+# Return one MPS percentage per line for layer-profile sweeps.
+# Priority:
+#   1) mps.profile_percentages (if provided)
+#   2) unique cluster.nodes[].mps.active_thread_percentage
+#      with global mps.active_thread_percentage fallback
+get_profile_mps_percentages() {
+  "${VENV_DIR}/bin/python" - "${ASTEROID_CONFIG}" <<'PYEOF'
+import sys
+import yaml
+
+def _norm_pct(v):
+    try:
+        iv = int(v)
+    except (TypeError, ValueError):
+        return None
+    if 1 <= iv <= 100:
+        return iv
+    return None
+
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f) or {}
+
+mps_cfg = cfg.get("mps", {}) or {}
+explicit = mps_cfg.get("profile_percentages")
+
+vals = []
+if isinstance(explicit, list):
+    for item in explicit:
+        pct = _norm_pct(item)
+        if pct is not None and pct not in vals:
+            vals.append(pct)
+
+if not vals:
+    default_pct = _norm_pct(mps_cfg.get("active_thread_percentage"))
+    if default_pct is None:
+        default_pct = 100
+    for node in (cfg.get("cluster", {}) or {}).get("nodes", []) or []:
+        node_mps = (node or {}).get("mps", {}) or {}
+        pct = _norm_pct(node_mps.get("active_thread_percentage"))
+        if pct is None:
+            pct = default_pct
+        if pct not in vals:
+            vals.append(pct)
+    if not vals:
+        vals = [default_pct]
+
+for pct in vals:
+    print(pct)
+PYEOF
+}
+
 # Load config values from asteroid YAML (overrides env vars if YAML exists)
 load_yaml_config() {
   if [[ ! -f "${ASTEROID_CONFIG}" ]]; then
@@ -814,20 +865,25 @@ phase_profile() {
   if [[ "$profile_count" -gt 0 ]]; then
     log "Found ${profile_count} existing profile(s), skipping profiling"
     ls -la "${PROFILES_DIR}"/profile_*.json
-    return 0
+  else
+    info "Running cluster profiling..."
+    run_ansible_playbook "profile_and_gather.yaml" -v
+
+    profile_count=$(find "${PROFILES_DIR}" -name "profile_*.json" 2>/dev/null | wc -l)
+    log "Profiling complete: ${profile_count} profile(s) collected"
   fi
 
-  info "Running cluster profiling..."
-  run_ansible_playbook "profile_and_gather.yaml" -v
+  # Validate every profile has successful iperf3 bandwidth and
+  # point-to-point latency measurements.
+  if ! validate_profiles; then
+    err "network profile validation failed — aborting deployment"
+    exit 1
+  fi
+}
 
-  profile_count=$(find "${PROFILES_DIR}" -name "profile_*.json" 2>/dev/null | wc -l)
-  log "Profiling complete: ${profile_count} profile(s) collected"
-
-  # Validate every profile has successful iperf3 measurements.
-  # If any network entry uses a fallback method or has ok=false,
-  # the deployment must stop — no fallback values allowed.
-  info "Validating iperf3 results in all profiles..."
-  if ! "${VENV_DIR}/bin/python" - "${PROFILES_DIR}" <<'PYEOF'
+validate_profiles() {
+  info "Validating iperf3 bandwidth + latency results in all profiles..."
+  "${VENV_DIR}/bin/python" - "${PROFILES_DIR}" <<'PYEOF'
 import json, sys, glob, os
 
 profiles_dir = sys.argv[1]
@@ -849,32 +905,79 @@ for fpath in files:
     for peer, result in net.items():
         method = result.get("method", "unknown")
         ok = result.get("ok", False)
-        if not ok or method != "iperf3":
+        lat_ok = result.get("latency_ok", False)
+        lat_ms = result.get("latency_ms_mean", None)
+        lat_valid = isinstance(lat_ms, (int, float)) and float(lat_ms) > 0.0
+        if not ok or method != "iperf3" or not lat_ok or not lat_valid:
             bw = result.get("bandwidth_mbps", "N/A")
             err_msg = result.get("error", "")
+            lat_method = result.get("latency_method", "unknown")
+            lat_err = result.get("latency_error", "")
             print(
                 f"  FAIL  {fname}: peer {peer} "
                 f"method={method} ok={ok} "
-                f"bw={bw} err={err_msg}",
+                f"bw={bw} err={err_msg} "
+                f"lat_ok={lat_ok} lat_ms={lat_ms} "
+                f"lat_method={lat_method} lat_err={lat_err}",
                 file=sys.stderr,
             )
             all_ok = False
 
 if all_ok:
-    print("All profiles have valid iperf3 measurements.")
+    print("All profiles have valid iperf3 bandwidth and latency measurements.")
     sys.exit(0)
 else:
     print(
         "\nERROR: Some network links do not have "
-        "successful iperf3 measurements.\n"
-        "Fix iperf3 connectivity and re-run. "
+        "successful iperf3 bandwidth+latency measurements.\n"
+        "Fix connectivity and re-run profiling. "
         "Deployment cannot proceed with fallback values.",
         file=sys.stderr,
     )
     sys.exit(1)
 PYEOF
-  then
-    err "iperf3 validation failed — aborting deployment"
+}
+
+phase_profile_layers() {
+  header "Phase 3b: Layer Profile Refresh (MPS-aware)"
+
+  mkdir -p "${PROFILES_DIR}"
+  local profile_count
+  profile_count=$(find "${PROFILES_DIR}" -name "profile_*.json" 2>/dev/null | wc -l)
+
+  if [[ "$profile_count" -eq 0 ]]; then
+    warn "No existing profiles found. Running full profile phase first."
+    phase_profile
+    return 0
+  fi
+
+  local -a profile_mps_pcts
+  mapfile -t profile_mps_pcts < <(get_profile_mps_percentages)
+  if [[ "${#profile_mps_pcts[@]}" -eq 0 ]]; then
+    err "Could not resolve mps.profile_percentages from config"
+    exit 1
+  fi
+
+  info "Refreshing GPU layer profiles (network preserved)"
+  info "MPS sweep: ${profile_mps_pcts[*]}"
+  local pct
+  for pct in "${profile_mps_pcts[@]}"; do
+    info "Layer profiling pass at MPS ${pct}%..."
+    phase_mps "${pct}"
+    run_ansible_playbook \
+      "profile_layers_and_gather.yaml" \
+      -e "mps_pct=${pct}" \
+      -v
+  done
+
+  info "Restoring configured per-node MPS settings from YAML..."
+  phase_mps
+
+  profile_count=$(find "${PROFILES_DIR}" -name "profile_*.json" 2>/dev/null | wc -l)
+  log "Layer profile refresh complete: ${profile_count} profile(s) collected"
+
+  if ! validate_profiles; then
+    err "profile validation failed after layer-profile refresh"
     exit 1
   fi
 }
@@ -895,6 +998,10 @@ lat = p.get("estimated_latency_ms")
 print(f'  Latency:   {lat:.1f} ms' if lat else '  Latency:   ?')
 PYEOF
     return 0
+  fi
+
+  if [[ "${PHASE:-}" == "plan" ]]; then
+    info "Plan-only invocation: using existing profiles (no re-profiling)"
   fi
 
   info "Running HPP planner..."
@@ -1093,9 +1200,8 @@ phase_deploy() {
   kubectl get pods -n "${NAMESPACE}" -l "app=${APP_LABEL}" -o wide
   echo ""
 
-  # Quick check for training output
-  info "Checking for training output (waiting 30s)..."
-  sleep 30
+  # Quick check for training output (no fixed delay)
+  info "Checking for training output..."
 
   local last_rank_pod
   last_rank_pod=$(kubectl get pods -n "${NAMESPACE}" -l "app=${APP_LABEL}" --sort-by=.metadata.name --no-headers | tail -1 | awk '{print $1}')
@@ -1188,6 +1294,7 @@ phase_tensorboard() {
 }
 
 phase_mps() {
+  local override_pct="${1:-}"
   header "Phase 10: MPS Setup"
 
   local mps_enabled
@@ -1199,20 +1306,29 @@ phase_mps() {
 
   # Extract per-node MPS config (ip, thread%, memory_limit_mb)
   # from cluster.nodes[].mps in the YAML config.
+  # If override_pct is provided, apply the same percentage
+  # to every node for this run.
   local node_mps_list
-  node_mps_list=$("${VENV_DIR}/bin/python" - "${ASTEROID_CONFIG}" <<'PYEOF'
+  node_mps_list=$("${VENV_DIR}/bin/python" - "${ASTEROID_CONFIG}" "${override_pct}" <<'PYEOF'
 import yaml, sys
 with open(sys.argv[1]) as f:
     cfg = yaml.safe_load(f)
+override = None
+if len(sys.argv) > 2 and str(sys.argv[2]).strip():
+    override = int(sys.argv[2])
 gpu_mem = 45459  # L40S total MB
 default_pct = cfg.get("mps", {}).get("active_thread_percentage", 100)
 for node in cfg.get("cluster", {}).get("nodes", []):
     ip = node.get("ip", "")
     if not ip:
         continue
-    mps = node.get("mps", {})
-    pct = mps.get("active_thread_percentage", default_pct)
-    mem = mps.get("memory_limit_mb", int(gpu_mem * pct / 100))
+    if override is not None:
+        pct = int(override)
+        mem = int(gpu_mem * pct / 100)
+    else:
+        mps = node.get("mps", {})
+        pct = mps.get("active_thread_percentage", default_pct)
+        mem = mps.get("memory_limit_mb", int(gpu_mem * pct / 100))
     print(f"{ip} {pct} {mem}")
 PYEOF
 )
@@ -1222,7 +1338,11 @@ PYEOF
     return 1
   fi
 
-  info "Starting NVIDIA MPS with per-node thread/memory limits..."
+  if [[ -n "${override_pct}" ]]; then
+    info "Starting NVIDIA MPS with uniform thread=${override_pct}% on all nodes..."
+  else
+    info "Starting NVIDIA MPS with per-node thread/memory limits..."
+  fi
 
   # Step 1: Set Exclusive_Process mode, force-kill any stale MPS daemon, restart
   # The cleanup runs in a subshell to suppress shell "Killed" messages that
@@ -1289,7 +1409,11 @@ PYEOF
     fi
   done <<< "$node_mps_list"
 
-  log "MPS setup complete (per-node thread/memory limits applied)"
+  if [[ -n "${override_pct}" ]]; then
+    log "MPS setup complete (uniform ${override_pct}% applied)"
+  else
+    log "MPS setup complete (per-node thread/memory limits applied)"
+  fi
 }
 
 # ============================================================================
@@ -1411,6 +1535,71 @@ merge_checkpoints() {
 # ============================================================================
 # Stop & Clean
 # ============================================================================
+
+stop_light_and_clean() {
+  header "Light Stop — Fast Cleanup"
+
+  # Fast path:
+  #   - delete current training K8s resources
+  #   - remove local plan file/manifests for next iteration
+  # No remote SSH/GPU/MPS/checkpoint cleanup.
+  info "Deleting current ${APP_LABEL} K8s resources..."
+  kubectl delete jobs \
+    -n "${NAMESPACE}" \
+    -l "app=${APP_LABEL}" \
+    --ignore-not-found=true \
+    --force --grace-period=0 2>/dev/null || true
+  kubectl delete pods \
+    -n "${NAMESPACE}" \
+    -l "app=${APP_LABEL}" \
+    --ignore-not-found=true \
+    --force --grace-period=0 2>/dev/null || true
+  kubectl delete service \
+    -n "${NAMESPACE}" \
+    "${APP_LABEL}-headless" \
+    --ignore-not-found=true 2>/dev/null || true
+  kubectl delete configmap \
+    -n "${NAMESPACE}" \
+    "${APP_LABEL}-plan" \
+    --ignore-not-found=true 2>/dev/null || true
+  log "K8s resources requested for deletion"
+
+  info "Waiting briefly for pod termination..."
+  local retries=6
+  for i in $(seq 1 $retries); do
+    local remaining
+    remaining=$(kubectl get pods -n "${NAMESPACE}" \
+      -l "app=${APP_LABEL}" --no-headers 2>/dev/null \
+      | wc -l || true)
+    if [[ "$remaining" -eq 0 ]]; then
+      break
+    fi
+    sleep 2
+  done
+
+  if [[ -d "${GENERATED_DIR}" ]]; then
+    rm -f "${GENERATED_DIR}"/00-configmap.yaml
+    rm -f "${GENERATED_DIR}"/01-headless-service.yaml
+    rm -f "${GENERATED_DIR}"/02-job-rank-*.yaml
+    rm -f "${GENERATED_DIR}"/apply.sh
+  fi
+  rm -f "${PLAN_FILE}" 2>/dev/null || true
+  log "Local manifests + HPP plan removed"
+
+  echo ""
+  header "Light Cleanup Complete"
+  echo ""
+  echo "  Removed:"
+  echo "    - Current K8s jobs/pods/service/configmap"
+  echo "    - Local generated manifests"
+  echo "    - Local hpp_plan.json"
+  echo ""
+  echo "  Preserved:"
+  echo "    - Node GPU/MPS processes and caches"
+  echo "    - Cluster profiles and Docker images"
+  echo "    - Checkpoints and TensorBoard logs"
+  echo ""
+}
 
 stop_and_clean() {
   header "Deep Stop & Clean — All Nodes"
@@ -1868,7 +2057,7 @@ Run the full Baselines-Asteroid deployment pipeline or individual phases.
 
 Options:
   --phase PHASE       Run a single phase:
-                      k3s|join-nodes|registry|gpu|profile|plan|build|
+                      k3s|join-nodes|registry|gpu|profile|profile-layers|plan|build|
                       manifests|deploy|monitor|tensorboard|mps
   --strategy NAME     Override parallelism strategy: asteroid | confident | dtfm
   --config PATH       Path to config YAML (default: configs/asteroid_default.yaml)
@@ -1884,6 +2073,7 @@ Options:
   --status --watch    Continuously refresh status (every 5s, Ctrl-C to stop)
   --checkpoints [DIR] Collect saved checkpoints from nodes (default: ./checkpoints_collected)
   --merge-checkpoints [DIR] [ITER]  Merge rank checkpoints into single model file
+  --stop-light        Fast stop: K8s resources + local plan/manifests only
   --stop              Stop all training: delete jobs, pods, services, clean up
   --clean             NUCLEAR RESET: destroy everything (pods, images, MPS, caches, data)
   -h, --help          Show this help message
@@ -1894,6 +2084,7 @@ Phases (run in order):
   1b. registry    Setup private Docker registry on master
   2.  gpu         Setup NVIDIA runtime & device plugin
   3.  profile     Profile cluster hardware
+  3b. profile-layers  Re-profile layer timings only (preserve network)
   4.  plan        Run HPP optimizer
   5.  build       Build & push Docker image to registry
   6.  manifests   Generate K8s job manifests
@@ -1911,6 +2102,7 @@ Examples:
   $(basename "$0") --status                     # Check cluster status
   $(basename "$0") --checkpoints                # Collect trained model checkpoints
   $(basename "$0") --merge-checkpoints ./ckpt 500  # Merge into single model
+  $(basename "$0") --stop-light                 # Fast stop (for experiment loops)
   $(basename "$0") --stop                       # Stop training and clean up everything
   $(basename "$0") --clean                      # Nuclear reset: destroy pods, images, MPS, all data
 EOF
@@ -1992,6 +2184,11 @@ parse_args() {
         stop_and_clean
         exit 0
         ;;
+      --stop-light)
+        shift
+        stop_light_and_clean
+        exit 0
+        ;;
       --clean)
         shift
         deep_clean
@@ -2021,6 +2218,7 @@ run_phase_by_name() {
     registry)    phase_registry ;;
     gpu)         phase_gpu ;;
     profile)     phase_profile ;;
+    profile-layers) phase_profile_layers ;;
     plan)        phase_plan ;;
     build)       phase_build ;;
     manifests)   phase_manifests ;;

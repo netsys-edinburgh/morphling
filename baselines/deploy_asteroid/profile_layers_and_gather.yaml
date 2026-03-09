@@ -1,0 +1,108 @@
+---
+# ============================================================================
+# Baselines Asteroid Layer-Profile Refresh (MPS-aware)
+# ============================================================================
+# Re-runs GPU/layer profiling after MPS changes while preserving previously
+# measured network bandwidth+latency in each profile JSON.
+
+- name: Refresh MPS-aware Layer Profiles and Gather
+  hosts: cluster
+  gather_facts: false
+  vars_files:
+    - secrets.yml
+  vars:
+    baselines_remote_src: /opt/baselines/src
+    baselines_remote_profiles: /opt/baselines/profiles
+    profiles_local_dir: "{{ playbook_dir }}/../profiles"
+    venv_python: /opt/baselines/venv/bin/python
+    hf_cache_remote: /opt/baselines/.cache/huggingface
+
+    # Must match model dimensions for meaningful layer timings.
+    profile_num_layers: 32
+    profile_embed_dim: 4096
+    profile_num_heads: 32
+    profile_d_ff: 11008
+    profile_batch_sizes: "1,2,4"
+    profile_seq_len: 512
+    mps_pct: ""
+
+  tasks:
+    - name: "SYNC | Ensure remote scripts directory exists"
+      ansible.builtin.file:
+        path: "{{ baselines_remote_src }}/baselines/scripts"
+        state: directory
+        mode: '0755'
+        owner: "{{ ansible_user }}"
+      become: true
+
+    - name: "SYNC | Update profile_node.py on all nodes"
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/profile_node.py"
+        dest: "{{ baselines_remote_src }}/baselines/scripts/profile_node.py"
+        mode: '0755'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      become: true
+
+    - name: "PROFILE | Ensure remote profiles directory exists"
+      ansible.builtin.file:
+        path: "{{ baselines_remote_profiles }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ ansible_user }}"
+      become: true
+
+    - name: "PROFILE | Refresh GPU profiling (preserve network)"
+      ansible.builtin.command: >
+        {{ venv_python }} {{ baselines_remote_src }}/baselines/scripts/profile_node.py
+        --output-dir {{ baselines_remote_profiles }}
+        --rank {{ rank | default(ansible_play_hosts_all.index(inventory_hostname)) }}
+        --num-layers {{ profile_num_layers }}
+        --embed-dim {{ profile_embed_dim }}
+        --num-heads {{ profile_num_heads }}
+        --d-ff {{ profile_d_ff }}
+        --batch-sizes "{{ profile_batch_sizes }}"
+        --seq-len {{ profile_seq_len }}
+        --skip-network
+        --preserve-network
+        {% if mps_pct | string | length > 0 %}
+        --mps-pct {{ mps_pct }}
+        {% endif %}
+      environment:
+        HF_HOME: "{{ hf_cache_remote }}"
+        CUDA_VISIBLE_DEVICES: "{{ gpu_id | default('0') }}"
+      register: profile_result
+      become: true
+      become_user: "{{ ansible_user }}"
+
+    - name: "PROFILE | Display refresh output"
+      ansible.builtin.debug:
+        msg: "{{ profile_result.stdout_lines[-20:] }}"
+      when: profile_result.stdout_lines | length > 0
+
+    - name: "GATHER | Ensure local profiles directory exists"
+      ansible.builtin.file:
+        path: "{{ profiles_local_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+
+    - name: "GATHER | Find refreshed profile files"
+      ansible.builtin.find:
+        paths: "{{ baselines_remote_profiles }}"
+        patterns: "profile_*.json"
+      register: profile_files
+
+    - name: "GATHER | Fetch refreshed profiles"
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: "{{ profiles_local_dir }}/"
+        flat: yes
+      loop: "{{ profile_files.files }}"
+      when: profile_files.matched > 0
+
+    - name: "SUMMARY | Show gathered profile count"
+      ansible.builtin.debug:
+        msg: "Refreshed profiles gathered: {{ profile_files.matched }}"
+      run_once: true

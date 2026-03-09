@@ -83,7 +83,7 @@ training:
   lr: 3.0e-4
   min_lr: 1.0e-5
   weight_decay: 0.01
-  max_iters: 5
+  max_iters: 3
   warmup_iters: 50
   grad_clip: 1.0
   eval_interval: 40
@@ -229,6 +229,9 @@ cluster:
 mps:
   enabled: true
   active_thread_percentage: 100   # overridden per-node above
+  # Layer-profiling sweep percentages. If omitted, deploy script
+  # will use unique per-node active_thread_percentage values.
+  profile_percentages: [20, 50, 70]
   pipe_directory: ""              # default: /tmp/nvidia-mps-<gpu_id>
   log_directory: ""               # default: /tmp/nvidia-log-<gpu_id>
   pinned_device_mem_limit: ""

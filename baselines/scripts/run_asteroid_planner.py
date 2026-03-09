@@ -65,6 +65,53 @@ except ImportError:
     pass
 
 
+def _positive_float(value: Any) -> float | None:
+    """Return value as float if it is finite and > 0."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if v > 0.0:
+        return v
+    return None
+
+
+def _resolve_memory_budget_mb(
+    profile: Dict[str, Any],
+    node_info: Dict[str, Any],
+) -> float:
+    """Resolve per-device memory budget for planning.
+
+    Priority:
+    1) Per-node MPS memory limit from config (if set)
+    2) Profiled physical GPU memory
+    3) Node memory from config
+    4) Conservative default
+    """
+    # When MPS is configured for this run, planner should
+    # respect that memory cap.
+    mps_limit = _positive_float(
+        node_info.get("memory_limit_mb")
+    )
+    if mps_limit is not None:
+        return mps_limit
+
+    hw = profile.get("hardware", {})
+    profiled_mem = _positive_float(
+        hw.get("gpu_memory_mb")
+    )
+    if profiled_mem is not None:
+        return profiled_mem
+
+    cfg_mem = _positive_float(
+        node_info.get("memory_mb")
+    )
+    if cfg_mem is not None:
+        return cfg_mem
+
+    return 46_000.0
+
+
 class _ProfileDataAdapter(ProfilerBackend):
     """Adapts JSON profile data to the ProfilerBackend
     interface used by strategy create_plan() methods.
@@ -75,12 +122,16 @@ class _ProfileDataAdapter(ProfilerBackend):
         profiles: Dict[int, Dict[str, Any]],
         cluster_nodes: Dict[str, Dict[str, Any]],
         num_layers: int,
+        micro_batch_size: int = 1,
         embed_dim: int = 4096,
         d_ff: int = 11008,
         seq_len: int = 512,
     ) -> None:
         self._profiles = profiles
         self._num_layers = num_layers
+        self._micro_batch_size = max(
+            1, int(micro_batch_size)
+        )
         self._embed_dim = embed_dim
         self._d_ff = d_ff
         self._seq_len = seq_len
@@ -92,11 +143,29 @@ class _ProfileDataAdapter(ProfilerBackend):
             lp = pdata.get("layer_profile", {})
             if not lp:
                 continue
-            # Use smallest batch-size entry as
-            # the per-layer representative time
-            best_bs = min(
-                (int(k) for k in lp), default=1
+            # Use the actual micro-batch size if
+            # available; otherwise use nearest
+            # profiled batch size.
+            profiled_bs = sorted(
+                int(k)
+                for k in lp
+                if str(k).isdigit()
             )
+            if not profiled_bs:
+                continue
+            if self._micro_batch_size in profiled_bs:
+                best_bs = self._micro_batch_size
+            else:
+                best_bs = min(
+                    profiled_bs,
+                    key=lambda bs: (
+                        abs(
+                            bs
+                            - self._micro_batch_size
+                        ),
+                        bs,
+                    ),
+                )
             metrics = lp.get(str(best_bs), {})
             combined = metrics.get(
                 "latency_ms_mean", 3.0
@@ -285,22 +354,18 @@ def _build_strategy_plan(
     device_specs: List[DeviceConfig] = []
     for ip, info in cluster_nodes.items():
         r = info["rank"]
-        # Get GPU memory from profile hardware section
         pdata = profiles.get(r, {})
-        hw = pdata.get("hardware", {})
-        mem = hw.get("gpu_memory_mb")
-        if mem is None:
-            mem = info.get(
-                "memory_limit_mb",
-                info.get("memory_mb", 46000),
-            )
+        mem = _resolve_memory_budget_mb(
+            profile=pdata,
+            node_info=info,
+        )
         pct = info.get(
             "active_thread_pct", 100
         )
         device_specs.append(
             DeviceConfig(
                 device_id=r,
-                memory_budget_mb=float(mem),
+                memory_budget_mb=mem,
                 compute_capacity=pct / 100.0,
             )
         )
@@ -331,9 +396,15 @@ def _build_strategy_plan(
                 bandwidths[
                     (int(rank), dst)
                 ] = bw_mbps
-                latencies[
-                    (int(rank), dst)
-                ] = 0.1
+                lat_ms = result.get(
+                    "latency_ms_mean"
+                )
+                if isinstance(
+                    lat_ms, (int, float)
+                ) and float(lat_ms) > 0:
+                    latencies[
+                        (int(rank), dst)
+                    ] = float(lat_ms)
     # Validate all inter-rank links have measured
     # bandwidth.  NO FALLBACKS - all links MUST have
     # iperf3 measurements from profiling phase.
@@ -363,8 +434,22 @@ def _build_strategy_plan(
         )
         sys.exit(1)
 
-    # All links present — fill latencies for any
-    # that only have bandwidth.
+    missing_lat: List[Tuple[int, int]] = []
+    for i in range(world_size):
+        for j in range(world_size):
+            if i != j and (i, j) not in latencies:
+                missing_lat.append((i, j))
+    if missing_lat:
+        print(
+            f"  WARNING: {len(missing_lat)} "
+            "inter-rank link(s) missing measured latency; "
+            "using default 0.1 ms.",
+            file=sys.stderr,
+        )
+
+    # Fill missing latency links with a small
+    # default for backwards compatibility with
+    # older profiles that only had bandwidth.
     for i in range(world_size):
         for j in range(world_size):
             if i != j:
@@ -383,6 +468,7 @@ def _build_strategy_plan(
         profiles=profiles,
         cluster_nodes=cluster_nodes,
         num_layers=args.num_layers,
+        micro_batch_size=args.micro_batch_size,
         embed_dim=args.embed_dim,
         d_ff=args.d_ff,
         seq_len=args.seq_len,
@@ -522,6 +608,88 @@ def load_profiles(
     return profiles
 
 
+def resolve_profiles_for_required_mps(
+    profiles: Dict[int, Dict[str, Any]],
+    cluster_nodes: Dict[str, Dict[str, Any]],
+) -> Dict[int, Dict[str, Any]]:
+    """Select each rank's layer_profile from layer_profiles_by_mps.
+
+    Rules:
+    - If layer_profiles_by_mps exists, required key MUST exist.
+    - If layer_profiles_by_mps is absent, legacy top-level layer_profile
+      is accepted.
+    """
+    rank_to_pct: Dict[int, int] = {}
+    for _, info in cluster_nodes.items():
+        rank = int(info["rank"])
+        try:
+            pct = int(
+                info.get("active_thread_pct", 100)
+            )
+        except (TypeError, ValueError):
+            pct = 100
+        rank_to_pct[rank] = pct
+
+    resolved: Dict[int, Dict[str, Any]] = {}
+    errors: List[str] = []
+
+    for rank, pdata in profiles.items():
+        rank_int = int(rank)
+        pdata_copy = dict(pdata)
+        layer_by_mps = pdata.get(
+            "layer_profiles_by_mps"
+        )
+
+        if isinstance(layer_by_mps, dict) and layer_by_mps:
+            if rank_int not in rank_to_pct:
+                errors.append(
+                    f"rank {rank_int}: missing required "
+                    "MPS percentage in cluster config"
+                )
+                continue
+
+            normalized: Dict[str, Any] = {}
+            for k, v in layer_by_mps.items():
+                key = str(k).strip()
+                if key.isdigit():
+                    key = str(int(key))
+                normalized[key] = v
+
+            req_pct = int(rank_to_pct[rank_int])
+            req_key = str(req_pct)
+            selected = normalized.get(req_key)
+            if not isinstance(selected, dict) or not selected:
+                avail = sorted(normalized.keys())
+                errors.append(
+                    f"rank {rank_int}: missing "
+                    f"layer_profiles_by_mps[{req_key}] "
+                    f"(available={avail})"
+                )
+                continue
+
+            pdata_copy["layer_profile"] = selected
+            resolved[rank_int] = pdata_copy
+            continue
+
+        # Legacy profile format: single layer_profile only.
+        legacy_layer = pdata.get("layer_profile")
+        if not isinstance(legacy_layer, dict) or not legacy_layer:
+            errors.append(
+                f"rank {rank_int}: missing layer_profile "
+                "and layer_profiles_by_mps"
+            )
+            continue
+        resolved[rank_int] = pdata_copy
+
+    if errors:
+        raise RuntimeError(
+            "Unable to resolve MPS-specific layer profiles:\n  - "
+            + "\n  - ".join(errors)
+        )
+
+    return resolved
+
+
 def match_profile_to_cluster(
     profiles: Dict[int, Dict[str, Any]],
     cluster_nodes: Dict[str, Dict[str, Any]],
@@ -649,7 +817,7 @@ def build_profiler_data(
 
     Baselines profile:
         layer_profile[bs] = {latency_ms_mean, ...}
-        network[peer:port] = {ok, bandwidth_mbps}
+        network[peer:port] = {ok, bandwidth_mbps, latency_ms_mean, ...}
     Planner expects:
         exec_times[device][layer][bs] = (fwd, bwd)
         bandwidths[(src, dst)] = MB/s
@@ -769,20 +937,15 @@ def build_profiler_data(
         "boundary_sizes": boundary_sizes,
     }
 
-    # Build device specs - GPU memory from profiles (not cluster.conf)
+    # Build device specs.
     device_specs: List[Dict[str, Any]] = []
     for ip, info in cluster_nodes.items():
         r = info["rank"]
-        # Get GPU memory from profile hardware section
         pdata = profiles.get(r, {})
-        hw = pdata.get("hardware", {})
-        mem_mb = hw.get("gpu_memory_mb")
-        if mem_mb is None:
-            # Fall back to cluster.conf if profile missing
-            mem_mb = info.get(
-                "memory_limit_mb",
-                info.get("memory_mb", 46000),
-            )
+        mem_mb = _resolve_memory_budget_mb(
+            profile=pdata,
+            node_info=info,
+        )
         pct = info.get(
             "active_thread_pct", 100
         )
@@ -790,7 +953,7 @@ def build_profiler_data(
         device_specs.append(
             {
                 "device_id": r,
-                "memory_budget_mb": float(mem_mb),
+                "memory_budget_mb": mem_mb,
                 "compute_capacity": cap,
             }
         )
@@ -1084,6 +1247,14 @@ def main() -> int:
                 cluster_nodes,
             )
         )
+        try:
+            profiles = resolve_profiles_for_required_mps(
+                profiles=profiles,
+                cluster_nodes=cluster_nodes,
+            )
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
         world_size = len(matched)
         node_mapping: Dict[int, NodeInfo] = {}
         for rank, (hn, pd, ci) in (
@@ -1144,6 +1315,14 @@ def main() -> int:
                 cluster_nodes,
             )
         )
+        try:
+            profiles = resolve_profiles_for_required_mps(
+                profiles=profiles,
+                cluster_nodes=cluster_nodes,
+            )
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
         world_size = len(matched)
         # Build node mapping from matched data
         node_mapping_full: Dict[
