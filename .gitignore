@@ -556,8 +556,12 @@ asteroid_project/
 # Deploy secrets (vault-encrypted, per-user)
 baselines/deploy_asteroid/secrets.yml
 
-
-
-
+baselines/experiment_data/
+baselines/experiments-memory.db
+Confidant-demo/
+astroid.pdf
+confident-paper.pdf
+confident.pdf
+NeurIPS-2022-decentralized-training-of-foundation-models-in-heterogeneous-environments-Paper-Conference (1).pdf
 
 DT-FM/ 
