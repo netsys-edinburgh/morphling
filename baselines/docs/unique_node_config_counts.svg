@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="560" viewBox="0 0 920 560">
+<rect width="100%" height="100%" fill="white"/>
+<text x="460" y="34" text-anchor="middle" font-family="sans-serif" font-size="20" fill="#111">Unique PP+DP+Layer-Split Configurations by Scheduler</text>
+<line x1="90" y1="465" x2="890" y2="465" stroke="#222" stroke-width="2"/>
+<line x1="90" y1="465" x2="90" y2="70" stroke="#222" stroke-width="2"/>
+<line x1="84" y1="465.0" x2="90" y2="465.0" stroke="#222" stroke-width="1"/>
+<text x="80" y="469.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#333">0</text>
+<line x1="84" y1="386.0" x2="90" y2="386.0" stroke="#222" stroke-width="1"/>
+<text x="80" y="390.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#333">0</text>
+<line x1="84" y1="307.0" x2="90" y2="307.0" stroke="#222" stroke-width="1"/>
+<text x="80" y="311.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#333">0</text>
+<line x1="84" y1="228.0" x2="90" y2="228.0" stroke="#222" stroke-width="1"/>
+<text x="80" y="232.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#333">1</text>
+<line x1="84" y1="149.0" x2="90" y2="149.0" stroke="#222" stroke-width="1"/>
+<text x="80" y="153.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#333">1</text>
+<line x1="84" y1="70.0" x2="90" y2="70.0" stroke="#222" stroke-width="1"/>
+<text x="80" y="74.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#333">1</text>
+<rect x="270.0" y="70.0" width="440.0" height="395.0" fill="#4e79a7"/>
+<text x="490.0" y="62.0" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#111">1</text>
+<text x="490.0" y="489.0" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#222">dtfm</text>
+<text x="490.0" y="526" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#111">Scheduler</text>
+<text x="24" y="267.5" transform="rotate(-90 24 267.5)" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#111">Unique Node Configurations</text>
+</svg>

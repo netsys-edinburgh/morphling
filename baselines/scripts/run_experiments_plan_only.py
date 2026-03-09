@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Experiment runner for MPS sweep across schedulers.
+"""Planner-only experiment runner for MPS sweep.
 
 Generates unique (scheduler, R0%, R1%, ..., R7%)
 experiment tuples, modifies the YAML config, invokes
-deploy_asteroid.sh, and collects JSONL files from nodes.
+deploy_asteroid.sh with --phase plan, and stores each
+generated hpp_plan.json into SQLite.
 
 Usage
 -----
-    python3 baselines/scripts/run_experiments.py \
+    python3 baselines/scripts/run_experiments_plan_only.py \
         --config baselines/configs/asteroid_default.yaml \
         --num-experiments 20 \
         --db experiments.db
 
 Env vars
 --------
-    ASTEROID_METRICS=1     — enable JSONL logging in train.py
-    ASTEROID_METRICS_DIR   — override /tmp/asteroid_metrics
+    ASTEROID_METRICS=1     — passed through to deploy script
+    ASTEROID_METRICS_DIR   — passed through to deploy script
 """
 from __future__ import annotations
 
@@ -41,13 +42,9 @@ import yaml
 
 # ── Constants ────────────────────────────────────────────
 
-MPS_CHOICES = [20, 50, 70]
-SCHEDULERS = ["asteroid","confident", "dtfm"]
-DEFAULT_SCHEDULERS = [
-    "asteroid",
-    "confident",
-    "dtfm"
-]
+MPS_CHOICES = [20, 40, 60 , 70 , 80]
+SCHEDULERS = ["confident", "dtfm", "asteroid"]
+DEFAULT_SCHEDULERS = ["asteroid"]
 GPU_TOTAL_MB = 45459   # L40S usable memory
 NUM_RANKS = 8
 METRICS_REMOTE_DIR = "/tmp/asteroid_metrics"
@@ -67,6 +64,7 @@ SUBNET_PAIRS = [
 BASELINES_DIR = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = BASELINES_DIR / "scripts"
 DEPLOY_SCRIPT = SCRIPTS_DIR / "deploy_asteroid.sh"
+PLAN_FILE = BASELINES_DIR / "hpp_plan.json"
 
 
 # ── Timestamp helper ─────────────────────────────────────
@@ -304,7 +302,7 @@ def _migrate_rank_config_check(
     """Upgrade rank_config mps_pct CHECK for legacy DBs.
 
     Older schema only allowed (20,40,60,80), which breaks
-    sweeps that include values like 50 or 70.
+    sweeps that include values like 70.
     """
     row = conn.execute(
         "SELECT sql FROM sqlite_master "
@@ -318,6 +316,7 @@ def _migrate_rank_config_check(
     if legacy not in table_sql:
         return
 
+    # Recreate table with a broader percentage range.
     conn.execute("PRAGMA foreign_keys=OFF")
     conn.execute(
         """CREATE TABLE IF NOT EXISTS rank_config_new (
@@ -339,13 +338,14 @@ def _migrate_rank_config_check(
             experiment_id, rank, hostname, ip, gpu_id,
             pp_stage, dp_group, mps_pct, memory_limit_mb
         )
-        SELECT
-            experiment_id, rank, hostname, ip, gpu_id,
-            pp_stage, dp_group, mps_pct, memory_limit_mb
+        SELECT experiment_id, rank, hostname, ip, gpu_id,
+               pp_stage, dp_group, mps_pct, memory_limit_mb
         FROM rank_config"""
     )
     conn.execute("DROP TABLE rank_config")
-    conn.execute("ALTER TABLE rank_config_new RENAME TO rank_config")
+    conn.execute(
+        "ALTER TABLE rank_config_new RENAME TO rank_config"
+    )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_rank_config_mps "
         "ON rank_config(mps_pct)"
@@ -571,6 +571,40 @@ CREATE INDEX IF NOT EXISTS idx_rank_config_mps ON rank_config(mps_pct);
 CREATE INDEX IF NOT EXISTS idx_global_step_exp ON global_step_metrics(experiment_id, iter);
 CREATE INDEX IF NOT EXISTS idx_global_step_straggler ON global_step_metrics(straggler_ratio DESC);
 CREATE INDEX IF NOT EXISTS idx_global_micro_exp_iter ON global_microbatch_metrics(experiment_id, iter);
+
+CREATE TABLE IF NOT EXISTS planner_results (
+    experiment_id           TEXT PRIMARY KEY REFERENCES experiments(experiment_id),
+    planner_start_ts        TIMESTAMP,
+    planner_end_ts          TIMESTAMP,
+    planner_duration_ms     REAL,
+    plan_path               TEXT NOT NULL,
+    estimated_latency_ms    REAL,
+    num_stages              INTEGER,
+    world_size              INTEGER,
+    partition_points_json   TEXT,
+    device_groups_json      TEXT,
+    micro_batch_alloc_json  TEXT,
+    plan_json               TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS planner_rank_config (
+    experiment_id   TEXT NOT NULL REFERENCES experiments(experiment_id),
+    rank            INTEGER NOT NULL,
+    planner_stage   INTEGER,
+    dp_slot         INTEGER,
+    hostname        TEXT,
+    ip              TEXT,
+    nic             TEXT,
+    gpu_id          INTEGER,
+    memory_mb       INTEGER,
+    architecture    TEXT,
+    PRIMARY KEY (experiment_id, rank)
+);
+
+CREATE INDEX IF NOT EXISTS idx_planner_results_latency
+    ON planner_results(estimated_latency_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_planner_rank_stage
+    ON planner_rank_config(experiment_id, planner_stage);
 """
 
 
@@ -660,6 +694,105 @@ def insert_experiment(
                 dp_group,
                 pct,
                 mem_mb,
+            ),
+        )
+
+    conn.commit()
+
+
+def _safe_int(value: Any) -> int | None:
+    """Convert value to int when possible; else None."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def insert_planner_result(
+    conn: sqlite3.Connection,
+    experiment_id: str,
+    plan: dict[str, Any],
+    planner_start_ts: str | None = None,
+    planner_end_ts: str | None = None,
+    planner_duration_ms: float | None = None,
+) -> None:
+    """Persist planner output from hpp_plan.json."""
+    partition_points = plan.get("partition_points")
+    device_groups = plan.get("device_groups")
+    micro_batch_alloc = plan.get("micro_batch_alloc")
+
+    conn.execute(
+        """INSERT OR REPLACE INTO planner_results VALUES (
+            ?,?,?,?,?,?,?,?,?,?,?,?
+        )""",
+        (
+            experiment_id,
+            planner_start_ts,
+            planner_end_ts,
+            planner_duration_ms,
+            str(PLAN_FILE),
+            plan.get("estimated_latency_ms"),
+            plan.get("num_stages"),
+            plan.get("world_size"),
+            json.dumps(partition_points, sort_keys=True),
+            json.dumps(device_groups, sort_keys=True),
+            json.dumps(micro_batch_alloc, sort_keys=True),
+            json.dumps(plan, sort_keys=True),
+        ),
+    )
+
+    # Rebuild rank-level planner mapping for this experiment.
+    conn.execute(
+        "DELETE FROM planner_rank_config WHERE experiment_id=?",
+        (experiment_id,),
+    )
+
+    stage_map: dict[int, int] = {}
+    dp_slot_map: dict[int, int] = {}
+    if isinstance(device_groups, dict):
+        for stage_raw, rank_list in device_groups.items():
+            stage_id = _safe_int(stage_raw)
+            if stage_id is None or not isinstance(rank_list, list):
+                continue
+            for slot, rank_raw in enumerate(rank_list):
+                rank = _safe_int(rank_raw)
+                if rank is None:
+                    continue
+                stage_map[rank] = stage_id
+                dp_slot_map[rank] = slot
+
+    node_mapping_raw = plan.get("node_mapping")
+    node_mapping: dict[int, dict[str, Any]] = {}
+    if isinstance(node_mapping_raw, dict):
+        for rank_raw, info_raw in node_mapping_raw.items():
+            rank = _safe_int(rank_raw)
+            if rank is None:
+                continue
+            if isinstance(info_raw, dict):
+                node_mapping[rank] = info_raw
+            else:
+                node_mapping[rank] = {}
+
+    all_ranks = sorted(
+        set(stage_map.keys()) | set(node_mapping.keys())
+    )
+    for rank in all_ranks:
+        info = node_mapping.get(rank, {})
+        conn.execute(
+            """INSERT OR REPLACE INTO planner_rank_config VALUES (
+                ?,?,?,?,?,?,?,?,?,?
+            )""",
+            (
+                experiment_id,
+                rank,
+                stage_map.get(rank),
+                dp_slot_map.get(rank),
+                info.get("hostname"),
+                info.get("ip"),
+                info.get("nic"),
+                _safe_int(info.get("gpu_id")),
+                _safe_int(info.get("memory_mb")),
+                info.get("architecture"),
             ),
         )
 
@@ -778,26 +911,23 @@ def run_build_phase(
 # ── Deploy invocation ────────────────────────────────────
 
 
-def run_deploy(
+def run_plan_phase(
     config_path: str | Path,
     strategy: str,
-    timeout_s: int = 1800,
-) -> tuple[bool, str]:
-    """Run deploy: plan + MPS phase + redeploy."""
+    timeout_s: int = 600,
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """Run deploy_asteroid.sh in planner-only mode."""
     env = os.environ.copy()
     env["ASTEROID_METRICS"] = "1"
     env["ASTEROID_METRICS_DIR"] = METRICS_REMOTE_DIR
 
-    output_parts: list[str] = []
+    # deploy_asteroid.sh short-circuits if the plan already exists.
+    # Remove it so each sweep point always regenerates the plan.
+    try:
+        PLAN_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
 
-    # 0) Generate HPP plan for this strategy
-    #    --stop deletes hpp_plan.json, so we must
-    #    regenerate it before manifests/deploy.
-    print(
-        f"  [{_ts()}] [DEPLOY 1/3] Generating HPP "
-        f"plan (strategy={strategy})...",
-        flush=True,
-    )
     plan_cmd = [
         "bash", str(DEPLOY_SCRIPT),
         "--config", str(config_path),
@@ -806,26 +936,75 @@ def run_deploy(
     ]
     print(f"  [{_ts()}] [CMD] {' '.join(plan_cmd)}",
           flush=True)
+
+    planner_start_ts = datetime.now(timezone.utc).isoformat()
+    t0 = time.time()
     try:
         plan_result = subprocess.run(
             plan_cmd,
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=timeout_s,
             env=env,
             cwd=str(BASELINES_DIR),
         )
-        output_parts.append(
-            plan_result.stdout + plan_result.stderr
-        )
-        if plan_result.returncode != 0:
-            return False, "Plan phase failed:\n" + (
-                output_parts[-1]
-            )
     except subprocess.TimeoutExpired as e:
-        return False, f"Plan phase timeout: {e}"
+        return False, f"Plan phase timeout: {e}", None
     except Exception as e:
-        return False, f"Plan phase error: {e}"
+        return False, f"Plan phase error: {e}", None
+
+    planner_end_ts = datetime.now(timezone.utc).isoformat()
+    planner_duration_ms = (time.time() - t0) * 1000.0
+    output = plan_result.stdout + plan_result.stderr
+    if plan_result.returncode != 0:
+        return False, output, None
+
+    if not PLAN_FILE.exists():
+        return False, (
+            "Plan phase completed but hpp_plan.json was not found at "
+            f"{PLAN_FILE}"
+        ), None
+
+    try:
+        with open(PLAN_FILE) as f:
+            plan = json.load(f)
+    except Exception as e:
+        return False, f"Failed to read {PLAN_FILE}: {e}", None
+
+    return True, output, {
+        "plan": plan,
+        "planner_start_ts": planner_start_ts,
+        "planner_end_ts": planner_end_ts,
+        "planner_duration_ms": planner_duration_ms,
+    }
+
+
+def run_deploy(
+    config_path: str | Path,
+    strategy: str,
+    timeout_s: int = 1800,
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """Run deploy: plan + MPS phase + redeploy."""
+    env = os.environ.copy()
+    env["ASTEROID_METRICS"] = "1"
+    env["ASTEROID_METRICS_DIR"] = METRICS_REMOTE_DIR
+
+    output_parts: list[str] = []
+
+    # 0) Generate HPP plan for this strategy.
+    print(
+        f"  [{_ts()}] [DEPLOY 1/3] Generating HPP "
+        f"plan (strategy={strategy})...",
+        flush=True,
+    )
+    plan_ok, plan_output, plan_meta = run_plan_phase(
+        config_path=config_path,
+        strategy=strategy,
+        timeout_s=600,
+    )
+    output_parts.append(plan_output)
+    if not plan_ok:
+        return False, "Plan phase failed:\n" + plan_output, None
 
     # 1) Apply per-node MPS config
     print(
@@ -855,11 +1034,11 @@ def run_deploy(
         if mps_result.returncode != 0:
             return False, "MPS phase failed:\n" + (
                 output_parts[-1]
-            )
+            ), plan_meta
     except subprocess.TimeoutExpired as e:
-        return False, f"MPS phase timeout: {e}"
+        return False, f"MPS phase timeout: {e}", plan_meta
     except Exception as e:
-        return False, f"MPS phase error: {e}"
+        return False, f"MPS phase error: {e}", plan_meta
 
     # 2) Regenerate manifests + deploy pods
     print(
@@ -889,12 +1068,12 @@ def run_deploy(
             result.stdout + result.stderr
         )
         if result.returncode != 0:
-            return False, output
-        return True, output
+            return False, output, plan_meta
+        return True, output, plan_meta
     except subprocess.TimeoutExpired as e:
-        return False, f"Timeout after {timeout_s}s: {e}"
+        return False, f"Timeout after {timeout_s}s: {e}", plan_meta
     except Exception as e:
-        return False, str(e)
+        return False, str(e), plan_meta
 
 
 # ── JSONL collection ─────────────────────────────────────
@@ -963,8 +1142,9 @@ class ProgressTracker:
         return experiment_id in self._data["completed"]
 
     def mark_done(self, experiment_id: str) -> None:
-        self._data["completed"].append(experiment_id)
-        self._save()
+        if experiment_id not in self._data["completed"]:
+            self._data["completed"].append(experiment_id)
+            self._save()
 
     def _save(self) -> None:
         with open(self._path, "w") as f:
@@ -981,7 +1161,7 @@ class ProgressTracker:
 def wait_for_training(
     cfg: dict,
     timeout_s: int = 3600,
-    poll_interval: int = 10,
+    poll_interval: int = 30,
 ) -> tuple[bool, str]:
     """Poll kubectl for job completion."""
     namespace = cfg.get("deploy", {}).get(
@@ -1041,22 +1221,10 @@ def wait_for_training(
     return False, f"Timeout after {timeout_s}s"
 
 
-# ── Stop previous run ───────────────────────────────────
-
-
-def stop_previous_run(config_path: str | Path) -> None:
-    """Run deploy_asteroid.sh --stop-light for fast cleanup."""
+def cleanup_plan_file() -> None:
+    """Remove only hpp_plan.json (planner artifact)."""
     try:
-        subprocess.run(
-            [
-                "bash", str(DEPLOY_SCRIPT),
-                "--config", str(config_path),
-                "--stop-light",
-            ],
-            capture_output=True,
-            timeout=120,
-            cwd=str(BASELINES_DIR),
-        )
+        PLAN_FILE.unlink(missing_ok=True)
     except Exception:
         pass
 
@@ -1101,7 +1269,7 @@ def _reset_experiment_artifacts(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="MPS sweep experiment runner",
+        description="Planner-only MPS sweep runner",
     )
     parser.add_argument(
         "--config",
@@ -1133,17 +1301,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--schedulers",
-        default="asteroid,confident,dtfm",
+        default="asteroid",
         help=(
             "Comma-separated scheduler list to run. "
-            "Default: asteroid,confident,dtfm"
+            "Default: asteroid"
         ),
-    )
-    parser.add_argument(
-        "--train-timeout",
-        type=int,
-        default=3600,
-        help="Timeout per training run (seconds)",
     )
     parser.add_argument(
         "--output-dir",
@@ -1154,6 +1316,14 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Print experiments without running",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help=(
+            "Skip experiments already in progress.json. "
+            "Default behavior is to rerun and update DB rows."
+        ),
     )
     parser.add_argument(
         "--skip-setup",
@@ -1185,6 +1355,7 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    planner_only = True
 
     # Handle --reset before anything else
     if args.reset:
@@ -1224,11 +1395,12 @@ def main() -> None:
         f"experiments ===",
         flush=True,
     )
-    print(
-        f"[{_ts()}] Schedulers: "
-        f"{','.join(selected_schedulers)}",
-        flush=True,
-    )
+    if planner_only:
+        print(
+            f"[{_ts()}] Mode: planner-only "
+            f"(phase plan only, no training)",
+            flush=True,
+        )
 
     if args.dry_run:
         for i, (sched, pcts) in enumerate(sweep):
@@ -1238,34 +1410,24 @@ def main() -> None:
                   f" [{pct_str}]")
         return
 
-    # ── One-time cluster setup ───────────────────────
-    # Infra: k3s → registry → gpu → mps → profile
-    # (only needed once; skip with --skip-setup)
-    if not args.skip_setup:
-        print(
-            f"[{_ts()}] === Running infra cluster "
-            f"setup ===",
-            flush=True,
-        )
-        run_initial_setup(config_path)
-    else:
-        print(
-            f"[{_ts()}] === Skipping infra setup "
-            f"(--skip-setup) ===",
-            flush=True,
-        )
-
-    # ── Docker build + push ──────────────────────────
-    # Always rebuild so code changes are in the image.
-    # Skip only with --skip-build (image is current).
-    if not args.skip_build:
-        run_build_phase(config_path)
-    else:
-        print(
-            f"[{_ts()}] === Skipping Docker build "
-            f"(--skip-build) ===",
-            flush=True,
-        )
+    # Planner-only mode intentionally avoids the full deployment
+    # pipeline. We only run per-experiment:
+    #   delete old plan -> --phase plan -> delete plan
+    print(
+        f"[{_ts()}] === Planner-only path: skipping "
+        f"infra setup/build/deploy phases ===",
+        flush=True,
+    )
+    print(
+        f"[{_ts()}] Schedulers: "
+        f"{','.join(selected_schedulers)}",
+        flush=True,
+    )
+    print(
+        f"[{_ts()}] Skip existing: "
+        f"{'yes' if args.skip_existing else 'no (rerun + DB update)'}",
+        flush=True,
+    )
 
     # Init DB + progress tracker
     conn = init_db(args.db)
@@ -1281,6 +1443,7 @@ def main() -> None:
 
     failed_count = 0
     skipped_count = 0
+    completed_count = 0
     sweep_start = time.time()
     experiment_durations: list[float] = []
 
@@ -1291,10 +1454,9 @@ def main() -> None:
         pct_str = ",".join(str(p) for p in mps_pcts)
 
         # Progress bar
-        done = progress.num_completed + skipped_count
         print(
             f"\n{'='*60}\n"
-            f"[{_ts()}] [{done+1}/{total}] Experiment "
+            f"[{_ts()}] [{i+1}/{total}] Experiment "
             f"{experiment_id}\n"
             f"  scheduler={scheduler}"
             f"  MPS=[{pct_str}]\n"
@@ -1303,7 +1465,7 @@ def main() -> None:
         )
 
         # Skip if already done
-        if progress.is_done(experiment_id):
+        if args.skip_existing and progress.is_done(experiment_id):
             print(f"  [{_ts()}] SKIP (already completed)",
                   flush=True)
             skipped_count += 1
@@ -1312,7 +1474,7 @@ def main() -> None:
         exp_start = time.time()
 
         # 1) Mutate config
-        print(f"  [{_ts()}] [STEP 1/8] Mutating "
+        print(f"  [{_ts()}] [STEP 1/6] Mutating "
               f"config...", flush=True)
         exp_cfg = apply_experiment_config(
             base_cfg, scheduler, mps_pcts,
@@ -1320,22 +1482,85 @@ def main() -> None:
         save_yaml(exp_cfg, tmp_config)
 
         # 2) Insert experiment record
-        print(f"  [{_ts()}] [STEP 2/8] Inserting DB "
+        print(f"  [{_ts()}] [STEP 2/6] Inserting DB "
               f"record...", flush=True)
         insert_experiment(
             conn, experiment_id, exp_cfg,
             scheduler, mps_pcts,
         )
 
-        # 3) Stop any previous run FIRST so pods are
-        #    dead before we wipe the metrics dir.
-        #    (Old pod was still running during clear,
-        #    recreating the JSONL → new pod appended to
-        #    stale data → >10 iters per experiment.)
-        print(f"  [{_ts()}] [STEP 3/8] Stopping "
-              f"previous run...", flush=True)
-        stop_previous_run(tmp_config)
-        time.sleep(5)
+        # 3) Ensure stale planner output is removed before
+        #    this experiment's planner run.
+        print(f"  [{_ts()}] [STEP 3/6] Cleaning stale "
+              f"plan file...", flush=True)
+        cleanup_plan_file()
+
+        if planner_only:
+            # 4) Run planner only.
+            print(f"  [{_ts()}] [STEP 4/6] Running planner "
+                  f"(phase=plan only)...", flush=True)
+            plan_ok, plan_output, plan_meta = run_plan_phase(
+                tmp_config, scheduler,
+            )
+            if not plan_ok:
+                print(
+                    f"  [{_ts()}] FAILED (planner): "
+                    f"{plan_output[:500]}",
+                    flush=True,
+                )
+                conn.execute(
+                    "UPDATE experiments SET status=?,"
+                    " failure_reason=? WHERE experiment_id=?",
+                    ("failed", plan_output[:1000],
+                     experiment_id),
+                )
+                conn.commit()
+                failed_count += 1
+                continue
+
+            # 5) Persist planner output + mark complete
+            print(f"  [{_ts()}] [STEP 5/6] Saving planner "
+                  f"result + marking completed...",
+                  flush=True)
+            assert plan_meta is not None
+            insert_planner_result(
+                conn=conn,
+                experiment_id=experiment_id,
+                plan=plan_meta["plan"],
+                planner_start_ts=plan_meta.get(
+                    "planner_start_ts"
+                ),
+                planner_end_ts=plan_meta.get(
+                    "planner_end_ts"
+                ),
+                planner_duration_ms=plan_meta.get(
+                    "planner_duration_ms"
+                ),
+            )
+            conn.execute(
+                "UPDATE experiments SET status=?,"
+                " failure_reason=? WHERE experiment_id=?",
+                ("completed", None, experiment_id),
+            )
+            conn.commit()
+            progress.mark_done(experiment_id)
+            completed_count += 1
+
+            # Remove plan artifact between experiments.
+            print(f"  [{_ts()}] [STEP 6/6] Post-plan cleanup "
+                  f"(delete hpp_plan.json)...", flush=True)
+            cleanup_plan_file()
+
+            exp_elapsed = time.time() - exp_start
+            experiment_durations.append(exp_elapsed)
+            print(
+                f"  [{_ts()}] DONE in "
+                f"{_fmt_duration(exp_elapsed)} "
+                f"({completed_count} completed,"
+                f" {failed_count} failed)",
+                flush=True,
+            )
+            continue
 
         # 4) Clear remote metrics AFTER pods are gone
         print(f"  [{_ts()}] [STEP 4/8] Clearing remote "
@@ -1346,7 +1571,7 @@ def main() -> None:
         print(f"  [{_ts()}] [STEP 5/8] Deploying "
               f"(plan -> mps -> redeploy)...",
               flush=True)
-        deploy_ok, deploy_output = run_deploy(
+        deploy_ok, deploy_output, plan_meta = run_deploy(
             tmp_config, scheduler,
         )
         if not deploy_ok:
@@ -1364,6 +1589,23 @@ def main() -> None:
             conn.commit()
             failed_count += 1
             continue
+
+        # Persist planner output captured during deploy.
+        if plan_meta is not None:
+            insert_planner_result(
+                conn=conn,
+                experiment_id=experiment_id,
+                plan=plan_meta["plan"],
+                planner_start_ts=plan_meta.get(
+                    "planner_start_ts"
+                ),
+                planner_end_ts=plan_meta.get(
+                    "planner_end_ts"
+                ),
+                planner_duration_ms=plan_meta.get(
+                    "planner_duration_ms"
+                ),
+            )
 
         # 6) Wait for training
         print(f"  [{_ts()}] [STEP 6/8] Waiting for "
@@ -1410,13 +1652,14 @@ def main() -> None:
         )
         conn.commit()
         progress.mark_done(experiment_id)
+        completed_count += 1
 
         exp_elapsed = time.time() - exp_start
         experiment_durations.append(exp_elapsed)
         print(
             f"  [{_ts()}] DONE in "
             f"{_fmt_duration(exp_elapsed)} "
-            f"({progress.num_completed} completed,"
+            f"({completed_count} completed,"
             f" {failed_count} failed)",
             flush=True,
         )
@@ -1440,12 +1683,12 @@ def main() -> None:
         f"[{_ts()}] SWEEP COMPLETE\n"
         f"{'='*60}\n"
         f"  Total experiments:  {total}\n"
-        f"  Completed:          {progress.num_completed}\n"
+        f"  Completed:          {completed_count}\n"
         f"  Failed:             {failed_count}\n"
         f"  Skipped:            {skipped_count}\n"
         f"  Pass rate:          "
-        f"{progress.num_completed}/{progress.num_completed + failed_count}"
-        f" ({(progress.num_completed / max(progress.num_completed + failed_count, 1) * 100):.1f}%)\n"
+        f"{completed_count}/{completed_count + failed_count}"
+        f" ({(completed_count / max(completed_count + failed_count, 1) * 100):.1f}%)\n"
         f"{'─'*60}\n"
         f"  Total wall time:    {_fmt_duration(sweep_elapsed)}\n"
         f"  Avg per experiment: {_fmt_duration(avg_dur)}\n"
