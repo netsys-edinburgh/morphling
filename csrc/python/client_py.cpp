@@ -8,7 +8,7 @@
 #include "backend/mqtt_worker.h"
 #include "backend/proxy_cli.h"
 #include "backend/proxy_svr.h"
-#include "common/pytorch_defs.h"
+#include "core/pytorch_defs.h"
 #include "scheduler/amqp_dispatcher.h"
 #include "scheduler/amqp_worker.h"
 

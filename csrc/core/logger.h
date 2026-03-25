@@ -11,7 +11,7 @@
 #include <mutex>
 #include <string>
 
-#include "common/types_and_defs.h"  // for TensorKey
+#include "core/types_and_defs.h"  // for TensorKey
 #include "muduo_base/log_file.h"
 #include "muduo_base/logging.h"
 

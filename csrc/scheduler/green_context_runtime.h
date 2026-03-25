@@ -16,7 +16,7 @@
 #include <vector>
 
 #include "green_trace_parser.h"
-#include "utils/cuda_utils.h"
+#include "core/cuda_utils.h"
 
 // Stream roles for multi-stream training patterns.
 enum class StreamRole {

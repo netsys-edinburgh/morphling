@@ -7,9 +7,9 @@
 #include <chrono>
 #include <cstring>
 
-#include "common/generator.h"
+#include "core/generator.h"
 #include "global_api.pb.h"
-#include "utils/logger.h"
+#include "core/logger.h"
 
 // ============================================================================
 // SerializationBuffer Implementation

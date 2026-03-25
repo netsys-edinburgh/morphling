@@ -4,7 +4,7 @@
 #include <sstream>
 
 #include "sched_policy.h"
-#include "utils/logger.h"
+#include "core/logger.h"
 
 namespace morphling {
 namespace backend {

@@ -16,7 +16,7 @@
 #include "intercept/interceptor.h"
 #include "memory/caching_allocator.h"
 #include "scheduling_policy.h"
-#include "utils/cuda_utils.h"
+#include "core/cuda_utils.h"
 #include "worker_base.h"
 
 // One entry in an SM switching schedule file.

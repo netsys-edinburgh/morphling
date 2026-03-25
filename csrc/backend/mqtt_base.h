@@ -12,10 +12,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "common/generator.h"
-#include "common/types_and_defs.h"
+#include "core/generator.h"
+#include "core/types_and_defs.h"
 #include "redis_base.h"
-#include "utils/logger.h"
+#include "core/logger.h"
 
 #define MQTT_COMPUTE_TOPIC_REQ "/morphling/comp/req/"
 #define MQTT_COMPUTE_TOPIC_RSP "/morphling/comp/rsp/"

@@ -7,8 +7,8 @@
 #include "archer_prio_aio_handle.h"
 #include "archer_tensor_index.h"
 #include "memory/caching_allocator.h"
-#include "utils/json_reader.h"
-#include "utils/noncopyable.h"
+#include "core/json_reader.h"
+#include "core/noncopyable.h"
 
 // /* Specialize fmt::formatter for ParamMeta with rttr support */
 // template <>

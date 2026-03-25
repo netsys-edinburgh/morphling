@@ -140,12 +140,11 @@ include_directories(
 
 file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
 file(GLOB MEMORY_SRC "csrc/memory/*.cpp")
-file(GLOB UTILS_SRC "csrc/utils/*.cpp")
+file(GLOB CORE_SRC "csrc/core/*.cpp")
 file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
 file(GLOB SCHEDULER_SRC "csrc/scheduler/*.cpp")
 file(GLOB PYTHON_SRC "csrc/python/*.cpp")
 file(GLOB BACKEND_SRC "csrc/backend/*.cpp")
-file(GLOB COMMON_SRC "csrc/common/*.cpp")
 file(GLOB NETWORK_SRC "csrc/network/*.cpp")
 file(GLOB BASE_SRC "external/muduo_base/*.cc")
 file(GLOB TIMER_SRC "csrc/timer/*.cpp")
@@ -179,7 +178,7 @@ get_torch_gpu_compiler_flags(MORPHLING_GPU_FLAGS ${MORPHLING_GPU_LANG})
 # _C extension
 #
 set(MORPHLING_EXT_SRC
-  ${UTILS_SRC}
+  ${CORE_SRC}
   ${BASE_SRC}
   ${TIMER_SRC}
   ${INTERCEPT_SRC}
@@ -214,15 +213,13 @@ set(MORPHLING_MSG_SRC
   ${NETWORK_SRC}
   ${BASE_SRC}
   ${TIMER_SRC}
-  ${COMMON_SRC}
+  ${CORE_SRC}
   ${PROTO_SRCS}
   "csrc/scheduler/amqp_dispatcher.cpp"
   "csrc/scheduler/amqp_worker.cpp"
   "csrc/scheduler/cpu_worker.cpp"
   "csrc/scheduler/gpu_worker.cpp"
   "csrc/python/client_py.cpp"
-  "csrc/utils/logger.cpp"
-  "csrc/utils/cuda_utils.cpp"
   "csrc/memory/caching_allocator.cpp"
   "csrc/memory/shared_memory.cpp"
 )
@@ -259,8 +256,8 @@ set(MORPHLING_GREENCTX_SRC
   "csrc/scheduler/green_context_runtime.cpp"
   "csrc/scheduler/green_trace_parser.cpp"
   "csrc/python/green_ctx_py.cpp"
-  "csrc/utils/logger.cpp"
-  "csrc/utils/cuda_utils.cpp"
+  "csrc/core/logger.cpp"
+  "csrc/core/cuda_utils.cpp"
 )
 set(MORPHLING_GREENCTX_LIB
   torch ${torch_python_LIBRARY}

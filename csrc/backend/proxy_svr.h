@@ -8,8 +8,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "common/env_cfg.h"
-#include "common/pytorch_defs.h"
+#include "core/env_cfg.h"
+#include "core/pytorch_defs.h"
 #include "device_tracker.h"
 #include "morphling.pb.h"
 #include "network/uevent.h"

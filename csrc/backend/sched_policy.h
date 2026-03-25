@@ -7,7 +7,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "common/pytorch_defs.h"
+#include "core/pytorch_defs.h"
 #include "server_base.h"
 
 namespace morphling {

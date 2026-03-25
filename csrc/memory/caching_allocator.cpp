@@ -9,9 +9,9 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "common/generator.h"
-#include "common/types_and_defs.h"
-#include "utils/logger.h"
+#include "core/generator.h"
+#include "core/types_and_defs.h"
+#include "core/logger.h"
 
 std::unique_ptr<CachingAllocator> kCachingAllocator = nullptr;
 std::once_flag kInitCachingAllocatorFlag;

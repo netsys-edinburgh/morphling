@@ -3,9 +3,9 @@
 #include <atomic>
 #include <memory>
 
-#include "common/env_cfg.h"
-#include "common/lru.h"
-#include "common/pytorch_defs.h"
+#include "core/env_cfg.h"
+#include "core/lru.h"
+#include "core/pytorch_defs.h"
 #include "morphling.pb.h"
 #include "network/connector_libevent.h"
 #include "network/uevent.h"

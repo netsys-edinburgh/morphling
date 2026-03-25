@@ -13,7 +13,7 @@
 #include "intercept/interceptor.h"
 #include "memory/caching_allocator.h"
 #include "scheduling_policy.h"
-#include "utils/thread_affinity.h"
+#include "core/thread_affinity.h"
 #include "worker_base.h"
 
 // RAII wrapper for a CPU core-affinity bitmask at a specific core

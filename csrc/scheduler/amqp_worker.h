@@ -1,8 +1,8 @@
 #pragma once
 
 #include "amqp_base.h"
-#include "common/amqp.h"
-#include "common/pytorch_defs.h"
+#include "core/amqp.h"
+#include "core/pytorch_defs.h"
 
 class AMQPWorker : public AMQPBase {
  public:

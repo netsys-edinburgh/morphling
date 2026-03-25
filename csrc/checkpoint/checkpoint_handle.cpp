@@ -3,10 +3,10 @@
 #include <cuda_runtime_api.h>
 
 #include "archer_tensor_handle.h"
-#include "common/types_and_defs.h"
-#include "utils/json_reader.h"
-// #include "utils/logger.h"
-#include "utils/progress_bar.h"
+#include "core/types_and_defs.h"
+#include "core/json_reader.h"
+// #include "core/logger.h"
+#include "core/progress_bar.h"
 
 CheckpointHandle::CheckpointHandle(const std::filesystem::path& prefix)
     : prefix_(prefix), prio_aio_handle_(prefix), allocator_(nullptr) {
