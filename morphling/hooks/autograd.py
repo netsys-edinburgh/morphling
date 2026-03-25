@@ -13,6 +13,18 @@ from morphling.common import get_logger
 
 logger = get_logger()
 _backend: Any = None
+
+
+def set_backend(backend: Any) -> None:
+    """Set the active compute backend for morphling hooks.
+
+    Args:
+        backend: Backend instance to use for dispatch.
+    """
+    global _backend
+    _backend = backend
+
+
 _enable_verification = False
 _greenctx: Any = None
 _gemm_log: List[Dict[str, Any]] = []
