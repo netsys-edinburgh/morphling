@@ -1,0 +1,6 @@
+# clock_mode=step
+step,num_sms
+0,32
+50,16
+100,48
+150,32
