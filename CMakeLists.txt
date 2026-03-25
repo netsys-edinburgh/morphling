@@ -183,6 +183,9 @@ set(MORPHLING_EXT_SRC
   ${TIMER_SRC}
   ${PROTO_SRCS}
   "csrc/memory/shared_memory.cpp"
+  "csrc/backend/sched_policy.cpp"
+  "csrc/backend/device_tracker.cpp"
+  "csrc/backend/partition_tracker.cpp"
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
