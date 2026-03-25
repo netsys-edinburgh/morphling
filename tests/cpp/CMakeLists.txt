@@ -95,7 +95,7 @@ if(ENABLE_XTGEMM_TESTS)
       ${PROJECT_ROOT}/csrc/core/cuda_utils.cpp
       ${PROJECT_ROOT}/csrc/core/logger.cpp
       ${PROJECT_ROOT}/csrc/core/generator.cpp
-      ${PROJECT_ROOT}/csrc/timer/virtual_clock.cc
+      ${PROJECT_ROOT}/csrc/timer/virtual_clock.cpp
       ${BASE_LOGGING_SRC}
     )
 
