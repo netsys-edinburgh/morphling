@@ -92,9 +92,9 @@ if(ENABLE_XTGEMM_TESTS)
     set(XTGEMM_TEST_DEPS
       ${PROJECT_ROOT}/csrc/scheduler/gpu_worker.cpp
       ${PROJECT_ROOT}/csrc/memory/caching_allocator.cpp
-      ${PROJECT_ROOT}/csrc/utils/cuda_utils.cpp
-      ${PROJECT_ROOT}/csrc/utils/logger.cpp
-      ${PROJECT_ROOT}/csrc/common/generator.cc
+      ${PROJECT_ROOT}/csrc/core/cuda_utils.cpp
+      ${PROJECT_ROOT}/csrc/core/logger.cpp
+      ${PROJECT_ROOT}/csrc/core/generator.cpp
       ${PROJECT_ROOT}/csrc/timer/virtual_clock.cc
       ${BASE_LOGGING_SRC}
     )
@@ -231,7 +231,7 @@ file(GLOB GTP_BASE_LOGGING_SRC ${PROJECT_ROOT_GTP}/external/muduo_base/*.cc)
 add_executable(test_green_trace_parser
   unit/worker/test_green_trace_parser.cpp
   ${PROJECT_ROOT_GTP}/csrc/scheduler/green_trace_parser.cpp
-  ${PROJECT_ROOT_GTP}/csrc/utils/logger.cpp
+  ${PROJECT_ROOT_GTP}/csrc/core/logger.cpp
   ${GTP_BASE_LOGGING_SRC}
 )
 target_include_directories(test_green_trace_parser PRIVATE
@@ -261,8 +261,8 @@ if(ENABLE_GREEN_CTX_TESTS)
     set(GCR_SOURCES
       ${PROJECT_ROOT_GCR}/csrc/scheduler/green_context_runtime.cpp
       ${PROJECT_ROOT_GCR}/csrc/scheduler/green_trace_parser.cpp
-      ${PROJECT_ROOT_GCR}/csrc/utils/logger.cpp
-      ${PROJECT_ROOT_GCR}/csrc/utils/cuda_utils.cpp
+      ${PROJECT_ROOT_GCR}/csrc/core/logger.cpp
+      ${PROJECT_ROOT_GCR}/csrc/core/cuda_utils.cpp
       ${GCR_BASE_LOGGING_SRC}
     )
 
