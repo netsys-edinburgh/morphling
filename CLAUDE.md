@@ -19,15 +19,13 @@ Shame in blind modification, Honor in careful refactoring
 **Top-level map:**
 
 - `morphling/` — Python package implementation (runtime, entrypoints, utils, ops)
+- `external/` — vendored external dependencies
+  - `external/muduo_base/` — vendored muduo base library (logging, threading, etc.)
 - `csrc/` — C++ sources
-  - `csrc/backend/` — core server/proxy/mqtt components (high impact)
-  - `csrc/base/` — common C++ utilities (logging, threading, etc.)
+  - `csrc/backend/` — core server/proxy/mqtt components (high impact; includes serialization_buffer, scatter_gather_buffer, matrix_partition split files)
+  - `csrc/core/` — merged utilities (was csrc/utils/ + csrc/common/)
   - `csrc/checkpoint/` — checkpoint / IO components
-- `proto/` — protobuf / gRPC schemas (`*.proto`) (API surface; change only when requested)
-- `config/` — runtime configs
-  - `config/proxy/` — proxy client/server INI configs
-  - `config/emqx/`, `config/mosquitto/` — broker configs
-- `scripts/` — orchestration scripts (run devices, server, profiling, analysis)
+- `scripts/` — orchestration scripts (run devices, server, profiling, analysis, diagnostics)
 - `tests/python/` — Python tests
 - `tests/cpp/` — C++ tests/benchmarks
 - `cmake/` — CMake helpers
