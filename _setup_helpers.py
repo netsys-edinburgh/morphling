@@ -189,6 +189,29 @@ class cmake_build_ext(build_ext):
             )
             print(self.build_temp, ext_target_name)
 
+    def copy_extensions_to_source(self) -> None:
+        """Copy built .so extensions into the source package directory.
+
+        This is needed when the working directory is the project root (e.g.,
+        in Docker with WORKDIR /app), where Python finds the source package
+        before the installed one in site-packages.  Without this step,
+        ``import morphling._C`` fails because the .so files only exist in
+        the install tree, not next to __init__.py in the source tree.
+        """
+        build_lib = self.build_lib
+        for ext in self.extensions:
+            fullname = self.get_ext_fullname(ext.name)
+            filename = self.get_ext_filename(fullname)
+            src = os.path.join(build_lib, filename)
+            if os.path.exists(src):
+                dest = (
+                    filename  # relative path, e.g. morphling/_C.cpython-...so
+                )
+                dest_dir = os.path.dirname(dest)
+                if dest_dir:
+                    os.makedirs(dest_dir, exist_ok=True)
+                self.copy_file(src, dest)
+
     def get_ext_filename(self, fullname):
         for ext in self.extensions:
             target_type = getattr(ext, "target_type", "shared")
