@@ -22,6 +22,7 @@ file(GLOB BASE_LOGGING_SRC ${PROJECT_ROOT}/external/muduo_base/*.cc)
 # Include directories
 set(ZEROCOPY_BENCH_INCLUDE_DIRS
   ${PROJECT_ROOT}/csrc
+  ${PROJECT_ROOT}/external
   ${CMAKE_BINARY_DIR}  # for generated proto headers
   ${TORCH_INCLUDE_DIRS}
 )
