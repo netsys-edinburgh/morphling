@@ -1,10 +1,12 @@
 #include "checkpoint_handle.h"
 
 #include <cuda_runtime_api.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "archer_tensor_handle.h"
-#include "core/types_and_defs.h"
 #include "core/json_reader.h"
+#include "core/types_and_defs.h"
 // #include "core/logger.h"
 #include "core/progress_bar.h"
 
