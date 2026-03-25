@@ -187,7 +187,6 @@ set(MORPHLING_EXT_SRC
   ${CORE_UTILS_SRC}
   ${BASE_SRC}
   ${TIMER_SRC}
-  ${PROTO_SRCS}
   "csrc/memory/shared_memory.cpp"
   "csrc/python/checkpoint_py.cpp"
 )
