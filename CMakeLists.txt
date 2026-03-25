@@ -183,9 +183,6 @@ set(MORPHLING_EXT_SRC
   ${TIMER_SRC}
   ${INTERCEPT_SRC}
   ${PROTO_SRCS}
-  "csrc/checkpoint/archer_tensor_handle.cpp"
-  "csrc/memory/caching_allocator.cpp"
-  "csrc/memory/shared_memory.cpp"
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
@@ -209,6 +206,8 @@ define_gpu_extension_target(
   # INCLUDE_DIRECTORIES ${MORPHLING_EXT_INCLUDE_DIRS}
   WITH_SOABI
 )
+# Allow _C to resolve symbols from _Msg at runtime (e.g. kCachingAllocator)
+target_link_options(_C PRIVATE "-Wl,--allow-shlib-undefined")
 
 
 set(MORPHLING_MSG_SRC
