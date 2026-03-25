@@ -75,10 +75,13 @@ struct GreenContextSlot {
 };
 
 struct SwapStats {
+  int64_t switch_count = 0;
   int64_t count = 0;
   int64_t total_overhead_us = 0;
   double avg_overhead_us() const {
-    return count > 0 ? static_cast<double>(total_overhead_us) / count : 0.0;
+    return switch_count > 0
+               ? static_cast<double>(total_overhead_us) / switch_count
+               : 0.0;
   }
 };
 
