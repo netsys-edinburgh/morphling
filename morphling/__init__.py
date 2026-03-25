@@ -1,3 +1,9 @@
+"""Morphling — DeviceEmulator Python package.
+
+Provides the runtime, hooks, and backend components for distributed
+inference device emulation.
+"""
+
 import morphling
 import morphling.hooks as hooks
 

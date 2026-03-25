@@ -1,3 +1,8 @@
+"""Common utilities for DeviceEmulator.
+
+Exports configuration, logging, and utility functions.
+"""
+
 from .config import (
     DeviceConfig,
     EmulatorConfig,

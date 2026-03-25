@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Checkpoint file utilities for loading model weights.
+
+Provides functions for locating and resolving checkpoint files from
+HuggingFace format directories.
+"""
+
 import contextlib
 import gc
 import inspect
