@@ -1,4 +1,12 @@
+"""Decorator utilities for function wrapping and profiling.
+
+Provides decorators for function access logging and execution timing.
+"""
+
+
 def func_access_decorator(func, funcname=None):
+    """Decorator that prints function name on access."""
+
     def wrapper(*args, **kwargs):
         print("func_access ", funcname)
         return func(*args, **kwargs)
@@ -12,6 +20,8 @@ import time
 
 
 def timeit_decorator(func):
+    """Decorator that measures and prints function execution time."""
+
     @functools.wraps(func)
     def sync_wrapper(*args, **kwargs):
         start_time = time.time()

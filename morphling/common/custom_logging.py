@@ -1,3 +1,9 @@
+"""Custom logging utilities for event timing in distributed emulation.
+
+Provides the EventTimeLogger class for tracking and synchronizing event
+timing across devices in a simulation environment.
+"""
+
 import time
 from typing import Any, Dict, List, Optional
 
@@ -7,6 +13,14 @@ DEV_COMP = "dev_comp"
 
 
 class EventTimeLogger:
+    """Logger for tracking event timing in device emulation.
+
+    Attributes:
+        id: Identifier for this logger instance.
+        event_timers: Dictionary mapping event names to elapsed times.
+        total_time: Total elapsed time across all events.
+    """
+
     def __init__(self, id, events: List[str] = None):
         self.event_timers: Dict[str, float] = {}
 
@@ -19,9 +33,11 @@ class EventTimeLogger:
         self.real_time = time.time()
 
     def max_time(self) -> float:
+        """Get the maximum time across all events."""
         return max(self.event_timers.values())
 
     def sync_time(self):
+        """Synchronize all event times to the maximum time."""
         max_time = self.max_time()
         for event in self.event_timers:
             self.event_timers[event] = max_time
@@ -30,9 +46,7 @@ class EventTimeLogger:
         return max_time
 
     def set_time(self, timestamp: float):
-        # for event in self.event_timers:
-        #     self.event_timers[event] = timestamp
-
+        """Set the total time to a specific timestamp."""
         self.total_time = timestamp
         self.real_elapsed = time.time() - self.real_time
         print(
@@ -40,6 +54,7 @@ class EventTimeLogger:
         )
 
     def record(self, elapsed, event: str, last_events: List[str] = None):
+        """Record elapsed time for an event."""
         if last_events is not None:
             # dependent_events = [
             #     event for event in last_events if event not in self.event_timers

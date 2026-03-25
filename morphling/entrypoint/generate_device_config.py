@@ -1,3 +1,10 @@
+"""Device configuration generator for Morphling.
+
+Generates randomized device configurations with configurable FLOPs, memory,
+network bandwidth, and latency ranges. Supports both virtual and physical
+device types with optional straggler simulation.
+"""
+
 import json
 from dataclasses import dataclass, field
 

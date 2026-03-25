@@ -1,3 +1,9 @@
+"""Command-line interface for Morphling model management.
+
+Provides CLI commands for saving model checkpoints from HuggingFace Hub
+to local storage with configurable data types.
+"""
+
 import argparse
 import gc
 import json

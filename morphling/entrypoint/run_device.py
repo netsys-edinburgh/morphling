@@ -1,3 +1,10 @@
+"""Device runner entrypoint for Morphling emulator.
+
+Provides CLI interface for launching virtual or physical device instances
+with configurable FLOPs, memory, network bandwidth, and latency parameters.
+Supports multiple backends including RabbitMQ, AMQP, MQTT, and proxy mode.
+"""
+
 import asyncio
 import os
 import subprocess
