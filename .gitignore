@@ -16,6 +16,8 @@ figures/
 evaluation/
 logs/
 results/
+CLAUDE.md
+AGENTS.md
 
 # CMake-generated files
 .ninja_deps
