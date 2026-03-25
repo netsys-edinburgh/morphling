@@ -158,53 +158,7 @@ file(GLOB NETWORK_SRC "csrc/network/*.cc")
 file(GLOB BASE_SRC "csrc/base/*.cc")
 file(GLOB TIMER_SRC "csrc/timer/*.cc")
 
-# add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
-# target_link_libraries(morphling_interceptor PUBLIC
-#   CUDA::cudart Threads::Threads
-#   libspdlog.so grpc++ grpc++_reflection
-# )
-# target_include_directories(morphling_interceptor PUBLIC "csrc" ${CUDA_INCLUDE_DIRS})
-
-# add_library(morphling STATIC ${UTILS_SRC} ${CHECKPOINT_SRC})
-# target_link_libraries(morphling PUBLIC
-#   CUDA::cudart Threads::Threads
-#   libspdlog.so ${TORCH_LIBRARIES}
-# )
-# target_include_directories(morphling PUBLIC "csrc" ${CUDA_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS})
-
 message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
-
-# set (MORPHLING_EXT_INCLUDE_DIRS
-
-# )
-
-# Removed morphling_server executable since gRPC server is no longer needed
-# add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs}
-#   "csrc/scheduler/gpu_worker.cpp" ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC}
-# )
-# add_dependencies(morphling_server generate_proto_files)
-# target_link_libraries(morphling_server PRIVATE
-#   gflags::gflags fmt
-#   ${_PROTOBUF_LIBPROTOBUF}
-#   libspdlog.so
-#   uuid
-#   CUDA::cublas CUDA::cudart
-#   libpython${Python_VERSION}.so
-#   ${TORCH_LIBRARIES}
-#   rabbitmq
-# )
-# target_include_directories(morphling_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
-
-# add_executable(morphling_worker_server "csrc/worker_server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs})
-# add_dependencies(morphling_worker_server generate_proto_files)
-# target_link_libraries(morphling_worker_server PRIVATE
-#   gflags::gflags fmt
-#   ${_PROTOBUF_LIBPROTOBUF}
-#   grpc++ grpc++_reflection
-#   libspdlog.so
-#   uuid
-# )
-# target_include_directories(morphling_worker_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
 
 
 
@@ -332,48 +286,6 @@ define_gpu_extension_target(
   LIBRARIES ${MORPHLING_GREENCTX_LIB}
   WITH_SOABI
 )
-
-# set(MORPHLING_INTERCEPTOR_SRC
-# ${INTERCEPT_SRC}
-# ${MEMORY_SRC}
-# ${UTILS_SRC}
-# ${hw_proto_srcs}
-# ${hw_grpc_srcs}
-# "csrc/python/intercept_py.cpp"
-# )
-# set(MORPHLING_INTERCEPTOR_LIB
-# mkl_rt grpc++ grpc++_reflection rttr_core
-# libspdlog.so uuid
-# )
-# define_gpu_extension_target(
-# _intercept
-# DESTINATION morphling
-# LANGUAGE ${MORPHLING_GPU_LANG}
-# SOURCES ${MORPHLING_INTERCEPTOR_SRC}
-# COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
-# ARCHITECTURES ${MORPHLING_GPU_ARCHES}
-# LIBRARIES ${MORPHLING_INTERCEPTOR_LIB}
-# WITH_SOABI
-# )
-
-# set(MORPHLING_ALLOCATOR_SRC
-# ${MEMORY_SRC}
-# ${UTILS_SRC}
-# )
-# set(MORPHLING_ALLOCATOR_LIB
-# uuid Threads::Threads
-# libspdlog.so
-# )
-# define_gpu_extension_target(
-# morphling_allocator
-# DESTINATION morphling
-# LANGUAGE ${MORPHLING_GPU_LANG}
-# SOURCES ${MORPHLING_ALLOCATOR_SRC}
-# COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
-# ARCHITECTURES ${MORPHLING_GPU_ARCHES}
-# LIBRARIES ${MORPHLING_ALLOCATOR_LIB}
-# WITH_SOABI
-# )
 
 # Enable testing if the option is ON
 message(STATUS "BUILD_TESTS: ${BUILD_TESTS}")
