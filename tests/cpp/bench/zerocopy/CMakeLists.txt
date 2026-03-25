@@ -10,7 +10,7 @@ set(ZEROCOPY_BENCH_DEPS
   ${PROJECT_ROOT}/csrc/backend/scatter_gather_buffer.cpp
   ${PROJECT_ROOT}/csrc/backend/matrix_partition.cpp
   ${PROJECT_ROOT}/csrc/core/generator.cpp
-  ${PROJECT_ROOT}/csrc/timer/virtual_clock.cc
+  ${PROJECT_ROOT}/csrc/timer/virtual_clock.cpp
 )
 
 # Base logging sources
