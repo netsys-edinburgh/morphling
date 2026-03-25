@@ -131,6 +131,7 @@ add_custom_target(
 # Include generated *.pb.h files
 include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/external
   ${Python3_INCLUDE_DIRS}
   ${absl_SOURCE_DIR}
   ${Protobuf_INCLUDE_DIRS}
@@ -146,7 +147,7 @@ file(GLOB PYTHON_SRC "csrc/python/*.cpp")
 file(GLOB BACKEND_SRC "csrc/backend/*.cpp" "csrc/backend/*.cc")
 file(GLOB COMMON_SRC "csrc/common/*.cpp" "csrc/common/*.cc")
 file(GLOB NETWORK_SRC "csrc/network/*.cc")
-file(GLOB BASE_SRC "csrc/base/*.cc")
+file(GLOB BASE_SRC "external/muduo_base/*.cc")
 file(GLOB TIMER_SRC "csrc/timer/*.cc")
 
 message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")

@@ -11,9 +11,9 @@
 #include <mutex>
 #include <string>
 
-#include "base/log_file.h"
-#include "base/logging.h"
 #include "common/types_and_defs.h"  // for TensorKey
+#include "muduo_base/log_file.h"
+#include "muduo_base/logging.h"
 
 #define PRINT_ARGS(...)                \
   do {                                 \

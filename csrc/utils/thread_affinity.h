@@ -6,7 +6,7 @@
 
 #include <vector>
 
-#include "base/logging.h"
+#include "muduo_base/logging.h"
 
 namespace morphling {
 
@@ -17,22 +17,20 @@ inline void PinThreadToCore(int core_id) {
   CPU_ZERO(&cpuset);
   CPU_SET(core_id, &cpuset);
 
-  int ret =
-      syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
+  int ret = syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
   if (ret != 0) {
-    LOG_WARN << "Failed to pin thread " << tid << " to core "
-             << core_id << " (errno: " << errno << ")";
+    LOG_WARN << "Failed to pin thread " << tid << " to core " << core_id
+             << " (errno: " << errno << ")";
   }
 }
 
 // Pin the calling thread to a set of CPU cores.
 inline void PinThreadToCores(const cpu_set_t& cpuset) {
   pid_t tid = syscall(SYS_gettid);
-  int ret =
-      syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
+  int ret = syscall(SYS_sched_setaffinity, tid, sizeof(cpu_set_t), &cpuset);
   if (ret != 0) {
-    LOG_WARN << "Failed to set thread " << tid
-             << " affinity (errno: " << errno << ")";
+    LOG_WARN << "Failed to set thread " << tid << " affinity (errno: " << errno
+             << ")";
   }
 }
 

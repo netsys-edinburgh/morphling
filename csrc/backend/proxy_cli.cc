@@ -7,10 +7,10 @@
 #include <cstring>
 #include <thread>
 
-#include "base/my_uuid.h"
 #include "common/generator.h"
 #include "common/stats.h"
 #include "device_tracker.h"
+#include "muduo_base/my_uuid.h"
 #include "network/eventloop_libevent.h"
 #include "network/ueventloop_thread_pool.h"
 #include "proto_base.h"
@@ -48,8 +48,7 @@ void PosixUnpinBuffer(void* ptr, size_t size) { munlock(ptr, size); }
 /*********************************ProxyCliHandle************************************/
 
 ProxyCliHandle::ProxyCliHandle(ProxyEnvCfg& ctx, UeventLoop* loop,
-                               int64_t device_id,
-                               XtGemmWorkerPool* gpu_pool,
+                               int64_t device_id, XtGemmWorkerPool* gpu_pool,
                                CpuWorkerPool* cpu_pool)
     : ctx_(ctx),
       loop_(loop),
@@ -99,8 +98,8 @@ static void ResponseSendCleanup(const void* /*data*/, size_t /*len*/,
 }
 
 // Helper for zero-copy send cleanup of SerializationBuffer (registration msgs)
-static void SerializationBufferSendCleanup(const void* /*data*/,
-                                           size_t /*len*/, void* arg) {
+static void SerializationBufferSendCleanup(const void* /*data*/, size_t /*len*/,
+                                           void* arg) {
   delete static_cast<SerializationBufferPtr*>(arg);
 }
 
@@ -195,16 +194,14 @@ bool ProxyCliHandle::ShouldUseGpu() const {
   if (!gpu_pool_) return false;
   if (!cpu_pool_) return true;
   // Both pools: compare estimated wait = depth * avg_duration
-  int64_t gpu_wait = static_cast<int64_t>(gpu_pool_->GetPendingTaskCount())
-                   * gpu_duration_tracker_.GetAverageDurationUs();
-  int64_t cpu_wait = static_cast<int64_t>(cpu_pool_->GetPendingTaskCount())
-                   * cpu_duration_tracker_.GetAverageDurationUs();
-  LOG_DEBUG << "[PoolDispatch] gpu_depth="
-            << gpu_pool_->GetPendingTaskCount()
+  int64_t gpu_wait = static_cast<int64_t>(gpu_pool_->GetPendingTaskCount()) *
+                     gpu_duration_tracker_.GetAverageDurationUs();
+  int64_t cpu_wait = static_cast<int64_t>(cpu_pool_->GetPendingTaskCount()) *
+                     cpu_duration_tracker_.GetAverageDurationUs();
+  LOG_DEBUG << "[PoolDispatch] gpu_depth=" << gpu_pool_->GetPendingTaskCount()
             << " gpu_avg=" << gpu_duration_tracker_.GetAverageDurationUs()
             << "us gpu_wait=" << gpu_wait
-            << "us | cpu_depth="
-            << cpu_pool_->GetPendingTaskCount()
+            << "us | cpu_depth=" << cpu_pool_->GetPendingTaskCount()
             << " cpu_avg=" << cpu_duration_tracker_.GetAverageDurationUs()
             << "us cpu_wait=" << cpu_wait << "us";
   return gpu_wait <= cpu_wait;  // prefer GPU on tie
@@ -247,9 +244,8 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
                       "cudaMallocManaged(output)")) {
       return;
     }
-    SubmitToGpuPool(conn, partition, out_ptr, out_bytes,
-                    row_ptr, row_size, col_ptr, col_size,
-                    partition.h_dim, vt_compute_start,
+    SubmitToGpuPool(conn, partition, out_ptr, out_bytes, row_ptr, row_size,
+                    col_ptr, col_size, partition.h_dim, vt_compute_start,
                     /*is_host_alloc=*/false, task_enqueue_time);
     return;
   }
@@ -257,12 +253,12 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   if (cpu_pool_) {
     float* out_ptr = static_cast<float*>(malloc(out_bytes));
     if (!out_ptr) {
-      LOG_ERROR << "malloc failed for output buffer (" << out_bytes << " bytes)";
+      LOG_ERROR << "malloc failed for output buffer (" << out_bytes
+                << " bytes)";
       return;
     }
-    SubmitToCpuPool(conn, partition, out_ptr, out_bytes,
-                    row_ptr, row_size, col_ptr, col_size,
-                    partition.h_dim, vt_compute_start,
+    SubmitToCpuPool(conn, partition, out_ptr, out_bytes, row_ptr, row_size,
+                    col_ptr, col_size, partition.h_dim, vt_compute_start,
                     /*is_host_alloc=*/true, task_enqueue_time);
     return;
   }
@@ -271,9 +267,8 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
 }
 
 std::shared_ptr<GemmArgs> ProxyCliHandle::BuildGemmArgs(
-    const float* col_ptr, int64_t col_size,
-    const float* row_ptr, int64_t row_size,
-    int64_t h_dim, float* out_ptr) {
+    const float* col_ptr, int64_t col_size, const float* row_ptr,
+    int64_t row_size, int64_t h_dim, float* out_ptr) {
   auto args = std::make_shared<GemmArgs>();
   args->group_size = 1;
   args->transa[0] = 'T';
@@ -293,16 +288,13 @@ std::shared_ptr<GemmArgs> ProxyCliHandle::BuildGemmArgs(
 }
 
 void ProxyCliHandle::SubmitToGpuPool(
-    const uevent::ConnectionUeventPtr& conn,
-    const MatrixPartition& partition,
-    float* out_ptr, int64_t out_bytes,
-    const float* row_ptr, int64_t row_size,
-    const float* col_ptr, int64_t col_size,
-    int64_t h_dim, uint64_t vt_compute_start,
-    bool is_host_alloc,
+    const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
+    float* out_ptr, int64_t out_bytes, const float* row_ptr, int64_t row_size,
+    const float* col_ptr, int64_t col_size, int64_t h_dim,
+    uint64_t vt_compute_start, bool is_host_alloc,
     SlidingWindowDurationTracker<>::TimePoint task_enqueue_time) {
-  auto args = BuildGemmArgs(col_ptr, col_size, row_ptr, row_size,
-                            h_dim, out_ptr);
+  auto args =
+      BuildGemmArgs(col_ptr, col_size, row_ptr, row_size, h_dim, out_ptr);
 
   uint64_t task_num = task_counter_.fetch_add(1, std::memory_order_relaxed);
   std::string task_id = "gemm_" + std::to_string(task_num);
@@ -310,14 +302,13 @@ void ProxyCliHandle::SubmitToGpuPool(
   // Copy partition by value for the callback closure
   MatrixPartition part_copy = partition;
 
-  TaskCallback callback = [this, conn, part_copy, out_ptr, out_bytes,
-                           col_size, vt_compute_start,
-                           is_host_alloc, task_enqueue_time](const std::string&) {
-    loop_->RunInLoop([this, conn, part_copy, out_ptr, out_bytes,
-                      col_size, vt_compute_start, is_host_alloc,
-                      task_enqueue_time]() {
-      OnComputeComplete(conn, part_copy, out_ptr, out_bytes,
-                        col_size, vt_compute_start, is_host_alloc,
+  TaskCallback callback = [this, conn, part_copy, out_ptr, out_bytes, col_size,
+                           vt_compute_start, is_host_alloc,
+                           task_enqueue_time](const std::string&) {
+    loop_->RunInLoop([this, conn, part_copy, out_ptr, out_bytes, col_size,
+                      vt_compute_start, is_host_alloc, task_enqueue_time]() {
+      OnComputeComplete(conn, part_copy, out_ptr, out_bytes, col_size,
+                        vt_compute_start, is_host_alloc,
                         /*is_gpu_task=*/true, task_enqueue_time);
     });
   };
@@ -328,16 +319,13 @@ void ProxyCliHandle::SubmitToGpuPool(
 }
 
 void ProxyCliHandle::SubmitToCpuPool(
-    const uevent::ConnectionUeventPtr& conn,
-    const MatrixPartition& partition,
-    float* out_ptr, int64_t out_bytes,
-    const float* row_ptr, int64_t row_size,
-    const float* col_ptr, int64_t col_size,
-    int64_t h_dim, uint64_t vt_compute_start,
-    bool is_host_alloc,
+    const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
+    float* out_ptr, int64_t out_bytes, const float* row_ptr, int64_t row_size,
+    const float* col_ptr, int64_t col_size, int64_t h_dim,
+    uint64_t vt_compute_start, bool is_host_alloc,
     SlidingWindowDurationTracker<>::TimePoint task_enqueue_time) {
-  auto args = BuildGemmArgs(col_ptr, col_size, row_ptr, row_size,
-                            h_dim, out_ptr);
+  auto args =
+      BuildGemmArgs(col_ptr, col_size, row_ptr, row_size, h_dim, out_ptr);
 
   uint64_t task_num = task_counter_.fetch_add(1, std::memory_order_relaxed);
   std::string task_id = "gemm_cpu_" + std::to_string(task_num);
@@ -345,14 +333,13 @@ void ProxyCliHandle::SubmitToCpuPool(
   // Copy partition by value for the callback closure
   MatrixPartition part_copy = partition;
 
-  TaskCallback callback = [this, conn, part_copy, out_ptr, out_bytes,
-                           col_size, vt_compute_start,
-                           is_host_alloc, task_enqueue_time](const std::string&) {
-    loop_->RunInLoop([this, conn, part_copy, out_ptr, out_bytes,
-                      col_size, vt_compute_start, is_host_alloc,
-                      task_enqueue_time]() {
-      OnComputeComplete(conn, part_copy, out_ptr, out_bytes,
-                        col_size, vt_compute_start, is_host_alloc,
+  TaskCallback callback = [this, conn, part_copy, out_ptr, out_bytes, col_size,
+                           vt_compute_start, is_host_alloc,
+                           task_enqueue_time](const std::string&) {
+    loop_->RunInLoop([this, conn, part_copy, out_ptr, out_bytes, col_size,
+                      vt_compute_start, is_host_alloc, task_enqueue_time]() {
+      OnComputeComplete(conn, part_copy, out_ptr, out_bytes, col_size,
+                        vt_compute_start, is_host_alloc,
                         /*is_gpu_task=*/false, task_enqueue_time);
     });
   };
@@ -363,11 +350,9 @@ void ProxyCliHandle::SubmitToCpuPool(
 }
 
 void ProxyCliHandle::OnComputeComplete(
-    const uevent::ConnectionUeventPtr& conn,
-    const MatrixPartition& partition,
-    float* out_ptr, int64_t out_bytes,
-    int64_t col_size, uint64_t vt_compute_start,
-    bool is_host_alloc, bool is_gpu_task,
+    const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
+    float* out_ptr, int64_t out_bytes, int64_t col_size,
+    uint64_t vt_compute_start, bool is_host_alloc, bool is_gpu_task,
     SlidingWindowDurationTracker<>::TimePoint task_enqueue_time) {
   // Record task turnaround duration for dispatch estimation
   int64_t duration_us =
@@ -577,7 +562,7 @@ void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
   // Zero-copy send: buffer ref-count prevents deallocation until libevent done
   auto* ref = new SerializationBufferPtr(buffer);
   int ret = conn->SendDataZeroCopy(buffer->GetBuffer(), buffer->GetSize(),
-                                    SerializationBufferSendCleanup, ref);
+                                   SerializationBufferSendCleanup, ref);
   if (ret < 0) {
     LOG_ERROR << "Failed to send device profile data";
     conn->ForceClose();
@@ -891,8 +876,8 @@ void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
 
   if (!has_gpu) {
     if (err != cudaSuccess) {
-      LOG_WARN << "Failed to get CUDA device count: "
-               << cudaGetErrorString(err) << ". Running in CPU-only mode.";
+      LOG_WARN << "Failed to get CUDA device count: " << cudaGetErrorString(err)
+               << ". Running in CPU-only mode.";
     } else {
       LOG_WARN << "No CUDA devices found. Running in CPU-only mode.";
     }
@@ -907,18 +892,15 @@ void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
 
   context_.Initialize(cfg_file);
 
-  bool want_gpu = (context_.pool_mode == "gpu" ||
-                   context_.pool_mode == "both");
-  bool want_cpu = (context_.pool_mode == "cpu" ||
-                   context_.pool_mode == "both");
+  bool want_gpu = (context_.pool_mode == "gpu" || context_.pool_mode == "both");
+  bool want_cpu = (context_.pool_mode == "cpu" || context_.pool_mode == "both");
 
   // Create worker pools based on config + hardware availability
   if (want_gpu && has_gpu) {
     int workers_per_gpu = 1;  // one green-context partition per GPU
     size_t buffer_size = 256ull * 1024 * 1024;  // 256 MB per worker
     gpu_pool_ = std::make_unique<XtGemmWorkerPool>(
-        workers_per_gpu, buffer_size,
-        WorkerSchedulingPolicy::kRoundRobinGemm);
+        workers_per_gpu, buffer_size, WorkerSchedulingPolicy::kRoundRobinGemm);
     LOG_INFO << "GPU worker pool created: " << workers_per_gpu
              << " workers/GPU, " << device_count << " GPUs";
   }
@@ -931,8 +913,7 @@ void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
       cores.push_back(i);
     }
     cpu_pool_ = std::make_unique<CpuWorkerPool>(
-        num_workers, std::move(cores),
-        WorkerSchedulingPolicy::kRoundRobinCpu);
+        num_workers, std::move(cores), WorkerSchedulingPolicy::kRoundRobinCpu);
     LOG_INFO << "CPU worker pool created: " << num_workers << " workers";
   }
   svr_ = make_shared<ProxyCliImpl>(context_, device_id);
