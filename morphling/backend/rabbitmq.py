@@ -1,3 +1,5 @@
+"""RabbitMQ backend implementation for distributed matmul via AMQP."""
+
 import asyncio
 import itertools
 import time

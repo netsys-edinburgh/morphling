@@ -1,3 +1,5 @@
+"""Communication decorators for PyTorch operations."""
+
 import torch
 
 

@@ -1,5 +1,6 @@
 # pyright: reportMissingImports=false, reportAssignmentType=false
 # pyright: reportAttributeAccessIssue=false
+"""Autograd hooks for green context switching and GEMM logging."""
 
 import functools
 import time
@@ -87,6 +88,7 @@ def _log_gemm(
 
 
 def set_greenctx(greenctx: Any = None, reset_log: bool = True) -> None:
+    """Set the green context controller and optionally reset the GEMM log."""
     global _greenctx
 
     _greenctx = greenctx
@@ -102,6 +104,7 @@ def set_greenctx(greenctx: Any = None, reset_log: bool = True) -> None:
 
 
 def get_gemm_log(reset: bool = False) -> List[Dict[str, Any]]:
+    """Get the GEMM log entries collected during execution."""
     log = list(_gemm_log)
     if reset:
         _reset_gemm_log()
@@ -109,6 +112,7 @@ def get_gemm_log(reset: bool = False) -> List[Dict[str, Any]]:
 
 
 def apply_hooks(types: Union[str, List[str]], greenctx: Any = None):
+    """Apply autograd hooks to PyTorch operations for green context switching."""
     set_greenctx(greenctx)
 
     if isinstance(types, str):
