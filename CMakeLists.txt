@@ -206,8 +206,8 @@ define_gpu_extension_target(
   # INCLUDE_DIRECTORIES ${MORPHLING_EXT_INCLUDE_DIRS}
   WITH_SOABI
 )
-# Allow _C to resolve symbols from _Msg at runtime (e.g. kCachingAllocator)
-target_link_options(_C PRIVATE "-Wl,--allow-shlib-undefined")
+# Allow _C to resolve undefined symbols lazily at runtime from _Msg
+target_link_options(_C PRIVATE "-Wl,-z,lazy")
 
 
 set(MORPHLING_MSG_SRC
