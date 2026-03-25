@@ -12,6 +12,10 @@ node_modules
 .opencode
 .tmp*
 .sisyphus/
+figures/
+evaluation/
+logs/
+results/
 
 # CMake-generated files
 .ninja_deps

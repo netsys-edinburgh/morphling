@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import torch
 
-from morphling.backend import BaseBackend
 from morphling.common import get_logger
 
 logger = get_logger()
@@ -164,9 +163,7 @@ class LinearFunction(torch.autograd.Function):
             try:
                 sm_count, _ = _greenctx.activate_for_time(int(start_us))
                 activated_sm_count = sm_count
-                _backend.async_dispatch_matmul(
-                    input, weight.transpose(-2, -1)
-                )
+                _backend.async_dispatch_matmul(input, weight.transpose(-2, -1))
             finally:
                 if activated_sm_count is not None:
                     _greenctx.deactivate(activated_sm_count)

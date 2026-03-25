@@ -159,6 +159,23 @@ if(ENABLE_XTGEMM_TESTS)
       CUDA::cuda_driver
     )
 
+    # Trace-switch benchmark (bench/cuda/)
+    add_executable(bench_trace_switch
+      bench/cuda/bench_trace_switch.cpp
+      ${XTGEMM_TEST_DEPS}
+    )
+    target_include_directories(bench_trace_switch PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/bench/cuda
+    )
+    target_link_libraries(bench_trace_switch PRIVATE
+      benchmark::benchmark
+      benchmark::benchmark_main
+      ${XTGEMM_COMMON_LIBS}
+      CUDA::cublas
+      CUDA::cuda_driver
+    )
+
     # Pool dispatch benchmarks (GPU vs CPU vs Hybrid) (bench/cuda/)
     set(POOL_DISPATCH_DEPS
       ${XTGEMM_TEST_DEPS}

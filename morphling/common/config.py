@@ -312,7 +312,7 @@ def get_logger():
     handler = StreamHandler()
     handler.setLevel(LOG_LEVEL)
     formatter = Formatter(
-        "%(asctime)s - %(className)s.%(funcName)s - %(levelname)s - %(message)s"
+        "%(asctime)s - %(name)s.%(funcName)s - %(levelname)s - %(message)s"
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
