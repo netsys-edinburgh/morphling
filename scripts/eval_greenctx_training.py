@@ -14,6 +14,7 @@ comparison plots.
 from __future__ import annotations
 
 import argparse
+import csv
 from importlib import import_module
 import json
 import logging
@@ -41,6 +42,20 @@ WONG_PALETTE = [
     "#0000FF",
     "#FF0000",
 ]
+
+
+class _LocalMatmulBackend:
+    def __init__(self, torch_mod: Any) -> None:
+        self._torch = torch_mod
+        self._queue: list[Any] = []
+
+    def async_dispatch_matmul(self, mat_a: Any, mat_b: Any) -> None:
+        self._queue.append(self._torch.matmul(mat_a, mat_b.transpose(-2, -1)))
+
+    def wait_matmul(self, _idx: int) -> Any:
+        if not self._queue:
+            raise RuntimeError("wait_matmul called with empty queue")
+        return self._queue.pop(0)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -121,8 +136,7 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=27462,
         help=(
-            "Truncate training to this many trace slots "
-            "(shorter trace length)"
+            "Truncate training to this many trace slots (shorter trace length)"
         ),
     )
     parser.add_argument(
@@ -130,6 +144,11 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=42,
         help="Random seed (legacy alias for --seed-base)",
+    )
+    parser.add_argument(
+        "--skip-violation-analysis",
+        action="store_true",
+        help="Skip generating per-run violation artifacts",
     )
     return parser.parse_args()
 
@@ -143,9 +162,7 @@ def _bootstrap_morphling_runtime() -> None:
 
     if "morphling.runtime" not in sys.modules:
         runtime_mod = types.ModuleType("morphling.runtime")
-        runtime_mod.__path__ = [
-            str(REPO_ROOT / "morphling" / "runtime")
-        ]
+        runtime_mod.__path__ = [str(REPO_ROOT / "morphling" / "runtime")]
         runtime_mod.__package__ = "morphling.runtime"
         sys.modules["morphling.runtime"] = runtime_mod
 
@@ -324,6 +341,7 @@ def _run_mode(
     for step_idx, (input_ids_cpu,) in enumerate(loader):
         input_ids = input_ids_cpu.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
+        step_start_ns = time.perf_counter_ns()
 
         if controller is None:
             start_t = time.perf_counter()
@@ -362,10 +380,13 @@ def _run_mode(
             all_gemm_entries.extend(step_gemm_entries)
 
         wall_time_s = max(time.perf_counter() - start_t, 1e-12)
+        step_end_ns = time.perf_counter_ns()
         tokens_per_sec = float(input_ids.numel()) / wall_time_s
         metrics.append(
             {
                 "step_idx": int(step_idx),
+                "step_start_ns": int(step_start_ns),
+                "step_end_ns": int(step_end_ns),
                 "wall_time_ms": wall_time_s * 1000.0,
                 "loss": float(loss.detach().item()),
                 "tokens_per_sec": tokens_per_sec,
@@ -381,6 +402,102 @@ def _run_mode(
     del model
     torch.cuda.empty_cache()
     return metrics, all_gemm_entries
+
+
+def _write_violation_artifacts(
+    *,
+    run_dir: Path,
+    metrics_df: Any,
+    gemm_log: list[dict[str, Any]],
+    max_sm_count: int,
+) -> None:
+    import importlib.util as _ilu
+
+    _spec = _ilu.spec_from_file_location(
+        "analyze_violations",
+        Path(__file__).resolve().parent / "analyze_violations.py",
+    )
+    _mod = _ilu.module_from_spec(_spec)
+    sys.modules.setdefault("analyze_violations", _mod)
+    _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+    av = _mod
+
+    required_cols = {"step_idx", "step_start_ns", "step_end_ns", "sm_count"}
+    if not required_cols.issubset(set(metrics_df.columns)):
+        raise ValueError(
+            "Missing required columns for violation artifacts: "
+            + ", ".join(sorted(required_cols - set(metrics_df.columns)))
+        )
+
+    step_path = run_dir / "step_boundaries.csv"
+    step_df = metrics_df[
+        ["step_idx", "step_start_ns", "step_end_ns", "sm_count"]
+    ].copy()
+    step_df.columns = ["step", "start_ns", "end_ns", "sm_count"]
+    step_df.to_csv(step_path, index=False)
+
+    gemm_path = run_dir / "gemm_log.csv"
+    epoch_ns = int(step_df["start_ns"].iloc[0]) if len(step_df) > 0 else 0
+    with open(gemm_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "function_name",
+                "start_ns",
+                "end_ns",
+                "duration_ns",
+                "m",
+                "n",
+                "k",
+            ],
+        )
+        writer.writeheader()
+        for entry in gemm_log:
+            start_ns = epoch_ns + int(
+                float(entry.get("start_us", 0.0)) * 1000.0
+            )
+            end_ns = epoch_ns + int(float(entry.get("end_us", 0.0)) * 1000.0)
+            if end_ns < start_ns:
+                end_ns = start_ns
+            writer.writerow(
+                {
+                    "function_name": str(entry.get("phase", "gemm")),
+                    "start_ns": int(start_ns),
+                    "end_ns": int(end_ns),
+                    "duration_ns": int(end_ns - start_ns),
+                    "m": int(entry.get("m", 0)),
+                    "n": int(entry.get("n", 0)),
+                    "k": int(entry.get("k", 0)),
+                }
+            )
+
+    gemms = av.parse_gemm_log(gemm_path)
+    slots = av.parse_step_boundaries(step_path)
+    step_gemms = av.assign_gemms_to_steps(gemms, slots)
+    summaries = av.detect_violations(slots, step_gemms, max_sm_count)
+    violation_time_ns = av.compute_violation_time_ns(summaries, slots)
+
+    report_path = run_dir / "violation_report.txt"
+    with open(report_path, "w", encoding="utf-8") as out:
+        av.write_report(
+            out=out,
+            gemms=gemms,
+            slots=slots,
+            summaries=summaries,
+            violation_time_ns=violation_time_ns,
+            max_sm=max_sm_count,
+            top_n=10,
+            verbose=False,
+        )
+
+    av.write_csv_summary(run_dir / "violation_summary.csv", summaries)
+    av.write_json_summary(
+        run_dir / "violations.json",
+        gemms,
+        slots,
+        summaries,
+        violation_time_ns,
+    )
 
 
 def _timed_rows(df: Any) -> Any:
@@ -558,6 +675,8 @@ def _run_benchmark(args: argparse.Namespace) -> None:
         import torch
         from torch.utils.data import DataLoader, TensorDataset
         from transformers import AutoModelForCausalLM, AutoTokenizer
+        import morphling
+        from morphling.hooks import apply_hooks, set_greenctx
         from morphling.hooks.autograd import get_gemm_log
     except ImportError as exc:
         raise SystemExit(
@@ -587,6 +706,21 @@ def _run_benchmark(args: argparse.Namespace) -> None:
 
     torch.cuda.set_device(0)
     device = torch.device("cuda:0")
+
+    local_backend = _LocalMatmulBackend(torch)
+    orig_linear_forward = torch.nn.Linear.forward
+    orig_functional_linear = torch.nn.functional.linear
+    orig_tensor_matmul = torch.Tensor.__matmul__
+    orig_bmm = torch.bmm
+    hooks_installed = False
+
+    def install_linear_hooks() -> None:
+        nonlocal hooks_installed
+        if hooks_installed:
+            return
+        morphling.set_backend(local_backend)
+        apply_hooks("linear")
+        hooks_installed = True
 
     base_seed = int(args.seed_base)
     if args.seed_base == 42 and args.seed != 42:
@@ -643,6 +777,13 @@ def _run_benchmark(args: argparse.Namespace) -> None:
         run_gemm_log: list[dict[str, Any]] = []
 
         if not args.skip_baseline:
+            collect_baseline_gemm = bool(
+                args.dump_gemm_shapes
+                or (not args.skip_violation_analysis and args.skip_greenctx)
+            )
+            if collect_baseline_gemm:
+                install_linear_hooks()
+                set_greenctx(None, reset_log=True)
             baseline_metrics, baseline_gemm_log = _run_mode(
                 mode_name="baseline",
                 model_name=args.model,
@@ -654,7 +795,7 @@ def _run_benchmark(args: argparse.Namespace) -> None:
                 AutoModelForCausalLM=AutoModelForCausalLM,
                 controller=None,
                 get_gemm_log=get_gemm_log,
-                collect_gemm_entries=args.dump_gemm_shapes,
+                collect_gemm_entries=collect_baseline_gemm,
             )
             run_gemm_log.extend(baseline_gemm_log)
             baseline_df = pd.DataFrame(baseline_metrics)
@@ -673,11 +814,27 @@ def _run_benchmark(args: argparse.Namespace) -> None:
             )
             logging.info("Saved baseline metrics CSV for run %d", run_idx)
 
+            if not args.skip_violation_analysis and args.skip_greenctx:
+                _write_violation_artifacts(
+                    run_dir=run_dir,
+                    metrics_df=baseline_df,
+                    gemm_log=baseline_gemm_log,
+                    max_sm_count=args.total_sms,
+                )
+                logging.info(
+                    "Saved baseline violation artifacts for run %d", run_idx
+                )
+
         if not args.skip_greenctx:
+            collect_greenctx_gemm = bool(
+                args.dump_gemm_shapes or (not args.skip_violation_analysis)
+            )
             trace_path = _resolve_trace_path(args.trace_path)
             ctrl = None
             v2_path: Path | None = None
             try:
+                if collect_greenctx_gemm:
+                    install_linear_hooks()
                 ctrl, v2_path = _prepare_greenctx_controller(
                     trace_path=trace_path,
                     total_sms=args.total_sms,
@@ -686,6 +843,8 @@ def _run_benchmark(args: argparse.Namespace) -> None:
                     GreenContextController=GreenContextController,
                     LdpcTraceAdapter=LdpcTraceAdapter,
                 )
+                if collect_greenctx_gemm:
+                    set_greenctx(ctrl, reset_log=True)
                 greenctx_metrics, greenctx_gemm_log = _run_mode(
                     mode_name="greenctx",
                     model_name=args.model,
@@ -697,9 +856,11 @@ def _run_benchmark(args: argparse.Namespace) -> None:
                     AutoModelForCausalLM=AutoModelForCausalLM,
                     controller=ctrl,
                     get_gemm_log=get_gemm_log,
-                    collect_gemm_entries=args.dump_gemm_shapes,
+                    collect_gemm_entries=collect_greenctx_gemm,
                 )
             finally:
+                if collect_greenctx_gemm:
+                    set_greenctx(None, reset_log=True)
                 if ctrl is not None:
                     ctrl.close()
                 if v2_path is not None and v2_path.exists():
@@ -721,6 +882,15 @@ def _run_benchmark(args: argparse.Namespace) -> None:
                 _summarize_run(greenctx_df)
             )
             logging.info("Saved greenctx metrics CSV for run %d", run_idx)
+
+            if not args.skip_violation_analysis:
+                _write_violation_artifacts(
+                    run_dir=run_dir,
+                    metrics_df=greenctx_df,
+                    gemm_log=greenctx_gemm_log,
+                    max_sm_count=args.total_sms,
+                )
+                logging.info("Saved violation artifacts for run %d", run_idx)
 
         combined_frames = []
         for mode_name, df in results.items():
@@ -775,6 +945,12 @@ def _run_benchmark(args: argparse.Namespace) -> None:
         with open(aggregated_path, "w", encoding="utf-8") as f:
             json.dump(aggregated, f, indent=2)
         logging.info("Saved multi-run aggregation to %s", aggregated_path)
+        if hooks_installed:
+            set_greenctx(None, reset_log=True)
+            torch.nn.Linear.forward = orig_linear_forward
+            torch.nn.functional.linear = orig_functional_linear
+            torch.Tensor.__matmul__ = orig_tensor_matmul
+            torch.bmm = orig_bmm
         return
 
     if args.dump_gemm_shapes:
@@ -791,6 +967,12 @@ def _run_benchmark(args: argparse.Namespace) -> None:
         plt=plt,
         np=np,
     )
+    if hooks_installed:
+        set_greenctx(None, reset_log=True)
+        torch.nn.Linear.forward = orig_linear_forward
+        torch.nn.functional.linear = orig_functional_linear
+        torch.Tensor.__matmul__ = orig_tensor_matmul
+        torch.bmm = orig_bmm
     logging.info("Saved comparison plots in %s", output_dir)
 
 

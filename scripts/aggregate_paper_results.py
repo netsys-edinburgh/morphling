@@ -26,9 +26,7 @@ def std(values: List[float]) -> float:
     return float(math.sqrt(sum((x - mu) ** 2 for x in values) / len(values)))
 
 
-def parse_float(
-    row: Dict[str, str], key: str, default: float = 0.0
-) -> float:
+def parse_float(row: Dict[str, str], key: str, default: float = 0.0) -> float:
     value = row.get(key)
     if value is None or value == "":
         return default
@@ -47,8 +45,8 @@ def is_warmup_row(row: Dict[str, str]) -> bool:
 
 def pick_metrics_csv(run_dir: Path) -> Optional[Path]:
     candidates = [
-        run_dir / "metrics.csv",
         run_dir / "eval_metrics_greenctx.csv",
+        run_dir / "metrics.csv",
         run_dir / "eval_metrics.csv",
     ]
     for path in candidates:
@@ -147,20 +145,36 @@ def aggregate_config(config_dir: Path) -> Dict[str, object]:
     if violation_list:
         violations_per_step: List[float] = []
         violation_times_ns: List[float] = []
+        violation_counts: List[float] = []
+        avg_violation_duration_us: List[float] = []
         for violation in violation_list:
-            slots_with_violations = numeric(
-                violation.get("slots_with_violations", 0)
+            total_violations = numeric(
+                violation.get(
+                    "total_violations",
+                    violation.get("violating_gemms", 0),
+                )
             )
             total_slots = numeric(violation.get("total_slots", 1))
-            violations_per_step.append(
-                slots_with_violations / max(total_slots, 1.0)
-            )
+            violations_per_step.append(total_violations / max(total_slots, 1.0))
             violation_times_ns.append(
                 numeric(violation.get("total_violation_time_ns", 0))
+            )
+            violation_counts.append(total_violations)
+            avg_violation_duration_us.append(
+                numeric(
+                    violation.get(
+                        "avg_violation_duration_us",
+                        0,
+                    )
+                )
             )
 
         aggregate["violations_per_step_mean"] = mean(violations_per_step)
         aggregate["total_violation_time_ns_mean"] = mean(violation_times_ns)
+        aggregate["total_violations_mean"] = mean(violation_counts)
+        aggregate["avg_violation_duration_us_mean"] = mean(
+            avg_violation_duration_us
+        )
 
     aggregate["n_runs"] = len(metrics_list)
     return aggregate
@@ -178,7 +192,7 @@ def numeric(value: object) -> float:
 
 
 def add_overhead_decomposition(
-    paper_data: Dict[str, Dict[str, object]]
+    paper_data: Dict[str, Dict[str, object]],
 ) -> None:
     for config in ["without_ctrl", "with_ctrl"]:
         raw = paper_data.get(config)
@@ -195,9 +209,58 @@ def add_overhead_decomposition(
         raw["swap_overhead_ms_per_step"] = swap_overhead_ms
         raw["violation_time_ms_per_step"] = violation_time_ms
         raw["combined_overhead_ms"] = swap_overhead_ms + violation_time_ms
-        raw["avg_swap_overhead_us"] = (
-            swap_overhead_us_mean / max(swap_count, 1.0)
+        raw["avg_swap_overhead_us"] = swap_overhead_us_mean / max(
+            swap_count, 1.0
         )
+
+
+def _nearest_key(value: float, keys: List[int]) -> int:
+    if not keys:
+        return 0
+    return min(keys, key=lambda k: abs(k - value))
+
+
+def _load_sm_counts_from_metrics(csv_path: Path) -> List[float]:
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = [row for row in reader if row and not is_warmup_row(row)]
+    return [parse_float(row, "sm_count") for row in rows if "sm_count" in row]
+
+
+def add_gflops_estimates(
+    paper_data: Dict[str, Dict[str, object]],
+    results_dir: Path,
+    gflops_per_step: Dict[str, object],
+) -> None:
+    gflops_lookup: Dict[int, float] = {}
+    for key, payload in gflops_per_step.items():
+        try:
+            sm_key = int(key)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            gflops_lookup[sm_key] = numeric(payload.get("total_gflops", 0))
+
+    benchmark_keys = sorted(gflops_lookup.keys())
+    for config in ["without_ctrl", "with_ctrl"]:
+        config_dir = results_dir / config
+        gflops_samples: List[float] = []
+        for run_dir in sorted(
+            [path for path in config_dir.glob("run_*") if path.is_dir()]
+        ):
+            csv_path = pick_metrics_csv(run_dir)
+            if csv_path is None:
+                continue
+            for sm_count in _load_sm_counts_from_metrics(csv_path):
+                nearest = _nearest_key(sm_count, benchmark_keys)
+                if nearest in gflops_lookup:
+                    gflops_samples.append(gflops_lookup[nearest])
+
+        if config not in paper_data or not isinstance(paper_data[config], dict):
+            paper_data[config] = {}
+        payload = paper_data[config]
+        payload["gflops_mean"] = mean(gflops_samples)
+        payload["gflops_mean_std"] = std(gflops_samples)
 
 
 def main() -> None:
@@ -223,9 +286,10 @@ def main() -> None:
         with open(args.gflops, encoding="utf-8") as f:
             gflops_data = json.load(f)
         if isinstance(gflops_data, dict):
-            paper_data["gflops_benchmark"] = gflops_data.get(
-                "per_step_aggregate", {}
-            )
+            per_step = gflops_data.get("per_step_aggregate", {})
+            paper_data["gflops_benchmark"] = per_step
+            if isinstance(per_step, dict):
+                add_gflops_estimates(paper_data, results_dir, per_step)
 
     add_overhead_decomposition(paper_data)
 

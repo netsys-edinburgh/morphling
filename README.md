@@ -112,6 +112,101 @@ echo "All done. Now test from local with: nc -vz <server_ip> 443"
 wait
 ```
 
+## Paper evaluation pipeline (single-node RAN control + training)
+
+This section is the human-reproducible path for generating the A/B evaluation
+artifacts used by the paper subsection (Figure A, Figure B, and overhead table).
+
+### Prerequisites
+
+- Linux host with Docker and NVIDIA Container Toolkit (`--gpus all` required)
+- GPU supported by this repo's runtime path (the current run used an NVIDIA L40S)
+- Input traces present in `data/`:
+  - `data/ldpc_trace_with_ctrl.csv`
+  - `data/ldpc_trace_without_ctrl.csv`
+- Network access for HuggingFace model/tokenizer download on first run
+
+### 1) Validate trace inputs
+
+```bash
+python3 scripts/validate_traces.py --data-dir data
+```
+
+Expected result: both traces print `PASSED`.
+
+### 2) Run the full pipeline
+
+```bash
+bash scripts/run_paper_experiments.sh
+```
+
+Expected completion marker:
+
+```text
+=== Done! Results in results ===
+```
+
+### 3) Verify generated artifacts
+
+Core outputs:
+
+- `results/paper_data.json`
+- `results/table_overhead.json`
+- `results/swap_timing_validation.json`
+- `figures/fig_a_sm_timeline.pdf`
+- `figures/fig_b_training_metrics.pdf`
+- `figures/table_overhead.tex`
+
+Per-run violation artifacts (for each run under both arms):
+
+- `step_boundaries.csv`
+- `gemm_log.csv`
+- `violations.json`
+- `violation_summary.csv`
+- `violation_report.txt`
+
+Quick check:
+
+```bash
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+paper = json.loads(Path("results/paper_data.json").read_text())
+for arm in ("without_ctrl", "with_ctrl"):
+    p = paper[arm]
+    print(
+        arm,
+        "runs=", p.get("n_runs"),
+        "tokens/s=", round(float(p.get("tokens_per_sec_mean", 0.0)), 3),
+        "step_ms=", round(float(p.get("step_time_ms_mean", 0.0)), 3),
+        "gflops=", round(float(p.get("gflops_mean", 0.0)), 3),
+    )
+PY
+```
+
+This pipeline now writes per-run violation-analysis artifacts directly from
+`scripts/eval_greenctx_training.py` output:
+
+- `step_boundaries.csv` (step-level wall-clock boundaries + `sm_count`)
+- `gemm_log.csv` (autograd GEMM timing converted to ns)
+- `violations.json` (machine-readable summary)
+- `violation_summary.csv` and `violation_report.txt`
+
+`scripts/aggregate_paper_results.py` consumes those artifacts to populate
+overhead and violation fields in `results/paper_data.json`, including
+`total_violations_mean`, `avg_violation_duration_us_mean`, and
+`combined_overhead_ms`.
+
+For the latest successful run in this worktree, both arms completed with
+`n_runs = 5`, and all expected outputs above were generated.
+
+Key CLI parameters for `scripts/eval_greenctx_training.py` are:
+
+- `--trace-path` (not `--trace`)
+- `--num-steps` (not `--steps`)
+- `--skip-violation-analysis` to disable per-run violation outputs
+
 ## Troubleshooting
 
 ### Version mismatch or missing libraries
