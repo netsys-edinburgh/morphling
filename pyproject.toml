@@ -8,6 +8,49 @@ requires = [
 ]
 build-backend = "setuptools.build_meta"
 
+[project]
+name = "morphling"
+version = "0.0.1"
+readme = {file = "README.md", content-type = "text/markdown"}
+dynamic = ["dependencies"]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "accelerate>=0.27.2",
+    "transformers>=4.37.2",
+    "parameterized",
+]
+
+[project.scripts]
+morphling_emulator = "morphling.entrypoint.emulator:main"
+morphling_device_config = "morphling.entrypoint.generate_device_config:main"
+morphling_device = "morphling.entrypoint.run_device:main"
+morphling_cmd = "morphling.entrypoint.cmdline:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+morphling = [
+    "py.typed",
+    "*.so",
+    "morphling_worker_server",
+]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.cmdclass]
+build_ext = "_setup_helpers.cmake_build_ext"
+build_package_protos = "_setup_helpers.BuildPackageProtos"
+install = "_setup_helpers.CustomInstall"
+sdist = "_setup_helpers.CustomBuild"
+bdist_wheel = "_setup_helpers.CustomBdistWheel"
+
 [tool.ruff]
 line-length = 80
 exclude = []
@@ -38,4 +81,3 @@ ignore = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-
