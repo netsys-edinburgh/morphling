@@ -41,7 +41,7 @@ from transformers import PreTrainedModel
 from morphling._C import ArcherTensorHandle, MemoryManagerClient, set_tensor_shm
 
 # from morphling._intercept import MemoryManagerClient
-from morphling.common import *
+from morphling.common import EmulatorConfig
 from morphling.utils import get_checkpoint_paths
 
 

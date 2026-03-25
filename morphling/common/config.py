@@ -14,7 +14,10 @@ import psutil
 import torch
 from transformers import HfArgumentParser
 
-from morphling.common.types_and_defs import *
+from morphling.common.types_and_defs import (
+    compute_pin_offsets,
+    compute_shm_offsets,
+)
 
 KB = 1024
 MB = 1024 * KB
