@@ -1,5 +1,16 @@
+import sys
+
+import pytest
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM
+
+try:
+    from transformers import AutoConfig, AutoModelForCausalLM
+
+    _TRANSFORMERS_IMPORT_ERROR = None
+except (TypeError, ImportError) as e:
+    AutoConfig = None
+    AutoModelForCausalLM = None
+    _TRANSFORMERS_IMPORT_ERROR = e
 
 
 def torch_decorator(func, funcname=None):
@@ -8,10 +19,6 @@ def torch_decorator(func, funcname=None):
         return func(*args, **kwargs)
 
     return wrapper
-
-
-a = torch.ones((1, 3))
-b = torch.ones((1, 3))
 
 
 pyobj_keywords = [
@@ -45,46 +52,55 @@ pyobj_keywords = [
 ]
 
 
-model_name = "facebook/opt-1.3b"
-config = AutoConfig.from_pretrained(model_name)
-print(config)
-config.hidden_size = 1
-config.num_attention_heads = 1
-config.word_embed_proj_dim = 1
-model = AutoModelForCausalLM.from_config(config)
-
-for name, param in model.named_parameters():
-    # print(name)
-    if "embed" in name:
-        print("param byte size: ", param.numel() * param.element_size())
-        continue
-
-    shape = param.shape
-
-    # set shape size to all 1s
-    shape = [1 for _ in shape]
-    param.data = torch.rand(shape)
-
-
-# for all functions in torch.Tensor, add decorator
-functions = [f for f in dir(torch.Tensor) if callable(getattr(torch.Tensor, f))]
-for f in functions:
-    if f in pyobj_keywords:
-        continue
-    func = getattr(torch.Tensor, f)
-    setattr(torch.Tensor, f, torch_decorator(func, f))
-
-# for all functions in torch, add decorator
-functions = [f for f in dir(torch) if callable(getattr(torch, f))]
-for f in functions:
-    if f in pyobj_keywords:
-        continue
-    func = getattr(torch, f)
-    setattr(torch, f, torch_decorator(func, f))
-
-inputs = torch.zeros((1, 1), dtype=torch.long)
-output = model.generate(
-    inputs, do_sample=True, max_length=50, pad_token_id=50256
+@pytest.mark.skipif(
+    _TRANSFORMERS_IMPORT_ERROR is not None,
+    reason=(
+        "transformers import is incompatible with current environment: "
+        f"{_TRANSFORMERS_IMPORT_ERROR}"
+    ),
 )
+@pytest.mark.skipif(
+    sys.version_info >= (3, 12),
+    reason="global torch monkey-patching in this test is incompatible with Python 3.12",
+)
+def test_empty_param_generate():
+    a = torch.ones((1, 3))
+    b = torch.ones((1, 3))
+    assert a.shape == b.shape
 
-# print(output)
+    model_name = "facebook/opt-1.3b"
+    config = AutoConfig.from_pretrained(model_name)
+    config.hidden_size = 1
+    config.num_attention_heads = 1
+    config.word_embed_proj_dim = 1
+    model = AutoModelForCausalLM.from_config(config)
+
+    for name, param in model.named_parameters():
+        if "embed" in name:
+            continue
+
+        shape = [1 for _ in param.shape]
+        param.data = torch.rand(shape)
+
+    tensor_functions = [
+        f for f in dir(torch.Tensor) if callable(getattr(torch.Tensor, f))
+    ]
+    for f in tensor_functions:
+        if f in pyobj_keywords:
+            continue
+        func = getattr(torch.Tensor, f)
+        setattr(torch.Tensor, f, torch_decorator(func, f))
+
+    torch_functions = [f for f in dir(torch) if callable(getattr(torch, f))]
+    for f in torch_functions:
+        if f in pyobj_keywords:
+            continue
+        func = getattr(torch, f)
+        setattr(torch, f, torch_decorator(func, f))
+
+    inputs = torch.zeros((1, 1), dtype=torch.long)
+    output = model.generate(
+        inputs, do_sample=True, max_length=50, pad_token_id=50256
+    )
+
+    assert output is not None
