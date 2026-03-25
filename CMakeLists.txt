@@ -140,6 +140,12 @@ include_directories(
 
 file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
 file(GLOB MEMORY_SRC "csrc/memory/*.cpp")
+# CORE_SRC split: _C only needs the lightweight utils subset;
+# _Msg needs the full core (including env_cfg which pulls in backend vtables)
+set(CORE_UTILS_SRC
+  "csrc/core/cuda_utils.cpp"
+  "csrc/core/logger.cpp"
+)
 file(GLOB CORE_SRC "csrc/core/*.cpp")
 file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
 file(GLOB SCHEDULER_SRC "csrc/scheduler/*.cpp")
@@ -178,14 +184,11 @@ get_torch_gpu_compiler_flags(MORPHLING_GPU_FLAGS ${MORPHLING_GPU_LANG})
 # _C extension
 #
 set(MORPHLING_EXT_SRC
-  ${CORE_SRC}
+  ${CORE_UTILS_SRC}
   ${BASE_SRC}
   ${TIMER_SRC}
+  ${INTERCEPT_SRC}
   ${PROTO_SRCS}
-  "csrc/memory/shared_memory.cpp"
-  "csrc/backend/sched_policy.cpp"
-  "csrc/backend/device_tracker.cpp"
-  "csrc/backend/partition_tracker.cpp"
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
