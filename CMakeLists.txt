@@ -182,6 +182,7 @@ set(MORPHLING_EXT_SRC
   ${BASE_SRC}
   ${TIMER_SRC}
   ${INTERCEPT_SRC}
+  ${CHECKPOINT_SRC}
   ${PROTO_SRCS}
   "csrc/python/checkpoint_py.cpp"
 )
