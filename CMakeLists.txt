@@ -17,12 +17,7 @@ set(OPTIMIZATION_FLAGS "-O3 -march=native -mtune=native -funroll-loops -mavx -ma
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OPTIMIZATION_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OPTIMIZATION_FLAGS} -g3 -Wall")
 
-# Additional Debug Info (without optimizations interference)
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g3 -O0 -Wall")
 
-# add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0) # needed for torch backward compatibility
-
-# Set c++ 17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_ARCHITECTURES native)
 
@@ -33,22 +28,6 @@ set(BUILD_TESTING OFF)
 set(ENABLE_TESTS OFF)
 
 message(STATUS "CMAKE_BINARY_DIR: ${CMAKE_BINARY_DIR}")
-
-# # Specify the directory where the UMPIRE project will be cloned and built
-# set(EXTERNAL_DIR ${CMAKE_BINARY_DIR}/external)
-# set(UMPIRE_REPO_URL https://github.com/LLNL/Umpire.git)
-# set(UMPIRE_REPO_TAG v2024.07.0)
-
-# clone_and_build_external_project(${EXTERNAL_DIR}
-#   umpire
-#   ${UMPIRE_REPO_URL}
-#   ${UMPIRE_REPO_TAG}
-#   -DENABLE_TESTS=OFF -DENABLE_CUDA=ON -DENABLE_OPENMP=ON -DENABLE_MPI=ON
-#   -DUMPIRE_ENABLE_IPC_SHARED_MEMORY=ON -DUMPIRE_ENABLE_ASAN=ON -DUMPIRE_ENABLE_NUMA=ON -DUMPIRE_ENABLE_LOGGING=ON
-#   -DBLT_CXX_STD=c++17 -DCMAKE_CUDA_STANDARD=17 -DUMPIRE_ENABLE_GMOCK=OFF -DUMPIRE_ENABLE_FORTRAN=OFF
-# )
-# set(UMPIRE_INCLUDE_DIRS ${EXTERNAL_DIR}/umpire/src ${EXTERNAL_DIR}/umpire/build/include)
-# set(UMPIRE_LIBRARY_DIRS ${EXTERNAL_DIR}/umpire/build/lib)
 
 set(BUILD_UNIT_TESTS OFF)
 set(BUILD_EXAMPLES OFF)
@@ -153,36 +132,6 @@ message(STATUS "_PROTOBUF_PROTOC: ${_PROTOBUF_PROTOC}")
 
 message(STATUS "Python3_LIBRARIES: ${Python3_LIBRARIES}")
 
-# # Path to .proto files
-# set(PROTO_FILES ${CMAKE_SOURCE_DIR}/proto/morphling.proto)
-
-# # Specify where the generated files will be located
-# set(PROTO_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
-
-# # Ensure the generated directory exists
-# file(MAKE_DIRECTORY ${PROTO_GEN_DIR})
-
-# # Generate the protobuf (.pb.cc and .pb.h) and gRPC files (.grpc.pb.cc and .grpc.pb.h)
-# foreach(proto_file ${PROTO_FILES})
-# get_filename_component(proto_filename ${proto_file} NAME_WE)
-
-# add_custom_command(
-# OUTPUT ${PROTO_GEN_DIR}/${proto_filename}.pb.cc ${PROTO_GEN_DIR}/${proto_filename}.pb.h
-# ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.cc ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.h
-# COMMAND ${PROTOC_EXECUTABLE}
-# ARGS --proto_path=${CMAKE_SOURCE_DIR}/proto
-# --cpp_out=${PROTO_GEN_DIR}
-# --grpc_out=${PROTO_GEN_DIR}
-# --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN_EXECUTABLE}
-# ${proto_file}
-# DEPENDS ${proto_file}
-# COMMENT "Generating C++ code from ${proto_file}"
-# )
-
-# # Add the generated files to the list of sources
-# list(APPEND PROTO_SRCS ${PROTO_GEN_DIR}/${proto_filename}.pb.cc)
-# list(APPEND PROTO_SRCS ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.cc)
-# endforeach()
 add_custom_target(
   generate_proto_files ALL
   DEPENDS ${PROTO_SRCS} ${PROTO_PY}
