@@ -1,3 +1,7 @@
+import pytest
+
+pytest.importorskip("jax", reason="optional dependency jax is not installed")
+
 import jax
 import jaxlib
 import jaxlib.xla_extension
