@@ -189,6 +189,8 @@ class cmake_build_ext(build_ext):
             )
             print(self.build_temp, ext_target_name)
 
+        self.copy_extensions_to_source()
+
     def copy_extensions_to_source(self) -> None:
         """Copy built .so extensions into the source package directory.
 
