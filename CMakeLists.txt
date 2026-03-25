@@ -179,11 +179,18 @@ get_torch_gpu_compiler_flags(MORPHLING_GPU_FLAGS ${MORPHLING_GPU_LANG})
 #
 set(MORPHLING_EXT_SRC
   ${CORE_SRC}
-  ${BACKEND_SRC}
   ${BASE_SRC}
   ${TIMER_SRC}
   ${PROTO_SRCS}
   "csrc/memory/shared_memory.cpp"
+  "csrc/backend/sched_policy.cpp"
+  "csrc/backend/device_tracker.cpp"
+  "csrc/backend/partition_tracker.cpp"
+  "csrc/backend/matrix_partition.cpp"
+  "csrc/backend/serialization_buffer.cpp"
+  "csrc/backend/scatter_gather_buffer.cpp"
+  "csrc/backend/server_base.cpp"
+  "csrc/backend/proto_base.cpp"
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
