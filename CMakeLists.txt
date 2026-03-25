@@ -182,8 +182,10 @@ set(MORPHLING_EXT_SRC
   ${BASE_SRC}
   ${TIMER_SRC}
   ${INTERCEPT_SRC}
-  ${CHECKPOINT_SRC}
   ${PROTO_SRCS}
+  "csrc/checkpoint/archer_tensor_handle.cpp"
+  "csrc/checkpoint/checkpoint_handle.cpp"
+  "csrc/memory/shared_memory.cpp"
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
