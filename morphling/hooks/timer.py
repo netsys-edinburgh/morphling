@@ -1,3 +1,5 @@
+"""Timer decorator for measuring function execution time."""
+
 import time
 
 import torch

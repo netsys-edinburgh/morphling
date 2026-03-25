@@ -1,3 +1,5 @@
+"""Base backend classes and message types for distributed matmul operations."""
+
 from abc import ABC, abstractmethod
 from typing import List
 

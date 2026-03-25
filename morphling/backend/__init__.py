@@ -1,3 +1,5 @@
+"""Backend module for distributed matrix multiplication via various protocols."""
+
 from morphling._Msg import (
     AMQPBackend,
     AMQPWorker,
