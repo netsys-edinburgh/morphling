@@ -2,10 +2,10 @@
 
 #include <chrono>
 
-#include "base/my_uuid.h"
 #include "common/generator.h"
 #include "common/stats.h"
 #include "device_tracker.h"
+#include "muduo_base/my_uuid.h"
 #include "network/eventloop_libevent.h"
 #include "network/listener_libevent.h"
 #include "partition_tracker.h"
@@ -31,8 +31,7 @@ static std::atomic<int> g_thread_core_counter(0);
 static void PinThreadToNextAvailableCore() {
   int num_cpus = morphling::GetOnlineCoreCount();
   int core_id =
-      g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) %
-      num_cpus;
+      g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) % num_cpus;
   morphling::PinThreadToCore(core_id);
 }
 
@@ -769,8 +768,8 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
       // Check if partitions are stuck in RUNNING state
       if (total_running > 0 && total_running == rsp_cb_counts_[oid] &&
           total_idle == 0) {
-        LOG_ERROR << "[WaitMatMul] ⚠️  STUCK PARTITIONS: All " << total_running
-                  << " partitions stuck in RUNNING state for "
+        LOG_ERROR << "[WaitMatMul] ⚠️  STUCK PARTITIONS: All "
+                  << total_running << " partitions stuck in RUNNING state for "
                   << poll_count * 100 << "ms";
         LOG_ERROR << "[WaitMatMul] Possible causes: 1) Devices not responding "
                      "2) Network issues 3) Devices processing too slowly";

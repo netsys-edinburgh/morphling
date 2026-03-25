@@ -1,7 +1,7 @@
 #include "service/proxy_base.h"
 
-#include "base/my_uuid.h"
 #include "common/generator.h"
+#include "muduo_base/my_uuid.h"
 
 using namespace std;
 using namespace uevent;

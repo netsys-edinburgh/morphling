@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-#include "base/logging.h"
+#include "muduo_base/logging.h"
 #include "scheduler/gpu_worker.h"
 #include "utils/cuda_utils.h"
 

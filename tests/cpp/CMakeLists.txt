@@ -86,7 +86,7 @@ if(ENABLE_XTGEMM_TESTS)
     find_package(Torch REQUIRED)
 
     # Base logging sources
-    file(GLOB BASE_LOGGING_SRC ${PROJECT_ROOT}/csrc/base/*.cc)
+    file(GLOB BASE_LOGGING_SRC ${PROJECT_ROOT}/external/muduo_base/*.cc)
 
     # Source dependencies for XtGemm tests
     set(XTGEMM_TEST_DEPS
@@ -101,6 +101,7 @@ if(ENABLE_XTGEMM_TESTS)
 
     set(XTGEMM_INCLUDE_DIRS
       ${PROJECT_ROOT}/csrc
+      ${PROJECT_ROOT}/external
       ${TORCH_INCLUDE_DIRS}
     )
 
@@ -242,7 +243,7 @@ add_test(NAME test_worker_base COMMAND test_worker_base)
 # ============================================================================
 set(PROJECT_ROOT_GTP ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
-file(GLOB GTP_BASE_LOGGING_SRC ${PROJECT_ROOT_GTP}/csrc/base/*.cc)
+file(GLOB GTP_BASE_LOGGING_SRC ${PROJECT_ROOT_GTP}/external/muduo_base/*.cc)
 
 add_executable(test_green_trace_parser
   unit/worker/test_green_trace_parser.cpp
@@ -252,6 +253,7 @@ add_executable(test_green_trace_parser
 )
 target_include_directories(test_green_trace_parser PRIVATE
   ${PROJECT_ROOT_GTP}/csrc
+  ${PROJECT_ROOT_GTP}/external
 )
 target_link_libraries(test_green_trace_parser PRIVATE
   GTest::gtest
@@ -271,7 +273,7 @@ if(ENABLE_GREEN_CTX_TESTS)
 
   if(CUDAToolkit_FOUND AND TARGET CUDA::cuda_driver)
     set(PROJECT_ROOT_GCR ${CMAKE_CURRENT_SOURCE_DIR}/../..)
-    file(GLOB GCR_BASE_LOGGING_SRC ${PROJECT_ROOT_GCR}/csrc/base/*.cc)
+    file(GLOB GCR_BASE_LOGGING_SRC ${PROJECT_ROOT_GCR}/external/muduo_base/*.cc)
 
     set(GCR_SOURCES
       ${PROJECT_ROOT_GCR}/csrc/scheduler/green_context_runtime.cpp
@@ -287,6 +289,7 @@ if(ENABLE_GREEN_CTX_TESTS)
     )
     target_include_directories(test_green_context_runtime PRIVATE
       ${PROJECT_ROOT_GCR}/csrc
+      ${PROJECT_ROOT_GCR}/external
     )
     target_link_libraries(test_green_context_runtime PRIVATE
       GTest::gtest
