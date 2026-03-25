@@ -6,7 +6,9 @@
 #include "archer_tensor_handle.h"
 
 #include <cuda_runtime_api.h>
+#include <sys/stat.h>
 #include <torch/script.h>
+#include <unistd.h>
 
 #include "core/logger.h"
 
