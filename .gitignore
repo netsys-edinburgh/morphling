@@ -538,7 +538,15 @@ compile_commands.json
 
 # Temporary files
 *.tmp 
-*.log 
+*.log
+
+# Development artifacts
+*.patch
+.tmp_*/
+!tests/**/*.log
+
+# PRD drafts (local planning)
+PRD_*.md
 *.bak 
 *.swp 
 
