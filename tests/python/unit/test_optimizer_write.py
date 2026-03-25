@@ -12,12 +12,12 @@ class Net(nn.Module):
         return self.fc(x)
 
 
-model = Net()
-optimizer = SGD(model.parameters(), lr=0.1)
-torch.save(optimizer, "optimizer.pt")
+def test_optimizer_write(tmp_path):
+    model = Net()
+    optimizer = SGD(model.parameters(), lr=0.1)
+    torch.save(optimizer, tmp_path / "optimizer.pt")
 
-# run one training step
-optimizer.zero_grad()
-output = model(torch.randn(1, 1))
-output.backward()
-optimizer.step()
+    optimizer.zero_grad()
+    output = model(torch.randn(1, 1))
+    output.backward()
+    optimizer.step()
