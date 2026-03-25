@@ -10,7 +10,7 @@
 #include <thread>
 #include <unordered_set>
 
-#include "utils/noncopyable.h"
+#include "core/noncopyable.h"
 
 // Async completion callback type
 using TaskCallback = std::function<void(const std::string& task_id)>;

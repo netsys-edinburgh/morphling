@@ -11,10 +11,10 @@
 #include <vector>
 
 #include "amqp_base.h"
-#include "common/amqp.h"
-#include "common/generator.h"
-#include "common/pytorch_defs.h"
-#include "utils/logger.h"
+#include "core/amqp.h"
+#include "core/generator.h"
+#include "core/pytorch_defs.h"
+#include "core/logger.h"
 
 template <typename T>
 std::vector<std::vector<T>> cartesian_product(const std::vector<T>& list) {

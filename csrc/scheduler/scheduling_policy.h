@@ -2,7 +2,7 @@
 
 #include <tuple>
 
-#include "common/types_and_defs.h"
+#include "core/types_and_defs.h"
 
 #define SCHEDULING_POLICY_VALUES(X, EnumType) \
   X(kRoundRobinGemm, EnumType)               \

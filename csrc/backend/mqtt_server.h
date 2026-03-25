@@ -1,7 +1,7 @@
 #pragma once
 
-#include "common/generator.h"
-#include "common/pytorch_defs.h"
+#include "core/generator.h"
+#include "core/pytorch_defs.h"
 #include "mqtt_base.h"
 #include "server_base.h"
 

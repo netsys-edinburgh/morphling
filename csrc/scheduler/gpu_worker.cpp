@@ -8,7 +8,7 @@
 #include <thread>
 
 #include "sliding_window_tracker.h"
-#include "utils/logger.h"
+#include "core/logger.h"
 
 namespace {
 constexpr size_t kDefaultPoolBytes = 256ull * 1024 * 1024;  // 256 MB

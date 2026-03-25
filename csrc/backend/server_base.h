@@ -11,7 +11,7 @@
 #include <mutex>
 #include <unordered_map>
 
-#include "common/types_and_defs.h"
+#include "core/types_and_defs.h"
 #include "global_api.pb.h"
 #include "morphling.pb.h"
 #include "network/uevent.h"

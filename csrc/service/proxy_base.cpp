@@ -1,6 +1,6 @@
 #include "service/proxy_base.h"
 
-#include "common/generator.h"
+#include "core/generator.h"
 #include "muduo_base/my_uuid.h"
 
 using namespace std;

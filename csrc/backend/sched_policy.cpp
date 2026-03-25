@@ -5,7 +5,7 @@
 
 #include "device_tracker.h"
 #include "partition_tracker.h"
-#include "utils/logger.h"
+#include "core/logger.h"
 
 namespace morphling {
 namespace backend {

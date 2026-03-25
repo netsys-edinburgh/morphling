@@ -12,8 +12,8 @@
 // #include <rttr/type>
 #include <string>
 
-#include "common/types_and_defs.h"
-#include "utils/logger.h"
+#include "core/types_and_defs.h"
+#include "core/logger.h"
 
 void* OpenSharedMemory(const char* name, size_t size);
 void CloseSharedMemory(void* ptr, size_t size);

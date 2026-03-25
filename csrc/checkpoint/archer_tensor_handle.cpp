@@ -8,7 +8,7 @@
 #include <cuda_runtime_api.h>
 #include <torch/script.h>
 
-#include "utils/logger.h"
+#include "core/logger.h"
 
 const int c_block_size = 128 * 1024;
 const int c_io_queue_depth = 8;

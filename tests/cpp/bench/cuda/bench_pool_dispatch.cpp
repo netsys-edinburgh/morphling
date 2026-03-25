@@ -6,12 +6,12 @@
 #include <string>
 #include <vector>
 
-#include "common/types_and_defs.h"
+#include "core/types_and_defs.h"
 #include "scheduler/cpu_worker.h"
 #include "scheduler/gpu_worker.h"
 #include "scheduler/sliding_window_tracker.h"
-#include "utils/logger.h"
-#include "utils/thread_affinity.h"
+#include "core/logger.h"
+#include "core/thread_affinity.h"
 
 // ---- RAII helpers --------------------------------------------------------
 

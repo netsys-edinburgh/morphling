@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "utils/noncopyable.h"
+#include "core/noncopyable.h"
 
 struct DeviceConfig {
   int device_id;

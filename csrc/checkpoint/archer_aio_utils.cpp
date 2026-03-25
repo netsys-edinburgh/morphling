@@ -10,7 +10,7 @@
 #include <cmath>
 #include <future>
 
-#include "utils/logger.h"
+#include "core/logger.h"
 
 const size_t kBlockSize = 1 * 1024 * 1024;
 const size_t kQueueDepth = std::thread::hardware_concurrency() /
