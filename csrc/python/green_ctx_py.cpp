@@ -63,6 +63,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def_readwrite("roles", &GreenContextRuntime::Options::roles);
 
   py::class_<SwapStats>(m, "SwapStats")
+      .def_readonly("switch_count", &SwapStats::switch_count)
       .def_readonly("count", &SwapStats::count)
       .def_readonly("total_overhead_us", &SwapStats::total_overhead_us)
       .def("avg_overhead_us", &SwapStats::avg_overhead_us);

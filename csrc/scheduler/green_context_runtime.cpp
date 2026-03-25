@@ -317,19 +317,20 @@ int GreenContextRuntime::ActivateSmForThread(int num_sms) {
     return active_sm_count_.load(std::memory_order_relaxed);
   }
 
-  // Push the green context onto the CUDA context stack
-  auto t_start = std::chrono::steady_clock::now();
-  CHECK_CU_RESULT(cuCtxSetCurrent(it->second.cuda_ctx));
-  auto t_end = std::chrono::steady_clock::now();
-
-  int prev = active_sm_count_.exchange(num_sms, std::memory_order_relaxed);
+  int prev = active_sm_count_.load(std::memory_order_relaxed);
   if (prev != num_sms) {
+    auto t_start = std::chrono::steady_clock::now();
+    CHECK_CU_RESULT(cuCtxSetCurrent(it->second.cuda_ctx));
+    auto t_end = std::chrono::steady_clock::now();
     auto elapsed_us =
         std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start)
             .count();
+    active_sm_count_.store(num_sms, std::memory_order_relaxed);
     switch_count_.fetch_add(1, std::memory_order_relaxed);
     swap_count_.fetch_add(1, std::memory_order_relaxed);
     swap_overhead_us_.fetch_add(elapsed_us, std::memory_order_relaxed);
+  } else {
+    CHECK_CU_RESULT(cuCtxSetCurrent(it->second.cuda_ctx));
   }
   return prev;
 }
@@ -354,7 +355,10 @@ void GreenContextRuntime::DeactivateForThread(int prev_sm_count) {
 
 SwapStats GreenContextRuntime::GetAndResetSwapStats() {
   SwapStats stats;
-  stats.count = swap_count_.exchange(0, std::memory_order_relaxed);
+  const int64_t switch_count =
+      swap_count_.exchange(0, std::memory_order_relaxed);
+  stats.switch_count = switch_count;
+  stats.count = switch_count;
   stats.total_overhead_us =
       swap_overhead_us_.exchange(0, std::memory_order_relaxed);
   return stats;
