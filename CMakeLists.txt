@@ -51,17 +51,8 @@ else()
   message(WARNING "CONDA_PREFIX is not set. Make sure your Conda environment is activated.")
 endif()
 
-# Retrieve the Python version
-# message(STATUS "Python version: ${PYTHON_VERSION_STRING}")
-find_package(PythonInterp REQUIRED)
-
 # find hiredis
 # find_package(hiredis REQUIRED)
-
-# Retrieve the Python major and minor version
-string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\..*" _ ${PYTHON_VERSION_STRING})
-set(Python_VERSION ${CMAKE_MATCH_1}.${CMAKE_MATCH_2})
-message(STATUS "Python version: ${Python_VERSION}")
 
 # Supported python versions.  These versions will be searched in order, the
 # first match will be selected.  These should be kept in sync with setup.py.
