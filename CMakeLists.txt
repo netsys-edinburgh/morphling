@@ -181,16 +181,8 @@ set(MORPHLING_EXT_SRC
   ${CORE_SRC}
   ${BASE_SRC}
   ${TIMER_SRC}
+  ${INTERCEPT_SRC}
   ${PROTO_SRCS}
-  "csrc/memory/shared_memory.cpp"
-  "csrc/backend/sched_policy.cpp"
-  "csrc/backend/device_tracker.cpp"
-  "csrc/backend/partition_tracker.cpp"
-  "csrc/backend/matrix_partition.cpp"
-  "csrc/backend/serialization_buffer.cpp"
-  "csrc/backend/scatter_gather_buffer.cpp"
-  "csrc/backend/server_base.cpp"
-  "csrc/backend/proto_base.cpp"
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
@@ -214,8 +206,6 @@ define_gpu_extension_target(
   # INCLUDE_DIRECTORIES ${MORPHLING_EXT_INCLUDE_DIRS}
   WITH_SOABI
 )
-# Allow _C to resolve undefined symbols lazily at runtime from _Msg
-target_link_options(_C PRIVATE "-Wl,-z,lazy")
 
 
 set(MORPHLING_MSG_SRC
