@@ -1,0 +1,25 @@
+name: Numerical Consistency Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ['**']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-tests:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Install test dependencies
+        run: pip install pytest pytest-timeout torch numpy
+      - name: Run smoke tests
+        run: pytest tests/python/ -m smoke --timeout=120 -v --tb=short
