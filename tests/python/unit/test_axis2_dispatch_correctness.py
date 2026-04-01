@@ -8,8 +8,8 @@ placement, and dispatch equivalence on CPU-only paths.
 
 from typing import List, Tuple
 
-import torch
 import pytest
+import torch
 
 from tests.python.testutils.determinism import set_all_seeds
 from tests.python.testutils.numerical import (

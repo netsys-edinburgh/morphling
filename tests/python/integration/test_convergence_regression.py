@@ -7,8 +7,8 @@ integration test.
 
 from typing import Callable, cast
 
-import torch
 import pytest
+import torch
 
 from tests.python.testutils.determinism import set_all_seeds
 from tests.python.testutils.numerical import (

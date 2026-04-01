@@ -1,7 +1,7 @@
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
 
-import torch
 import pytest
+import torch
 
 from tests.python.testutils.numerical import (
     TIER_STRICT,

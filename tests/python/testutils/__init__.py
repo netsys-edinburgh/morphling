@@ -4,11 +4,11 @@
 
 from .determinism import deterministic_context, seed_fixture, set_all_seeds
 from .numerical import (
-    ComparisonResult,
     TIER_EXACT,
     TIER_RELAXED,
     TIER_STANDARD,
     TIER_STRICT,
+    ComparisonResult,
     Tolerance,
     assert_no_nan_inf,
     compare_loss_trajectories,
