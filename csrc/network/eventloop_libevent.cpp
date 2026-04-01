@@ -26,9 +26,7 @@ EventLoopLibevent::~EventLoopLibevent() {
   }
 }
 
-struct event_base* EventLoopLibevent::GetInnerBase() {
-  return base_;
-}
+struct event_base* EventLoopLibevent::GetInnerBase() { return base_; }
 
 void EventLoopLibevent::WakeupReadCbWrapper(int fd, short event, void* arg) {
   if (event & EV_READ) {

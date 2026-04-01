@@ -4,7 +4,7 @@
 
 #include <iostream>
 
-#define ROUND_DOWN(size, step) ((size) & ~((step)-1))
+#define ROUND_DOWN(size, step) ((size) & ~((step) - 1))
 
 #if defined(__AVX512__) or defined(__AVX256__)
 union AVX_Data {
