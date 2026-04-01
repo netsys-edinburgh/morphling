@@ -1,0 +1,10 @@
+# greenctx_trace v2
+# time_unit=us
+# semantics=step_function
+timestamp,num_sms,tag
+0,8,warmup
+1,32,ramp_up
+2,64,full
+3,16,throttle
+4,48,recovery
+5,64,steady

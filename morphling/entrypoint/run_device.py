@@ -1,3 +1,10 @@
+"""Device runner entrypoint for Morphling emulator.
+
+Provides CLI interface for launching virtual or physical device instances
+with configurable FLOPs, memory, network bandwidth, and latency parameters.
+Supports multiple backends including RabbitMQ, AMQP, MQTT, and proxy mode.
+"""
+
 import asyncio
 import os
 import subprocess
@@ -6,8 +13,7 @@ import time
 import uuid
 from argparse import REMAINDER, ArgumentParser
 
-import redis
-
+# import redis
 from morphling.common import bytes2human, human2bytes
 
 
@@ -53,12 +59,20 @@ def main():
         help="The downlink latency of the device",
     )
 
+    # parser.add_argument(
+    #     "--redis_host",
+    #     type=str,
+    #     default="morphling-redis:6379",
+    #     help="The host and port of the redis server",
+    # )
+
     parser.add_argument(
-        "--redis_host",
+        "--proxy_host",
         type=str,
-        default="localhost:6379",
-        help="The host and port of the redis server",
+        default="",
+        help="The host and port of the proxy server (e.g., 155.98.37.203:39000), overrides config file",
     )
+
     parser.add_argument(
         "--backend",
         type=str,
@@ -101,9 +115,9 @@ def main():
 
     os.environ["MORPHLING_PIN_SIZE"] = str(args.memory)
 
-    # connect to redis
-    host, port = args.redis_host.split(":")
-    redis_connector = redis.Redis(host=host, port=port)
+    # # connect to redis
+    # host, port = args.redis_host.split(":")
+    # redis_connector = redis.Redis(host=host, port=port)
 
     # device_uuid = str(uuid.uuid4())
     device_info = {
@@ -122,8 +136,8 @@ def main():
     # 2. server send random number matrix multiplication tasks to the device to measure flops, results needs to be matched.
 
     # device reconnect is considered new device
-    print(f"Registering device {args.id} with info {device_info}", flush=True)
-    redis_connector.hmset(args.id, mapping=device_info)
+    # print(f"Registering device {args.id} with info {device_info}", flush=True)
+    # redis_connector.hmset(args.id, mapping=device_info)
     # redis_connector.expire(args.id, 120)
 
     # use threading to timer to refresh ttl
@@ -157,8 +171,22 @@ def main():
             time.sleep(1)
 
     elif args.backend == "proxy":
+        # Set environment variables to override config file if proxy_host is provided
+        if args.proxy_host:
+            try:
+                host, port = args.proxy_host.split(":")
+                os.environ["MORPHLING_PROXY_HOST"] = host
+                os.environ["MORPHLING_PROXY_PORT"] = port
+                print(f"Using proxy server: {host}:{port}", flush=True)
+            except ValueError:
+                print(
+                    f"Error: Invalid proxy_host format '{args.proxy_host}'. Expected format: host:port",
+                    flush=True,
+                )
+                return
+
         worker = AutoWorker.from_name(args.backend)
-        worker.initialize(args.cfg)
+        worker.initialize(args.cfg, args.id)
         worker.start()
         while True:
             time.sleep(1)

@@ -4,9 +4,9 @@
 
 #include <iostream>
 
-#include "common/pytorch_defs.h"
+#include "core/logger.h"
+#include "core/pytorch_defs.h"
 #include "server_base.h"
-#include "utils/logger.h"
 
 void MQTTWorker::OnMessage(struct mosquitto* mosq, void* obj,
                            const struct mosquitto_message* message) {
@@ -16,9 +16,11 @@ void MQTTWorker::OnMessage(struct mosquitto* mosq, void* obj,
     HandleMatMul(message);
   }
   auto end = std::chrono::high_resolution_clock::now();
-  LOG_DEBUG("Handle message time: {}us",
-            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
-                .count());
+  LOG_DEBUG << "Handle message time: "
+            << std::chrono::duration_cast<std::chrono::microseconds>(end -
+                                                                     start)
+                   .count()
+            << "us";
 
   // if (topic.find(MQTT_TIMER_TOPIC_REQ) != std::string::npos) {
   //   HandleTimer(message);
@@ -37,9 +39,10 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG("{} REQ Deserialization time: {}us", part_key, duration.count());
+  LOG_DEBUG << part_key << " REQ Deserialization time: " << duration.count()
+            << "us";
 
-  LOG_DEBUG("{} partition: {}", part_key, partition.DebugString());
+  LOG_DEBUG << part_key << " partition: " << partition.DebugString();
 
   // create tensor from partition
   auto [r_ptr, r_size] = partition.mat[0];
@@ -66,25 +69,26 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
     auto r_cached = cached_tensors_.Exist(tensor_key_row);
     auto c_cached = cached_tensors_.Exist(tensor_key_col);
 
-    LOG_DEBUG("{} Row cached: {}, row size: {}, Col cached: {}, col size: {}",
-              part_key, r_cached, row_size, c_cached, col_size);
+    LOG_DEBUG << part_key << " Row cached: " << r_cached
+              << ", row size: " << row_size << ", Col cached: " << c_cached
+              << ", col size: " << col_size;
 
     FillPartition(partition);
 
     if (r_size == 0 && !r_cached) {
-      LOG_WARN("{} Row not cached, saving for next msg", part_key);
+      LOG_WARN << part_key << " Row not cached, saving for next msg";
       SavePartition(partition);
       return;
     }
 
     if (c_size == 0 && !c_cached) {
-      LOG_WARN("{} Col not cached, saving for next msg", part_key);
+      LOG_WARN << part_key << " Col not cached, saving for next msg";
       SavePartition(partition);
       return;
     }
   }
 
-  LOG_DEBUG("{} Handle partition immediately", part_key);
+  LOG_DEBUG << part_key << " Handle partition immediately";
   HandlePartition(partition);
 
   std::vector<std::string> keys;
@@ -94,12 +98,13 @@ void MQTTWorker::HandleMatMul(const struct mosquitto_message* message) {
     c_size = std::get<1>(c_part.mat[1]);
     if (r_size > 0 && c_size > 0) {
       auto key = c_part.GetPartitionKey();
-      LOG_DEBUG("{} Handle partition from cache", key);
+      LOG_DEBUG << key << " Handle partition from cache";
       HandlePartition(c_part);
       keys.push_back(key);
     } else {
-      LOG_WARN("{} Partition is not ready, r_size: {}, c_size: {}",
-               c_part.GetPartitionKey(), r_size, c_size);
+      LOG_WARN << c_part.GetPartitionKey()
+               << " Partition is not ready, r_size: " << r_size
+               << ", c_size: " << c_size;
     }
   }
 
@@ -149,8 +154,8 @@ void MQTTWorker::HandlePartition(const MatrixPartition& partition) {
                               FLOAT32_TENSOR_OPTIONS(torch::kCPU))
                  .to(torch::kCUDA, 0);
 
-  LOG_DEBUG("{} Row: {}, Col: {}", part_key, row.sizes().vec(),
-            col.sizes().vec());
+  LOG_DEBUG << part_key << " Row: " << row.sizes().vec()
+            << ", Col: " << col.sizes().vec();
 
   auto result = torch::mm(row, col.transpose(0, 1)).to(torch::kCPU);
   uint64_t mm_time = (double)row_size * partition.h_dim * col_size * 2 /
@@ -166,8 +171,8 @@ void MQTTWorker::HandlePartition(const MatrixPartition& partition) {
   auto end = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG("{} Matmul real time: {}us, Matmul logical time: {}us", part_key,
-            duration.count(), mm_time);
+  LOG_DEBUG << part_key << " Matmul real time: " << duration.count()
+            << "us, Matmul logical time: " << mm_time << "us";
   mm_time = duration.count();
   // logical_time_ += duration.count();
 
@@ -178,19 +183,21 @@ void MQTTWorker::HandlePartition(const MatrixPartition& partition) {
   response.mat.clear();
   response.mat.push_back({result.data_ptr(), result.numel() * sizeof(float)});
 
-  auto [data, size] = response.Serialize();
+  auto buffer = response.Serialize();
 
   pub_cb_count_++;
-  pub_buffer_.push_back(data);
+  pub_buffer_.push_back(buffer->GetBuffer());
 
   // replace req with rsp
   std::string topic = MQTT_COMPUTE_TOPIC_RSP + uuid_;
   end = std::chrono::high_resolution_clock::now();
   duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  LOG_DEBUG("{} RSP Serialization time: {}us", part_key, duration.count());
+  LOG_DEBUG << part_key << " RSP Serialization time: " << duration.count()
+            << "us";
 
-  Publish(partition.dev_id, topic, data, size);
-  uint64_t ul_time = size / device_info_["ul_bw"] * 1e6;  // in microseconds
+  Publish(partition.dev_id, topic, buffer->GetBuffer(), buffer->GetSize());
+  uint64_t ul_time =
+      buffer->GetSize() / device_info_["ul_bw"] * 1e6;  // in microseconds
 
   // std::vector<OptionalString> vals;
   // auto overhead = redis.hget(uuid_, "r_dl_overhead");
@@ -208,7 +215,8 @@ void MQTTWorker::HandlePartition(const MatrixPartition& partition) {
   std::lock_guard<std::mutex> lock(redis_mutex_);
   // get logical time from redis
   auto time = redis_->hget(uuid_, "logical_time");
-  LOG_FATAL_IF(!time, "Failed to get logical time from redis, key: {}", uuid_);
+  LOG_FATAL_IF(!time) << "Failed to get logical time from redis, key: "
+                      << uuid_;
   int64_t logical_time = std::stoull(*time);
   logical_time += std::max(dl_time, std::max(mm_time, ul_time));
   // fprintf(stderr, "DL overhead: %ldus\n", dl_overhead);
@@ -274,15 +282,15 @@ void MQTTWorker::OnConnect(struct mosquitto* mosq, void* userdata, int result) {
     // Connection successful
     int ret = 0;
     ret = mosquitto_subscribe(mosq, NULL, comp_topic_.c_str(), 0);
-    LOG_FATAL_IF(ret != MOSQ_ERR_SUCCESS,
-                 "Failed to subscribe to topic, error code: {}", ret);
+    LOG_FATAL_IF(ret != MOSQ_ERR_SUCCESS)
+        << "Failed to subscribe to topic, error code: " << ret;
     fprintf(stderr, "Subscribed to topic %s\n", comp_topic_.c_str());
     // ret = mosquitto_subscribe(mosq, NULL, timer_topic_.c_str(), 0);
     // LOG_FATAL_IF(ret != MOSQ_ERR_SUCCESS,
     //              "Failed to subscribe to topic, error code: {}", ret);
     // fprintf(stderr, "Subscribed to topic %s\n", timer_topic_.c_str());
   } else {
-    LOG_FATAL("Connect failed with code {}", result);
+    LOG_FATAL << "Connect failed with code " << result;
   }
 }
 

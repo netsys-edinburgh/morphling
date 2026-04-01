@@ -8,7 +8,7 @@
 #include <cuda_runtime_api.h>
 
 #include "archer_aio_utils.h"
-#include "utils/cuda_utils.h"
+#include "core/cuda_utils.h"
 
 const int kBlockSize = 1024 * 1024;
 const int kQueueDepth = 32;

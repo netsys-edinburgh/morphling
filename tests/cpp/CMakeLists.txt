@@ -1,222 +1,348 @@
-# include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/tests.cmake)
+cmake_minimum_required(VERSION 3.22)
+project(DeviceEmulatorTests)
 
-# # Manually specify the Python executable
-# set(Python_EXECUTABLE ${CONDA_PREFIX_PATH}/bin/python)
-# find_package(PythonInterp REQUIRED)
-# # Retrieve the Python version
-# message(STATUS "Python version: ${PYTHON_VERSION_STRING}")
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0)
-# add_definitions(-DTorch_DIR=${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/torch/share/cmake/Torch/)
+# ============================================================================
+# Google Test & Google Benchmark via FetchContent
+# ============================================================================
+include(FetchContent)
 
-# message(STATUS "-DTorch_DIR: ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/torch/share/cmake/")
-
-# # Add the test files, create one executable for each test file, start with "test_*"
-# find_package(Threads REQUIRED)
-# find_package(GTest REQUIRED)
-find_package(OpenMP REQUIRED)
-
-# find_package(MKL REQUIRED)
-find_package(CUDAToolkit REQUIRED)
-find_package(MPI REQUIRED)
-
-set(CMAKE_SKIP_RPATH ON)
-
-# find all files in the directory match with "test_*"
-file(GLOB TEST_SOURCES "test_*.cpp")
-
-# # print CMAKE_ROOT_DIR, CMAKE_CURRENT_SOURCE_DIR
-# message(STATUS "CMAKE_ROOT_DIR: ${CMAKE_ROOT_DIR}")
-# message(STATUS "CMAKE_CURRENT_SOURCE_DIR: ${CMAKE_CURRENT_SOURCE_DIR}")
-# message(STATUS "MKL_INCLUDE_DIRS: ${MKL_INCLUDE_DIRS}")
-# message(STATUS "MKL_INCLUDE_DIRS: ${MKL_INCLUDE_DIRS}")
-# # Retrieve the Python version
-# message(STATUS "Python version: ${Python_VERSION}")
-
-# cpp flag add -m option to enable avx2
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 -std=c++17 -ggdb3 -fno-omit-frame-pointer")
-message(STATUS "CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
-# -mavx2 -march=znver3
-
-# message(STATUS "UMPAIRE_INCLUDE_DIRS: ${UMPAIRE_INCLUDE_DIRS}")
-# link_directories(${CONDA_PREFIX_PATH}/lib)
-# set(CMAKE_BUILD_RPATH "/mnt/data/xly/.conda/envs/edgeml/lib:/usr/local/cuda-12.2/targets/x86_64-linux/lib")
-# set(CMAKE_INSTALL_RPATH "/mnt/data/xly/.conda/envs/edgeml/lib:/usr/local/cuda-12.2/targets/x86_64-linux/lib")
-include_directories(
-    # ${UMPIRE_INCLUDE_DIRS}
-    ${EXTERNAL_DIR}/umpire/src/tpl/umpire/camp/include
-
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../csrc
-    # ${EXTERNAL_DIR}/umpire/src/tpl/umpire/camp/src/errors.cpp
-    ${EXTERNAL_DIR}/umpire/src/tpl
-    ${EXTERNAL_DIR}/umpire/build/src/tpl/umpire/camp/include
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG        v1.14.0
 )
 
-
-# message(STATUS "Python_VERSION: ${Python_VERSION}")
-# message(STATUS "CONDA_PREFIX_PATH: ${CONDA_PREFIX_PATH}")
-link_directories(
-    # ${UMPIRE_LIBRARY_DIRS}
-    ${CONDA_PREFIX_PATH}/lib
-    ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/torch/lib
+FetchContent_Declare(
+  googlebenchmark
+  GIT_REPOSITORY https://github.com/google/benchmark.git
+  GIT_TAG        v1.8.3
 )
 
-# foreach(TEST_SOURCE ${TEST_SOURCES})
-# get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
-# add_executable(${TEST_NAME} ${TEST_SOURCE} ${PROJECT_SOURCES})
-# target_include_directories(${TEST_NAME} PRIVATE
-# ${CMAKE_CURRENT_SOURCE_DIR}/../..
-# ${TORCH_INCLUDE_DIRS}
-# ${MKL_INCLUDE_DIRS}
-# ${CONDA_PREFIX_PATH}/include
-# # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/nvidia/cublas/include/
-# # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/nvidia/cuda_runtime/include/
-# # ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/triton/backends/nvidia/include/
-# # /usr/local/cuda/include/
-# ${CMAKE_INCLUDE_PATH}
-# ${MPI_INCLUDE_PATH}
-# )
-# target_link_libraries(${TEST_NAME}
-# umpire
-# ${TORCH_LIBRARIES}
-# pthread numa
-# CUDA::cublas CUDA::cudart MKL::MKL OpenMP::OpenMP_CXX
-# ${MPI_LIBRARIES}
-# )
-# add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
-# endforeach(TEST_SOURCE)
+# Prevent benchmark from building its own tests
+set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 
-message(STATUS "torch_python_LIBRARY: ${torch_python_LIBRARY}")
+FetchContent_MakeAvailable(googletest googlebenchmark)
 
-add_executable(echo_server_test echo_server_test.cc ${NETWORK_SRC} ${BASE_SRC})
-target_link_libraries(echo_server_test event uuid)
-set_target_properties(echo_server_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+# ==========================================================================
+# CUDA / cuBLAS tests (unit/cuda/)
+# ==========================================================================
+option(ENABLE_CUDA_TESTS "Build CUDA/cuBLAS tests" ON)
+if(ENABLE_CUDA_TESTS)
+  find_package(CUDAToolkit QUIET)
+  if(CUDAToolkit_FOUND)
+    add_executable(test_cublas_hostalloc_direct
+      unit/cuda/test_cublas_hostalloc_direct.cpp
+    )
+    target_link_libraries(test_cublas_hostalloc_direct
+      CUDA::cudart
+      CUDA::cublas
+    )
+
+    add_executable(test_cublas_hostregister_posix
+      unit/cuda/test_cublas_hostregister_posix.cpp
+    )
+    target_link_libraries(test_cublas_hostregister_posix
+      CUDA::cudart
+      CUDA::cublas
+    )
+
+    add_executable(test_cublas_error15_repro
+      unit/cuda/test_cublas_error15_repro.cpp
+    )
+    target_link_libraries(test_cublas_error15_repro
+      GTest::gtest
+      GTest::gtest_main
+      CUDA::cudart
+      CUDA::cublas
+    )
+    add_test(NAME test_cublas_error15_repro COMMAND test_cublas_error15_repro)
+  else()
+    message(WARNING "CUDAToolkit not found; CUDA tests will be skipped.")
+  endif()
+endif()
+
+# ==========================================================================
+# XtGemm Worker tests (require CUDA driver 12.5+)
+# ============================================================================
+option(ENABLE_XTGEMM_TESTS "Build XtGemm worker tests" OFF)
+if(ENABLE_XTGEMM_TESTS)
+  find_package(CUDAToolkit QUIET)
+  find_package(Threads REQUIRED)
+
+  if(CUDAToolkit_FOUND AND TARGET CUDA::cuda_driver)
+    set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+    # Torch: add cmake prefix path
+    execute_process(
+      COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
+      OUTPUT_VARIABLE TORCH_PREFIX_PATH
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    list(APPEND CMAKE_PREFIX_PATH ${TORCH_PREFIX_PATH})
+    find_package(Torch REQUIRED)
+
+    # Base logging sources
+    file(GLOB BASE_LOGGING_SRC ${PROJECT_ROOT}/external/muduo_base/*.cc)
+
+    # Source dependencies for XtGemm tests
+    set(XTGEMM_TEST_DEPS
+      ${PROJECT_ROOT}/csrc/scheduler/gpu_worker.cpp
+      ${PROJECT_ROOT}/csrc/memory/caching_allocator.cpp
+      ${PROJECT_ROOT}/csrc/core/cuda_utils.cpp
+      ${PROJECT_ROOT}/csrc/core/logger.cpp
+      ${PROJECT_ROOT}/csrc/core/generator.cpp
+      ${PROJECT_ROOT}/csrc/timer/virtual_clock.cpp
+      ${BASE_LOGGING_SRC}
+    )
+
+    set(XTGEMM_INCLUDE_DIRS
+      ${PROJECT_ROOT}/csrc
+      ${PROJECT_ROOT}/external
+      ${TORCH_INCLUDE_DIRS}
+    )
+
+    set(XTGEMM_COMMON_LIBS
+      CUDA::cublas
+      CUDA::cudart
+      CUDA::cuda_driver
+      ${TORCH_LIBRARIES}
+      uuid
+      Threads::Threads
+    )
+
+    # Correctness tests (unit/worker/)
+    add_executable(test_xtgemm_worker
+      unit/worker/test_xtgemm_worker.cpp
+      ${XTGEMM_TEST_DEPS}
+    )
+    target_include_directories(test_xtgemm_worker PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+    )
+    target_link_libraries(test_xtgemm_worker PRIVATE
+      GTest::gtest
+      GTest::gtest_main
+      ${XTGEMM_COMMON_LIBS}
+    )
+    add_test(NAME test_xtgemm_worker COMMAND test_xtgemm_worker)
+
+    # Performance benchmarks (bench/cuda/)
+    add_executable(bench_xtgemm_worker
+      bench/cuda/bench_xtgemm_worker.cpp
+      ${XTGEMM_TEST_DEPS}
+    )
+    target_include_directories(bench_xtgemm_worker PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+    )
+    target_link_libraries(bench_xtgemm_worker PRIVATE
+      benchmark::benchmark
+      benchmark::benchmark_main
+      ${XTGEMM_COMMON_LIBS}
+    )
+
+    # Green Context benchmarks (bench/cuda/)
+    add_executable(bench_green_ctx
+      bench/cuda/bench_green_ctx.cpp
+      ${XTGEMM_TEST_DEPS}
+    )
+    target_include_directories(bench_green_ctx PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/bench/cuda
+    )
+    target_link_libraries(bench_green_ctx PRIVATE
+      benchmark::benchmark
+      benchmark::benchmark_main
+      ${XTGEMM_COMMON_LIBS}
+      CUDA::cublas
+      CUDA::cuda_driver
+    )
+
+    # Trace-switch benchmark (bench/cuda/)
+    add_executable(bench_trace_switch
+      bench/cuda/bench_trace_switch.cpp
+      ${XTGEMM_TEST_DEPS}
+    )
+    target_include_directories(bench_trace_switch PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/bench/cuda
+    )
+    target_link_libraries(bench_trace_switch PRIVATE
+      benchmark::benchmark
+      benchmark::benchmark_main
+      ${XTGEMM_COMMON_LIBS}
+      CUDA::cublas
+      CUDA::cuda_driver
+     )
+
+    # Pool dispatch benchmarks (GPU vs CPU vs Hybrid) (bench/cuda/)
+    set(POOL_DISPATCH_DEPS
+      ${XTGEMM_TEST_DEPS}
+      ${PROJECT_ROOT}/csrc/scheduler/cpu_worker.cpp
+    )
+
+    add_executable(bench_pool_dispatch
+      bench/cuda/bench_pool_dispatch.cpp
+      ${POOL_DISPATCH_DEPS}
+    )
+    target_include_directories(bench_pool_dispatch PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+    )
+    target_link_libraries(bench_pool_dispatch PRIVATE
+      benchmark::benchmark
+      benchmark::benchmark_main
+      ${XTGEMM_COMMON_LIBS}
+      openblas
+    )
+  else()
+    message(WARNING "CUDAToolkit or CUDA driver API not found; XtGemm tests skipped.")
+  endif()
+endif()
+
+# ==========================================================================
+# WorkerBase / WorkerPool tests (unit/worker/)
+# ============================================================================
+find_package(Threads REQUIRED)
+
+set(PROJECT_ROOT_WB ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+add_executable(test_worker_base
+  unit/worker/test_worker_base.cpp
 )
-add_test(NAME echo_server_test COMMAND echo_server_test)
-
-add_executable(echo_client_test echo_client_test.cc ${NETWORK_SRC} ${BASE_SRC})
-target_link_libraries(echo_client_test event uuid)
-set_target_properties(echo_client_test PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+target_include_directories(test_worker_base PRIVATE
+  ${PROJECT_ROOT_WB}/csrc
 )
-add_test(NAME echo_client_test COMMAND echo_client_test)
-
-add_executable(test_kern_copy test_kern_copy.cpp)
-# target_link_libraries(test_kern_copy uuid)
-set_target_properties(test_kern_copy PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+target_link_libraries(test_worker_base PRIVATE
+  GTest::gtest
+  GTest::gtest_main
+  Threads::Threads
 )
-add_test(NAME test_kern_copy COMMAND test_kern_copy)
+add_test(NAME test_worker_base COMMAND test_worker_base)
 
-add_executable(test_splice_copy test_splice_copy.cpp)
-# target_link_libraries(test_splice_copy uuid)
-set_target_properties(test_splice_copy PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+# ==========================================================================
+# GreenTraceParser tests (unit/worker/) — no CUDA required
+# ============================================================================
+set(PROJECT_ROOT_GTP ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+file(GLOB GTP_BASE_LOGGING_SRC ${PROJECT_ROOT_GTP}/external/muduo_base/*.cc)
+
+add_executable(test_green_trace_parser
+  unit/worker/test_green_trace_parser.cpp
+  ${PROJECT_ROOT_GTP}/csrc/scheduler/green_trace_parser.cpp
+  ${PROJECT_ROOT_GTP}/csrc/core/logger.cpp
+  ${GTP_BASE_LOGGING_SRC}
 )
-add_test(NAME test_splice_copy COMMAND test_splice_copy)
-
-
-add_executable(test_uuid test_uuid.cpp)
-target_link_libraries(test_uuid uuid)
-set_target_properties(test_uuid PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+target_include_directories(test_green_trace_parser PRIVATE
+  ${PROJECT_ROOT_GTP}/csrc
+  ${PROJECT_ROOT_GTP}/external
 )
-add_test(NAME test_uuid COMMAND test_uuid)
-
-add_executable(test_torch_layout test_torch_layout.cpp)
-target_include_directories(test_torch_layout PRIVATE
-    ${TORCH_INCLUDE_DIRS}
+target_link_libraries(test_green_trace_parser PRIVATE
+  GTest::gtest
+  GTest::gtest_main
+  Threads::Threads
+  uuid
 )
-target_link_libraries(test_torch_layout ${TORCH_LIBRARIES})
-set_target_properties(test_torch_layout PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
-)
-add_test(NAME test_torch_layout COMMAND test_torch_layout)
+add_test(NAME test_green_trace_parser COMMAND test_green_trace_parser)
 
-set(SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../csrc/backend/server_base.cpp
-)
-add_executable(test_matrix_partition test_matrix_partition.cpp ${SRC})
-target_include_directories(test_matrix_partition PRIVATE
-    ${TORCH_INCLUDE_DIRS}
-)
-target_link_libraries(test_matrix_partition ${TORCH_LIBRARIES} ${torch_python_LIBRARY})
-set_target_properties(test_matrix_partition PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
-)
-add_test(NAME test_matrix_partition COMMAND test_matrix_partition)
+# ==========================================================================
+# GreenContextRuntime tests (unit/worker/) — requires CUDA driver 12.5+
+# ============================================================================
+option(ENABLE_GREEN_CTX_TESTS "Build green context runtime tests" OFF)
+if(ENABLE_GREEN_CTX_TESTS)
+  find_package(CUDAToolkit QUIET)
+  find_package(Threads REQUIRED)
 
+  if(CUDAToolkit_FOUND AND TARGET CUDA::cuda_driver)
+    set(PROJECT_ROOT_GCR ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+    file(GLOB GCR_BASE_LOGGING_SRC ${PROJECT_ROOT_GCR}/external/muduo_base/*.cc)
 
-add_executable(test_mqtt_sender test_mqtt_sender.cpp)
-# target_include_directories(test_mqtt_sender PRIVATE
-#     ${TORCH_INCLUDE_DIRS}
-# )
-target_link_libraries(test_mqtt_sender libmosquitto)
-set_target_properties(test_mqtt_sender PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
-)
-add_test(NAME test_mqtt_sender COMMAND test_mqtt_sender)
+    set(GCR_SOURCES
+      ${PROJECT_ROOT_GCR}/csrc/scheduler/green_context_runtime.cpp
+      ${PROJECT_ROOT_GCR}/csrc/scheduler/green_trace_parser.cpp
+      ${PROJECT_ROOT_GCR}/csrc/core/logger.cpp
+      ${PROJECT_ROOT_GCR}/csrc/core/cuda_utils.cpp
+      ${GCR_BASE_LOGGING_SRC}
+    )
 
+    add_executable(test_green_context_runtime
+      unit/worker/test_green_context_runtime.cpp
+      ${GCR_SOURCES}
+    )
+    target_include_directories(test_green_context_runtime PRIVATE
+      ${PROJECT_ROOT_GCR}/csrc
+      ${PROJECT_ROOT_GCR}/external
+    )
+    target_link_libraries(test_green_context_runtime PRIVATE
+      GTest::gtest
+      GTest::gtest_main
+      CUDA::cudart
+      CUDA::cuda_driver
+      CUDA::cublas
+      Threads::Threads
+      uuid
+    )
+    add_test(NAME test_green_context_runtime COMMAND test_green_context_runtime)
+  else()
+    message(WARNING "CUDAToolkit not found; green context runtime tests skipped.")
+  endif()
+endif()
 
-add_executable(test_rc_copy test_rc_copy.cpp)
-target_include_directories(test_rc_copy PRIVATE
-    ${TORCH_INCLUDE_DIRS}
-)
-target_link_libraries(test_rc_copy ${TORCH_LIBRARIES} ${torch_python_LIBRARY})
-set_target_properties(test_rc_copy PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
-)
-add_test(NAME test_rc_copy COMMAND test_rc_copy)
+# ==========================================================================
+# Zerocopy test suite (optional)
+# ============================================================================
+option(ENABLE_ZEROCOPY_TESTS "Build zerocopy tests" OFF)
+if(ENABLE_ZEROCOPY_TESTS)
+  find_package(Threads REQUIRED)
 
-#/mnt/data/xly/.conda/envs/emulator/lib/python3.9/site-packages/torch/lib/
+  # Use vendored protobuf (same as main build) to avoid version mismatch
+  # between system protoc and system libprotobuf-dev
+  set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+  set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  # Vendored protobuf 3.13 requires cmake_minimum_required < 3.5 compat
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+  add_subdirectory(${PROJECT_ROOT}/external/protobuf/cmake
+                   ${CMAKE_BINARY_DIR}/protobuf)
+  unset(CMAKE_POLICY_VERSION_MINIMUM)
+  set(Protobuf_PROTOC_EXECUTABLE $<TARGET_FILE:protoc>)
+  set(Protobuf_INCLUDE_DIRS "${PROJECT_ROOT}/external/protobuf/src")
+  set(Protobuf_LIBRARIES protobuf::libprotobuf)
+  include(FindProtobuf)
 
-# set(TEST_INCLUDE_DIRS
-#     ${TORCH_INCLUDE_DIRS}
-# )
-# set(TEST_LIBRARIES
-#     uuid ${TORCH_LIBRARIES} rttr_core
-# )
-# add_test_executable(test_matrix_partition
-#     LIBRARIES ${TEST_LIBRARIES}
-#     INCLUDE_DIRECTORIES ${TEST_INCLUDE_DIRS}
-# )
-# add_executable(test_shared_pin_memory test_shared_pin_memory.cpp ${MEMORY_SRC} ${UTILS_SRC})
-# target_include_directories(test_shared_pin_memory PRIVATE
-#     ${CUDA_INCLUDE_DIRS}
-#     ${TORCH_INCLUDE_DIRS}
-# )
-# target_link_libraries(test_shared_pin_memory
-#     CUDA::cublas CUDA::cudart uuid ${TORCH_LIBRARIES} rttr_core
-# )
-# add_test(NAME test_shared_pin_memory COMMAND test_shared_pin_memory)
-# set_target_properties(test_shared_pin_memory PROPERTIES
-#     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
-# )
+  # Torch: add its cmake prefix path so find_package works
+  execute_process(
+    COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
+    OUTPUT_VARIABLE TORCH_PREFIX_PATH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  list(APPEND CMAKE_PREFIX_PATH ${TORCH_PREFIX_PATH})
+  find_package(Torch REQUIRED)
 
-# add_executable(test_memcpy_bw test_memcpy_bw.cpp ${MEMORY_SRC}  ${UTILS_SRC})
-# target_include_directories(test_shared_pin_memory PRIVATE
-#     ${CUDA_INCLUDE_DIRS}
-#     ${TORCH_INCLUDE_DIRS}
-# )
-# target_link_libraries(test_memcpy_bw
-#     CUDA::cublas CUDA::cudart uuid numa ${TORCH_LIBRARIES} rttr_core
-# )
-# add_test(NAME test_memcpy_bw COMMAND test_memcpy_bw)
-# set_target_properties(test_memcpy_bw PROPERTIES
-#     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
-# )
+  # Generate proto C++ sources
+  set(PROTO_SRC_DIR "${PROJECT_ROOT}/proto")
+  set(PROTO_FILES
+    "${PROTO_SRC_DIR}/morphling.proto"
+    "${PROTO_SRC_DIR}/global_api.proto"
+  )
+  protobuf_generate(
+    LANGUAGE cpp
+    OUT_VAR PROTO_SRCS
+    PROTOS ${PROTO_FILES}
+    PROTOC_OUT_DIR "${CMAKE_BINARY_DIR}"
+    IMPORT_DIRS "${PROTO_SRC_DIR}"
+  )
+  add_custom_target(generate_proto_files ALL DEPENDS ${PROTO_SRCS})
 
-add_executable(echo_server_libuv echo_server_libuv.cc)
-target_link_libraries(echo_server_libuv uv)
-set_target_properties(echo_server_libuv PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
-)
-add_test(NAME echo_server_libuv COMMAND echo_server_libuv)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/zerocopy/CMakeLists.txt")
+    add_subdirectory(unit/zerocopy)
+  else()
+    message(WARNING "unit/zerocopy/CMakeLists.txt not found; zerocopy unit tests skipped.")
+  endif()
 
-add_executable(echo_client_libuv echo_client_libuv.cc)
-target_link_libraries(echo_client_libuv uv)
-set_target_properties(echo_client_libuv PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
-)
-add_test(NAME echo_client_libuv COMMAND echo_client_libuv)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/zerocopy/CMakeLists.txt")
+    add_subdirectory(bench/zerocopy)
+  else()
+    message(WARNING "bench/zerocopy/CMakeLists.txt not found; zerocopy benchmarks skipped.")
+  endif()
+endif()

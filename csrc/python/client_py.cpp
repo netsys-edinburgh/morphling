@@ -8,9 +8,14 @@
 #include "backend/mqtt_worker.h"
 #include "backend/proxy_cli.h"
 #include "backend/proxy_svr.h"
-#include "common/pytorch_defs.h"
+#include "core/pytorch_defs.h"
 #include "scheduler/amqp_dispatcher.h"
 #include "scheduler/amqp_worker.h"
+
+namespace py = pybind11;
+
+using morphling::backend::ProxyCli;
+using morphling::backend::ProxySvr;
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<AMQPBackend>(m, "AMQPBackend")
@@ -23,7 +28,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("initialize", &ProxySvr::Initialize)
       .def("start", &ProxySvr::Start)
       .def("async_dispatch_matmul", &ProxySvr::DispatchMatMulAsync)
-      .def("wait_matmul", &ProxySvr::WaitMatMul);
+      .def("wait_matmul", &ProxySvr::WaitMatMul)
+      .def("get_connection_count", &ProxySvr::GetConnectionCount);
 
   py::class_<ProxyCli>(m, "ProxyCli")
       .def(py::init<>())

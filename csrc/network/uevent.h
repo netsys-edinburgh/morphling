@@ -8,13 +8,13 @@
 #include <string>
 #include <vector>
 
-#include "base/condition.h"
-#include "base/current_thread.h"
-#include "base/mutex.h"
-#include "base/timestamp.h"
 #include "callbacks.h"
 #include "forward_desc.h"
 #include "loop_handle.h"
+#include "muduo_base/condition.h"
+#include "muduo_base/current_thread.h"
+#include "muduo_base/mutex.h"
+#include "muduo_base/timestamp.h"
 #include "protobuf_dispatcher.h"
 #include "timer_id.h"
 #include "uevent.h"
@@ -166,6 +166,18 @@ class ConnectionUevent : public std::enable_shared_from_this<ConnectionUevent> {
   //@param data_len 要发送的数据长度
   //@return 0 on success, -1 on failure.
   virtual int SendData(const void* data, size_t data_len) = 0;
+
+  // Zero-copy send: data is referenced, not copied. cleanup_cb is called when
+  // libevent is done with the data. Caller must ensure data lives until
+  // cleanup.
+  virtual int SendDataZeroCopy(const void* data, size_t data_len,
+                               void (*cleanup_cb)(const void*, size_t, void*),
+                               void* cleanup_arg) = 0;
+
+  // Zero-copy receive: returns a contiguous pointer to data in the input
+  // buffer. Data remains in buffer until DrainData() is called. Returns nullptr
+  // on failure.
+  virtual unsigned char* PullupData(size_t len) = 0;
 
   //@brief 从接收缓冲区拷贝数据，数据仍保留在缓冲区中
   //@param data 接收数据的地址

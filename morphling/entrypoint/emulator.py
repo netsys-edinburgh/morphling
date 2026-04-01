@@ -1,3 +1,9 @@
+"""Emulator server entrypoint for Morphling.
+
+Launches the C++ morphling_server with configured checkpoint path,
+GPU memory size, CPU pinned memory size, and network listen address.
+"""
+
 import os
 import subprocess
 import sys

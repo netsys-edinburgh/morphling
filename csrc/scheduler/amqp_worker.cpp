@@ -26,7 +26,7 @@ void AMQPWorker::HandleReq() {
     // get req_props form message
     amqp_basic_properties_t req_props = envelope.message.properties;
 
-    LOG_DEBUG("Received request: {}", request.size());
+    LOG_DEBUG << "Received request: " << request.size();
 
     MatMulRequestMessage request_message;
     request_message.Deserialize(request);
@@ -35,10 +35,9 @@ void AMQPWorker::HandleReq() {
     auto& mat_a = request_message.mat[0];
     auto& mat_b = request_message.mat[1];
 
-    LOG_DEBUG(
-        "Calling matmul block for row: {}, col: {}, mat sizes: a {}, b {}",
-        request_message.row, request_message.col, mat_a.sizes().vec(),
-        mat_b.sizes().vec());
+    LOG_DEBUG << "Calling matmul block for row: " << request_message.row
+              << ", col: " << request_message.col << ", mat sizes: a "
+              << mat_a.sizes().vec() << ", b " << mat_b.sizes().vec();
 
     auto result =
         torch::mm(mat_a.to(DEFAULT_CUDA_DEVICE), mat_b.to(DEFAULT_CUDA_DEVICE))
@@ -50,8 +49,8 @@ void AMQPWorker::HandleReq() {
       response_message.ld = request_message.ld;
       response_message.mat = result;
 
-      LOG_DEBUG("Sending response for row: {}, col: {}", request_message.row,
-                request_message.col);
+      LOG_DEBUG << "Sending response for row: " << request_message.row
+                << ", col: " << request_message.col;
 
       std::string message_body = response_message.Serialize();
       amqp_bytes_t message_bytes;
@@ -75,15 +74,15 @@ void AMQPWorker::HandleReq() {
       amqp_basic_publish(conn_, rsp_channel_, amqp_cstring_bytes(""),
                          req_props.reply_to, 0, 0, &props, message_bytes);
 
-      LOG_DEBUG("Published response for row: {}, col: {}", request_message.row,
-                request_message.col);
+      LOG_DEBUG << "Published response for row: " << request_message.row
+                << ", col: " << request_message.col;
     }
 
     // ack message
     amqp_basic_ack(conn_, req_channel_, envelope.delivery_tag, 0);
     amqp_destroy_envelope(&envelope);
-    LOG_DEBUG("Acknowledged message for row: {}, col: {}", request_message.row,
-              request_message.col);
+    LOG_DEBUG << "Acknowledged message for row: " << request_message.row
+              << ", col: " << request_message.col;
   }
 }
 void AMQPWorker::HandleRsp() {}

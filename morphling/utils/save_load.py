@@ -1,3 +1,9 @@
+"""Model save and load utilities for DeviceEmulator.
+
+Provides functions for saving and loading PyTorch models with tensor
+indexing for efficient memory management.
+"""
+
 import json
 import os
 
@@ -8,12 +14,11 @@ from morphling._C import restore_tensors, save_tensors
 
 
 def load_model(model: nn.Module, load_path: str):
-    """
+    """Load a PyTorch model from a saved checkpoint.
+
     Args:
-        model: nn.Module
-            a model to be loaded
-        load_path: str
-            a local path to load the converted model
+        model: nn.Module - a model to be loaded.
+        load_path: str - a local path to load the converted model.
     """
     model = model.cpu()
     model_state_dict = model.state_dict()
@@ -36,12 +41,11 @@ def load_model(model: nn.Module, load_path: str):
 
 
 def save_model(model: nn.Module, save_path: str):
-    """
+    """Save a PyTorch model to a checkpoint directory.
+
     Args:
-        model: nn.Module
-            a model to be saved
-        storage_path: str
-            a local path to save the converted model
+        model: nn.Module - a model to be saved.
+        save_path: str - a local path to save the converted model.
     """
     if not os.path.exists(save_path):
         os.makedirs(save_path, exist_ok=True)

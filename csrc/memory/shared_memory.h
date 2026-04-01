@@ -12,8 +12,8 @@
 // #include <rttr/type>
 #include <string>
 
-#include "common/types_and_defs.h"
-#include "utils/logger.h"
+#include "core/logger.h"
+#include "core/types_and_defs.h"
 
 void* OpenSharedMemory(const char* name, size_t size);
 void CloseSharedMemory(void* ptr, size_t size);
@@ -22,7 +22,7 @@ void DetachSharedMemory(void* ptr, int fd, size_t size);
 
 struct ShmDeleter {
   void operator()(void* ptr) const {
-    LOG_DEBUG("ShmDeleter: ptr: {}", ptr);
+    LOG_DEBUG << "ShmDeleter: ptr: " << ptr;
     DetachSharedMemory(ptr, fd, size);
   }
   size_t size;

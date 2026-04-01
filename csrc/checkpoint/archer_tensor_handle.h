@@ -9,7 +9,7 @@
 
 #include "archer_prio_aio_handle.h"
 #include "archer_tensor_index.h"
-#include "utils/noncopyable.h"
+#include "core/noncopyable.h"
 
 extern const char* ARCHER_PARAM_NAME;
 extern const char* ARCHER_IHDEX_NAME;

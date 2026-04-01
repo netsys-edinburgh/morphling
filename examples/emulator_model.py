@@ -1,6 +1,5 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-import morphling._C
 from morphling import EmulatorEngine
 
 model_name = "facebook/opt-125m"

@@ -17,14 +17,14 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
             const int* ldc) {
   if (!orig_sgemm) {
     void* handle_lib = dlopen("libmkl_rt.so", RTLD_LAZY);
-    LOG_FATAL_IF(!handle_lib, "Error loading MKL library: {}", dlerror());
+    LOG_FATAL_IF(!handle_lib) << "Error loading MKL library: " << dlerror();
     orig_sgemm = (sgemm_type)dlsym(handle_lib, "sgemm_");
-    LOG_FATAL_IF(!orig_sgemm, "Error loading original sgemm_: {}", dlerror());
+    LOG_FATAL_IF(!orig_sgemm) << "Error loading original sgemm_: " << dlerror();
   }
-  LOG_DEBUG(
-      "Intercepted sgemm; args transa: {}, transb: {}, m: {}, n: {}, k: "
-      "{}, alpha: {}, lda: {}, ldb: {}, beta: {}, ldc: {}",
-      *transa, *transb, *m, *n, *k, *alpha, *lda, *ldb, *beta, *ldc);
+  LOG_DEBUG << "Intercepted sgemm; args transa: " << *transa
+            << ", transb: " << *transb << ", m: " << *m << ", n: " << *n
+            << ", k: " << *k << ", alpha: " << *alpha << ", lda: " << *lda
+            << ", ldb: " << *ldb << ", beta: " << *beta << ", ldc: " << *ldc;
   GemmArgsPtr args = std::make_unique<GemmArgs>();
   args->group_size = 1;
   args->transa[0] = *transa;
@@ -45,7 +45,7 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
 }
 
 void TaskExecution(const GemmArgsPtr& args) {
-  InitMemoryManagerClient();
+  // Removed gRPC client calls - now using direct local execution
   size_t task_size = sizeof(GemmArgs);
   void* task_buffer = kCachingAllocator->Allocate(task_size);
   auto* buffer_args = reinterpret_cast<GemmArgs*>(task_buffer);
@@ -53,29 +53,16 @@ void TaskExecution(const GemmArgsPtr& args) {
   void* a = pointer_to_void(args->a[0]);
   void* b = pointer_to_void(args->b[0]);
   void* c = pointer_to_void(args->c[0]);
-  LOG_DEBUG("Scheduling task {}", buffer_args->DebugString());
-  kMemoryManagerClient->ScheduleGemmSync(a, b, c, task_buffer);
+  LOG_DEBUG << "Executing task locally " << buffer_args->DebugString();
+
+  // TODO: Replace with local GEMM execution logic
+  // For now, this is a placeholder - the actual computation should be
+  // implemented here
+
   kCachingAllocator->Free(task_buffer);
 }
 
-std::tuple<size_t, size_t, size_t> CalculateTaskSizes(const GemmArgs* args) {
-  // LOG_DEBUG("Calculating task sizes");
-  if (args->group_size == 1) {
-    auto size_a = (args->transa[0] == 'N' || args->transa[0] == 'n')
-                      ? (args->lda[0]) * (args->k[0]) * sizeof(float)
-                      : (args->lda[0]) * (args->m[0]) * sizeof(float);
-    auto size_b = (args->transb[0] == 'N' || args->transb[0] == 'n')
-                      ? (args->ldb[0]) * (args->n[0]) * sizeof(float)
-                      : (args->ldb[0]) * (args->k[0]) * sizeof(float);
-    auto size_c = (args->ldc[0]) * (args->n[0]) * sizeof(float);
-    LOG_FATAL_IF(size_a == 0 || size_b == 0 || size_c == 0,
-                 "Invalid task sizes: A: {}, B: {}, C: {}", size_a, size_b,
-                 size_c);
-    return {size_a, size_b, size_c};
-  }
-  LOG_FATAL("Grouped gemm not supported yet, group size: {}", args->group_size);
-  return {0, 0, 0};
-}
+// CalculateTaskSizes is now inline in interceptor.h
 
 // bool CheckBufferOffloaded(const void* buffer, size_t size) {
 //   // when the buffer is offloaded, the first and last uint32_t is the same

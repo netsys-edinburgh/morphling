@@ -1,3 +1,9 @@
+"""Type definitions and utility functions for tensor memory management.
+
+Provides functions for computing shared memory and pinned memory offsets
+for parameter metadata mapping.
+"""
+
 from collections import Counter
 from typing import Dict, Tuple
 
@@ -8,6 +14,7 @@ import torch
 def find_tensor_same_size(
     param_meta_map: Dict[str, dict], size: int
 ) -> np.ndarray:
+    """Find tensor IDs with the specified size."""
     names_of_size = [
         name for name, param in param_meta_map.items() if param["size"] == size
     ]
@@ -19,6 +26,7 @@ def find_tensor_same_size(
 def compute_shm_offsets(
     param_meta_map: Dict[str, dict],
 ) -> Tuple[int, Dict[str, int]]:
+    """Compute shared memory offsets for parameter metadata."""
     unique_sizes_counter = Counter(
         [param["size"] for param in param_meta_map.values()]
     )
@@ -39,6 +47,7 @@ def compute_shm_offsets(
 def compute_pin_offsets(
     param_meta_map: Dict[str, dict],
 ) -> Tuple[int, Dict[str, int]]:
+    """Compute pinned memory offsets for parameter metadata."""
     pin_mem_size = sum([meta["size"] for _, meta in param_meta_map.items()])
     offset = 0
     pin_mem_offsets = {}
@@ -51,6 +60,7 @@ def compute_pin_offsets(
 def update_shm_offsets(
     param_meta_map: Dict[str, dict],
 ) -> Tuple[int, Dict[str, int]]:
+    """Update shared memory offsets in the parameter metadata map."""
     _, shm_mem_offsets = compute_shm_offsets(param_meta_map)
     unique_sizes_counter = Counter(
         [param["size"] for param in param_meta_map.values()]

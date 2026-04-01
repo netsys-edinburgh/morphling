@@ -2,8 +2,8 @@
 
 #include <iostream>
 
-#include "common/types_and_defs.h"
-#include "utils/logger.h"
+#include "core/logger.h"
+#include "core/types_and_defs.h"
 
 void MQTTServer::OnMessage(struct mosquitto* mosq, void* obj,
                            const struct mosquitto_message* message) {
@@ -32,9 +32,11 @@ void MQTTServer::HandleMatMul(const struct mosquitto_message* message) {
   partition.Deserialize(message->payload, message->payloadlen);
   auto part_key = partition.GetPartitionKey();
   auto end = std::chrono::high_resolution_clock::now();
-  LOG_DEBUG("{} RSP Deserialization time: {}us", part_key,
-            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
-                .count());
+  LOG_DEBUG << part_key << " RSP Deserialization time: "
+            << std::chrono::duration_cast<std::chrono::microseconds>(end -
+                                                                     start)
+                   .count()
+            << "us";
 
   auto [o_ptr, o_size] = partition.mat[0];
   int64_t row_size = o_size / partition.h_dim / sizeof(float);
@@ -45,7 +47,7 @@ void MQTTServer::HandleMatMul(const struct mosquitto_message* message) {
   // std::string key = std::to_string(partition.oid);
   // update
 
-  LOG_DEBUG("{} partition: {}", part_key, partition.DebugString());
+  LOG_DEBUG << part_key << " partition: " << partition.DebugString();
 
   start = std::chrono::high_resolution_clock::now();
   auto output = torch::from_blob(o_ptr, {row_size, col_size},
@@ -56,9 +58,11 @@ void MQTTServer::HandleMatMul(const struct mosquitto_message* message) {
                         partition.col, partition.pivot, block_size_);
   }
   end = std::chrono::high_resolution_clock::now();
-  LOG_DEBUG("UpdateMatrixBlock time: {}us",
-            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
-                .count());
+  LOG_DEBUG << "UpdateMatrixBlock time: "
+            << std::chrono::duration_cast<std::chrono::microseconds>(end -
+                                                                     start)
+                   .count()
+            << "us";
 
   std::string uuid = std::to_string(partition.dev_id);
   // redis_->expire(uuid, 5);  // refresh the key, means device is alive
@@ -70,8 +74,8 @@ void MQTTServer::HandleMatMul(const struct mosquitto_message* message) {
   //   output_cv_.notify_all();
   // }
   rsp_cb_counts_[partition.oid]--;
-  LOG_DEBUG("Number of responses left: {}",
-            rsp_cb_counts_[partition.oid].load());
+  LOG_DEBUG << "Number of responses left: "
+            << rsp_cb_counts_[partition.oid].load();
   // // count the number of nans in the output
   // LOG_DEBUG("Number of NaNs in output: {}, output size: {}", nan_count,
   //           output.numel());
@@ -82,7 +86,7 @@ torch::Tensor MQTTServer::DispatchMatMul(torch::Tensor& mat_a,
                                          torch::Tensor& mat_b) {
   output_ = CreateOutputMatrix(mat_a, mat_b);
   auto partitions = PartitionMatrices(mat_a, mat_b, block_size_);
-  LOG_DEBUG("Number of partitions: {}", partitions.size());
+  LOG_DEBUG << "Number of partitions: " << partitions.size();
 
   std::vector<std::future<void>> futures;
   // int64_t num_devices = std::stoi(GETENV("NUM_DEVICES", "1"));
@@ -94,21 +98,21 @@ torch::Tensor MQTTServer::DispatchMatMul(torch::Tensor& mat_a,
   auto start = std::chrono::high_resolution_clock::now();
   for (auto& partition : partitions) {
     // auto future = std::async(std::launch::async, [this, &partition, count] {
-    auto [data, size] = partition.Serialize();
+    auto buffer = partition.Serialize();
     auto topic =
         std::string("/morphling/req/") + std::to_string(count % num_devices_);
-    Publish(topic, data, size);
+    Publish(topic, buffer->GetBuffer(), buffer->GetSize());
     // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-    pub_buffer_[count] = data;
+    pub_buffer_[count] = buffer->GetBuffer();
     // });
     // pub_count_ = (pub_count_++) % num_devices_;
     count++;
     // futures.push_back(std::move(future));
   }
   auto end = std::chrono::high_resolution_clock::now();
-  LOG_DEBUG("Publish time: {}us",
-            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
-                .count());
+  LOG_DEBUG << "Publish time: "
+            << std::chrono::duration_cast<std::chrono::microseconds>(end -
+start) .count() << "us";
 
   // auto start = std::chrono::high_resolution_clock::now();
   // for (auto& f : futures) {
@@ -136,10 +140,9 @@ torch::Tensor MQTTServer::DispatchMatMul(torch::Tensor& mat_a,
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   end = std::chrono::high_resolution_clock::now();
-  LOG_DEBUG("Waiting time: {}us",
-            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
-                .count());
-  return outputs_[0];
+  LOG_DEBUG << "Waiting time: "
+            << std::chrono::duration_cast<std::chrono::microseconds>(end -
+start) .count() << "us"; return outputs_[0];
 }
 */
 
@@ -153,14 +156,15 @@ torch::Tensor MQTTServer::WaitMatMul(int oid) {
   auto wait_time =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start)
           .count();
-  LOG_DEBUG("Waiting time: {}us for oid: {}, shape: {}", wait_time, oid, shape);
+  LOG_DEBUG << "Waiting time: " << wait_time << "us for oid: " << oid
+            << ", shape: " << shape;
 
   uint64_t max_time = 0;
   for (int i = 0; i < num_devices_; i++) {
     std::string key = std::to_string(i);
     auto logical_time = redis_->hget(key, "logical_time");
     if (!logical_time) {
-      LOG_FATAL("Failed to get logical time from redis for key: {}", key);
+      LOG_FATAL << "Failed to get logical time from redis for key: " << key;
     }
 
     // convert to uint64_t
@@ -174,21 +178,21 @@ torch::Tensor MQTTServer::WaitMatMul(int oid) {
   }
   logical_time_ = max_time;
   real_time_ += wait_time;
-  LOG_INFO("Real time: {}us, Logical time: {}us", real_time_.load(),
-           logical_time_.load());
+  LOG_INFO << "Real time: " << real_time_.load()
+           << "us, Logical time: " << logical_time_.load() << "us";
   mm_count_--;
   return outputs_[oid];
 }
 
-void MQTTServer::PublishPartition(MatrixPartition& partition, int64_t oid,
+void MQTTServer::PublishPartition(MatrixPartitionPtr& partition, int64_t oid,
                                   int count) {
-  partition.oid = oid;
-  auto [data, size] = partition.Serialize();
+  partition->oid = oid;
+  auto buffer = partition->Serialize();
   auto topic =
-      std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
-  Publish(partition.dev_id, topic, data, size);
+      std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition->dev_id);
+  Publish(partition->dev_id, topic, buffer->GetBuffer(), buffer->GetSize());
   // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-  pub_buffer_[count] = data;
+  pub_buffer_[count] = buffer->GetBuffer();
 }
 
 void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
@@ -198,18 +202,18 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
   auto a_shape = mat_a.sizes().vec();
   auto b_shape = mat_b.sizes().vec();
 
-  auto cur_ver = partitions[0].version;
-  LOG_INFO("[{}] Number of partitions: {} for A: {} and B: {}", cur_ver,
-           partitions.size(), a_shape, b_shape);
+  auto cur_ver = partitions[0]->version;
+  LOG_INFO << "[" << cur_ver << "] Number of partitions: " << partitions.size()
+           << " for A: " << a_shape << " and B: " << b_shape;
 
   RephrasePartitions(partitions);
 
   int64_t total_bytes = 0;
   for (auto& partition : partitions) {
     total_bytes +=
-        std::get<1>(partition.mat[0]) + std::get<1>(partition.mat[1]);
+        std::get<1>(partition->mat[0]) + std::get<1>(partition->mat[1]);
   }
-  LOG_INFO("Total bytes: {}MB", total_bytes / 1e6);
+  LOG_INFO << "Total bytes: " << (total_bytes / 1e6) << "MB";
 
   // int64_t num_devices = std::stoi(GETENV("NUM_DEVICES", "1"));
   int64_t count = pub_buffer_.size();
@@ -225,13 +229,13 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
     //                               count);
     // futures.push_back(std::async(std::launch::async, publish_func));
     // count++;
-    partition.oid = mm_count_;
-    auto [data, size] = partition.Serialize();
+    partition->oid = mm_count_;
+    auto buffer = partition->Serialize();
     auto topic =
-        std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition.dev_id);
-    Publish(partition.dev_id, topic, data, size);
+        std::string(MQTT_COMPUTE_TOPIC_REQ) + std::to_string(partition->dev_id);
+    Publish(partition->dev_id, topic, buffer->GetBuffer(), buffer->GetSize());
     // LOG_DEBUG("Published message to topic {}, count {}", topic, count);
-    pub_buffer_[count] = data;
+    pub_buffer_[count] = buffer->GetBuffer();
     // });
     // pub_count_ = (pub_count_++) % num_devices_;
     count++;
@@ -241,9 +245,10 @@ void MQTTServer::DispatchMatMulAsync(torch::Tensor& mat_a,
     f.wait();
   }
   auto end = std::chrono::high_resolution_clock::now();
-  LOG_INFO("Publish time: {}us",
-           std::chrono::duration_cast<std::chrono::microseconds>(end - start)
-               .count());
+  LOG_INFO << "Publish time: "
+           << std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                  .count()
+           << "us";
   mm_count_++;
 }
 
@@ -254,13 +259,13 @@ void MQTTServer::OnConnect(struct mosquitto* mosq, void* userdata, int result) {
       auto topic = std::string(MQTT_COMPUTE_TOPIC_RSP) + std::to_string(i);
       if (mosq == mosq_[i % num_mosq_]) {
         int ret = mosquitto_subscribe(mosq, NULL, topic.c_str(), 0);
-        LOG_FATAL_IF(ret != MOSQ_ERR_SUCCESS,
-                     "Failed to subscribe to topic, error code: {}", ret);
+        LOG_FATAL_IF(ret != MOSQ_ERR_SUCCESS)
+            << "Failed to subscribe to topic, error code: " << ret;
         fprintf(stderr, "Subscribed to topic %s\n", topic.c_str());
       }
     }
   } else {
-    LOG_FATAL("Connect failed with code {}", result);
+    LOG_FATAL << "Connect failed with code " << result;
   }
 }
 
@@ -294,7 +299,7 @@ MQTTServer::MQTTServer(int64_t block_size)
 
   // get the number of keys from redis
   num_devices_ = GetNumKeys(redis_);
-  LOG_INFO("Number of devices registered: {}", num_devices_);
+  LOG_INFO << "Number of devices registered: " << num_devices_;
 }
 
 // void MQTTServer::OnPublish(struct mosquitto* mosq, void* obj, int mid) {
@@ -325,7 +330,8 @@ void MQTTServer::SetUpMosq(struct mosquitto* mosq) {
       });
 }
 
-void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
+void MQTTServer::RephrasePartitions(
+    std::vector<MatrixPartitionPtr>& partitions) {
   std::vector<float> device_time(num_devices_, 0);
   std::vector<float> device_ul_bw(num_devices_, 0);
   std::vector<float> device_dl_bw(num_devices_, 0);
@@ -349,9 +355,9 @@ void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
   for (auto& partition : partitions) {
     float min_time = std::numeric_limits<float>::max();
     int min_device = 0;
-    auto version = partition.version;
-    auto tensor_key_row = partition.GetRowKey();
-    auto tensor_key_col = partition.GetColKey();
+    auto version = partition->version;
+    auto tensor_key_row = partition->GetRowKey();
+    auto tensor_key_col = partition->GetColKey();
     bool min_r_cached = false;
     bool min_c_cached = false;
     for (int i = 0; i < num_devices_; i++) {
@@ -360,19 +366,19 @@ void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
       bool r_cached = tensors.find(tensor_key_row) != tensors.end();
       bool c_cached = tensors.find(tensor_key_col) != tensors.end();
 
-      auto r_size = std::get<1>(partition.mat[0]);
-      auto c_size = std::get<1>(partition.mat[1]);
+      auto r_size = std::get<1>(partition->mat[0]);
+      auto c_size = std::get<1>(partition->mat[1]);
       auto cached_r_size = (r_cached) ? 0 : r_size;
       auto cached_c_size = (c_cached) ? 0 : c_size;
 
-      int64_t num_rows = r_size / partition.h_dim / sizeof(float);
-      int64_t num_cols = c_size / partition.h_dim / sizeof(float);
+      int64_t num_rows = r_size / partition->h_dim / sizeof(float);
+      int64_t num_cols = c_size / partition->h_dim / sizeof(float);
 
       float ul_time =
           (float)(num_rows * num_cols) * sizeof(float) / device_ul_bw[i];
       float dl_time = (float)(cached_r_size + cached_c_size) / device_dl_bw[i];
       float flops =
-          (float)2.0 * num_rows * num_cols * partition.h_dim / device_flops[i];
+          (float)2.0 * num_rows * num_cols * partition->h_dim / device_flops[i];
 
       float time = std::max(std::max(ul_time, dl_time), flops) + device_time[i];
       // ul_time + dl_time + flops + device_time[i];
@@ -388,15 +394,15 @@ void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
     assert(min_time != std::numeric_limits<float>::max());
     // update the time for the device
     device_time[min_device] = min_time;
-    partition.dev_id = min_device;
+    partition->dev_id = min_device;
     device_tensors[min_device].insert(tensor_key_row);
     device_tensors[min_device].insert(tensor_key_col);
 
     if (min_r_cached) {
-      partition.mat[0] = {nullptr, 0};
+      partition->mat[0] = {nullptr, 0};
     }
     if (min_c_cached) {
-      partition.mat[1] = {nullptr, 0};
+      partition->mat[1] = {nullptr, 0};
     }
 
     // print device time
@@ -407,5 +413,5 @@ void MQTTServer::RephrasePartitions(std::vector<MatrixPartition>& partitions) {
     // time_str += "]";
     // fprintf(stderr, "Device time: %s\n", time_str.c_str());
   }
-  LOG_INFO("Device time: {}", device_time);
+  LOG_INFO << "Device time: " << device_time;
 }

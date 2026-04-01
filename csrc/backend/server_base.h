@@ -2,9 +2,41 @@
 
 #include <torch/torch.h>
 
+#include <cstring>
+#include <functional>
 #include <future>
+#include <memory>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <tuple>
+#include <unordered_map>
+#include <vector>
 
-#include "common/types_and_defs.h"
+#include "core/types_and_defs.h"
+#include "global_api.pb.h"
+#include "morphling.pb.h"
+#include "network/uevent.h"
+#include "scatter_gather_buffer.h"
+#include "serialization_buffer.h"
+
+// Common message handler signature
+// All message handlers follow this signature: (connection, payload, size)
+using MessageHandlerSignature = void(const uevent::ConnectionUeventPtr&,
+                                     const void*, size_t);
+using MessageHandler = std::function<MessageHandlerSignature>;
+
+inline std::string BinaryToHex(const unsigned char* data, size_t length) {
+  std::string result(length * 2, '0');
+  static constexpr char kHex[] = "0123456789abcdef";
+
+  for (size_t i = 0; i < length; ++i) {
+    result[i * 2] = kHex[(data[i] >> 4) & 0x0F];
+    result[i * 2 + 1] = kHex[data[i] & 0x0F];
+  }
+
+  return result;
+}
 
 template <typename T>
 std::vector<std::vector<T>> CartesianProduct(const std::vector<T>& list) {
@@ -75,7 +107,11 @@ struct hash<TensorKey> {
 };
 }  // namespace std
 
-struct MatrixPartition {
+// ============================================================================
+// Message Structs
+// ============================================================================
+
+struct MatrixPartition : public ISerializable {
   uint64_t version;
   int64_t row;
   int64_t col;
@@ -83,15 +119,24 @@ struct MatrixPartition {
   int64_t h_dim;             // hidden dimension
   int64_t dev_id;            // device id
   int64_t oid;               // output matrix id for parallel matmul
+  int64_t gemm_id;           // global gemm operation id
   uint64_t timestamp;        // timestamp on sending the message
   std::vector<PtrData> mat;  // if ptr is null and size is 0, means that this
                              // entry need to be fetched from cache first mat is
                              // row block, second mat is col block
   void* ptr_ = nullptr;      // pointer to the data
-  int64_t size_ = 0;         // size of the data
-  std::tuple<void*, int64_t> Serialize() const;
-  void Deserialize(const void* data, int64_t size);
+  size_t size_ = 0;          // size of the data
 
+  // ISerializable interface
+  SerializationBufferPtr Serialize(
+      SerializationFormat format =
+          SerializationFormat::PROTOBUF) const override;
+  void Deserialize(
+      const void* data, size_t size,
+      SerializationFormat format = SerializationFormat::PROTOBUF) override;
+  int32_t GetMessageType() const override;
+
+  // Public helper methods
   TensorKey GetRowKey() const {
     return std::make_tuple(version, pivot, row, true);
   }
@@ -115,9 +160,77 @@ struct MatrixPartition {
   }
 
   std::string DebugString() const;
+
+  // Zero-copy scatter-gather serialization (avoids tensor memcpy)
+  ScatterGatherBufferPtr SerializeZeroCopy() const;
+
+ private:
+  // Format-specific implementations
+  SerializationBufferPtr SerializeProto() const;
+  void DeserializeProto(const void* data, size_t size);
+
+  // Helper methods for metadata
+  void WriteMetadataToBuffer(SerializationBuffer& buffer) const;
+  void ReadMetadataFromBuffer(SerializationBuffer& buffer);
+  void ReadMatricesData(SerializationBuffer& buffer, size_t end_offset);
 };
 
 typedef std::shared_ptr<MatrixPartition> MatrixPartitionPtr;
+
+// Device registration request (server -> client)
+
+// Device registration request (server -> client)
+struct DeviceRegisterRequest : public ISerializable {
+  // Empty request
+
+  // ISerializable interface
+  SerializationBufferPtr Serialize(
+      SerializationFormat format =
+          SerializationFormat::PROTOBUF) const override;
+  void Deserialize(
+      const void* data, size_t size,
+      SerializationFormat format = SerializationFormat::PROTOBUF) override;
+  int32_t GetMessageType() const override;
+  std::string DebugString() const override { return "DeviceRegisterRequest"; }
+
+ private:
+  SerializationBufferPtr SerializeProto() const;
+  void DeserializeProto(const void* data, size_t size);
+};
+typedef std::shared_ptr<DeviceRegisterRequest> DeviceRegisterRequestPtr;
+
+// Device profile data (client -> server)
+// Contains device performance characteristics and capabilities
+struct DeviceProfileData : public ISerializable {
+  uint64_t uuid;
+  uint64_t flops;
+  uint64_t memory;
+  uint64_t ul_bw;   // upload bandwidth
+  uint64_t dl_bw;   // download bandwidth
+  uint64_t ul_lat;  // upload latency
+  uint64_t dl_lat;  // download latency
+
+  // ISerializable interface
+  SerializationBufferPtr Serialize(
+      SerializationFormat format =
+          SerializationFormat::PROTOBUF) const override;
+  void Deserialize(
+      const void* data, size_t size,
+      SerializationFormat format = SerializationFormat::PROTOBUF) override;
+  int32_t GetMessageType() const override;
+  std::string DebugString() const;
+
+ private:
+  SerializationBufferPtr SerializeProto() const;
+  void DeserializeProto(const void* data, size_t size);
+};
+typedef std::shared_ptr<DeviceProfileData> DeviceProfileDataPtr;
+
+// Legacy aliases for backward compatibility
+typedef DeviceProfileData DeviceRegisterResponse;
+typedef std::shared_ptr<DeviceRegisterResponse> DeviceRegisterResponsePtr;
+typedef DeviceProfileData DevicePerf;
+typedef std::shared_ptr<DevicePerf> DevicePerfPtr;
 
 // enum TimerType { kTimerGet, kTimerPut };
 
@@ -126,13 +239,13 @@ typedef std::shared_ptr<MatrixPartition> MatrixPartitionPtr;
 //   uint64_t time;
 // };
 
-MatrixPartition CalculateMatrixPartition(const torch::Tensor& mat_a,
-                                         const torch::Tensor& mat_b, int64_t r,
-                                         int64_t c, int64_t pivot,
-                                         int64_t block_size);
+MatrixPartitionPtr CalculateMatrixPartition(const torch::Tensor& mat_a,
+                                            const torch::Tensor& mat_b,
+                                            int64_t r, int64_t c, int64_t pivot,
+                                            int64_t block_size);
 
 // The computation must be AB^T
 // Every matrix is partitioned into blocks on rows since torch is row major
-std::vector<MatrixPartition> PartitionMatrices(const torch::Tensor& mat_a,
-                                               const torch::Tensor& mat_b,
-                                               int64_t block_size);
+std::vector<MatrixPartitionPtr> PartitionMatrices(const torch::Tensor& mat_a,
+                                                  const torch::Tensor& mat_b,
+                                                  int64_t block_size);

@@ -1,8 +1,22 @@
+"""HuggingFace model parsing utilities.
+
+Provides functions for extracting model metadata and GEMM shapes
+from HuggingFace model configurations.
+"""
+
 import numpy as np
 from transformers import AutoConfig, PretrainedConfig
 
 
 def parse_model_meta(model_name: str) -> dict:
+    """Parse model metadata from HuggingFace model configuration.
+
+    Args:
+        model_name: HuggingFace model name (e.g., "facebook/opt-125m").
+
+    Returns:
+        Dictionary with model_type, d_model, d_ffn, n_head, n_layer, n_kv_head.
+    """
     config = AutoConfig.from_pretrained(model_name)
 
     model_type = config.architectures[0].split("F")[0].lower()
@@ -35,6 +49,16 @@ def parse_model_meta(model_name: str) -> dict:
 
 
 def parse_gemm_shapes(model_name: str, batch_size: int, seq_len: int) -> dict:
+    """Compute GEMM shapes for a given model configuration.
+
+    Args:
+        model_name: HuggingFace model name.
+        batch_size: Batch size for computation.
+        seq_len: Sequence length.
+
+    Returns:
+        Dictionary mapping operation names to GEMM shape tuples.
+    """
     model_meta = parse_model_meta(model_name)
     d_model = model_meta["d_model"]
     d_ffn = model_meta["d_ffn"]
@@ -120,6 +144,16 @@ def parse_gemm_shapes(model_name: str, batch_size: int, seq_len: int) -> dict:
 def parse_shapes_rc_shard(
     model_name: str, batch_size: int, seq_len: int
 ) -> dict:
+    """Compute row-cyclic sharded GEMM shapes.
+
+    Args:
+        model_name: HuggingFace model name.
+        batch_size: Batch size.
+        seq_len: Sequence length.
+
+    Returns:
+        List of unique sharded GEMM shape tuples.
+    """
     shapes = parse_gemm_shapes(model_name, batch_size, seq_len)
 
     shard_list = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]
@@ -175,6 +209,16 @@ def parse_shapes_rc_shard(
 def parse_shapes_summa_shard(
     model_name: str, batch_size: int, seq_len: int
 ) -> dict:
+    """Compute SUMMA-style sharded GEMM shapes.
+
+    Args:
+        model_name: HuggingFace model name.
+        batch_size: Batch size.
+        seq_len: Sequence length.
+
+    Returns:
+        List of unique sharded GEMM shape tuples.
+    """
     shapes = parse_gemm_shapes(model_name, batch_size, seq_len)
     shard_list = [128, 256, 512, 1024, 2048]
 

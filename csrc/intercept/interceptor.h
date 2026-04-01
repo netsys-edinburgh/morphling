@@ -1,8 +1,8 @@
 #pragma once
 
-#include "client.h"
+// #include "client.h"
+#include "core/logger.h"
 #include "memory/caching_allocator.h"
-#include "utils/logger.h"
 
 extern "C" {
 
@@ -42,10 +42,10 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
                T* c, const int* ldc) {                                         \
     if (!orig_##name) {                                                        \
       void* handle_lib = dlopen(LIB, RTLD_LAZY);                               \
-      LOG_FATAL_IF(!handle_lib, "Error loading MKL library: {}", dlerror());   \
+      LOG_FATAL_IF(!handle_lib) << "Error loading MKL library: " << dlerror(); \
       orig_##name = (name##_type)dlsym(handle_lib, #name "_");                 \
-      LOG_FATAL_IF(!orig_##name, "Error loading original " #name "_: {}",      \
-                   dlerror());                                                 \
+      LOG_FATAL_IF(!orig_##name)                                               \
+          << "Error loading original " << #name << "_: " << dlerror();         \
     }                                                                          \
     LOG_DEBUG(                                                                 \
         "Intercepted {}; args transa: {}, transb: {}, m: {}, n: {}, k: "       \
@@ -114,7 +114,25 @@ struct GemmArgs {
 
 typedef std::unique_ptr<GemmArgs> GemmArgsPtr;
 
-std::tuple<size_t, size_t, size_t> CalculateTaskSizes(const GemmArgs* args);
+inline std::tuple<size_t, size_t, size_t> CalculateTaskSizes(
+    const GemmArgs* args) {
+  if (args->group_size == 1) {
+    auto size_a = (args->transa[0] == 'N' || args->transa[0] == 'n')
+                      ? (args->lda[0]) * (args->k[0]) * sizeof(float)
+                      : (args->lda[0]) * (args->m[0]) * sizeof(float);
+    auto size_b = (args->transb[0] == 'N' || args->transb[0] == 'n')
+                      ? (args->ldb[0]) * (args->n[0]) * sizeof(float)
+                      : (args->ldb[0]) * (args->k[0]) * sizeof(float);
+    auto size_c = (args->ldc[0]) * (args->n[0]) * sizeof(float);
+    LOG_FATAL_IF(size_a == 0 || size_b == 0 || size_c == 0)
+        << "Invalid task sizes: A: " << size_a << ", B: " << size_b
+        << ", C: " << size_c;
+    return {size_a, size_b, size_c};
+  }
+  LOG_FATAL << "Grouped gemm not supported yet, group size: "
+            << args->group_size;
+  return {0, 0, 0};
+}
 
 // bool CheckBufferOffloaded(const void* buffer, size_t size);
 

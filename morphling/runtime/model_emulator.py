@@ -1,3 +1,26 @@
+"""Model emulation engine for distributed inference.
+
+Provides:
+  - EmulationEngine: Core engine that manages model loading, parameter
+    allocation, and forward/backward pass interception
+  - InitEmptyModel: Context manager to initialize models with empty tensors
+    (bypassing HuggingFace checkpoint loading)
+
+The engine supports:
+  - Checkpoint loading from local paths or HuggingFace Hub
+  - Shared memory mapping for model parameters
+  - Forward and backward hook registration
+  - Parameter offloading to CPU/disk
+
+Usage:
+    from morphling.runtime.model_emulator import EmulationEngine
+    from transformers import OPTConfig
+
+    config = OPTConfig.from_pretrained("facebook/opt-125m")
+    engine = EmulationEngine(config)
+    engine.init(OPTForCausalLM, "config.json")
+"""
+
 import functools
 import gc
 import json
@@ -11,17 +34,19 @@ import torch
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from tqdm import tqdm
-from transformers import AutoConfig
-from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
+from transformers import AutoConfig, PreTrainedModel
+from transformers.configuration_utils import PretrainedConfig
 
 from morphling._C import ArcherTensorHandle, MemoryManagerClient, set_tensor_shm
 
 # from morphling._intercept import MemoryManagerClient
-from morphling.common import *
+from morphling.common import EmulatorConfig
 from morphling.utils import get_checkpoint_paths
 
 
 def do_nothing_decorator(orig_func: Callable) -> Callable:
+    """Decorator that replaces a function with a no-op."""
+
     @functools.wraps(orig_func)
     def do_nothing(*args, **kwargs):
         pass
@@ -30,6 +55,8 @@ def do_nothing_decorator(orig_func: Callable) -> Callable:
 
 
 def param_init_decorator(orig_param_init: Callable) -> Callable:
+    """Decorator that initializes parameters with empty tensors."""
+
     @functools.wraps(orig_param_init)
     def empty_param_init(cls, *args, **kwargs):
         orig_param_init(cls, *args, **kwargs)
@@ -51,6 +78,12 @@ def param_init_decorator(orig_param_init: Callable) -> Callable:
 
 
 def from_pretrained_decorator(orig_from_pretrained: Callable) -> Callable:
+    """Decorator that loads models with shared memory mapping.
+
+    Intercepts from_pretrained to map model parameters to shared memory
+    via the MemoryManagerClient.
+    """
+
     @functools.wraps(orig_from_pretrained)
     def archer_from_pretrained(cls, *args, **kwargs):
         # print("Creating model from scratch ...")
@@ -85,6 +118,17 @@ def from_pretrained_decorator(orig_from_pretrained: Callable) -> Callable:
 
 
 class InitEmptyModel:
+    """Context manager to initialize models with empty tensors.
+
+    Patches torch.nn module initialization to skip actual parameter
+    initialization, useful for creating models without loading
+    checkpoint weights.
+
+    Usage:
+        with InitEmptyModel(OPTForCausalLM):
+            model = OPTForCausalLM(config)
+    """
+
     def __init__(self, cls: Type[PreTrainedModel]):
         self.cls = cls
 
@@ -178,6 +222,17 @@ class InitEmptyModel:
 
 
 class EmulationEngine(object):
+    """Core model emulation engine for distributed inference.
+
+    Manages model loading, parameter allocation via shared memory,
+    and forward/backward pass interception.
+
+    Attributes:
+        param_id: Counter for parameter tensor IDs.
+        request_id: Counter for inference requests.
+        config: Model configuration.
+    """
+
     param_id = 0
     request_id = 0
     # request_id_flag = False
@@ -210,6 +265,12 @@ class EmulationEngine(object):
         cls: Type[PreTrainedModel],
         config: Union[str, Dict, EmulatorConfig],
     ):
+        """Initialize the emulation engine with model class and config.
+
+        Args:
+            cls: The PreTrainedModel subclass to instantiate.
+            config: Emulator config as path string, dict, or EmulatorConfig.
+        """
         self.cls = cls
         self.param_meta_map = {}
         self.tensor_id_map = {}
@@ -233,6 +294,8 @@ class EmulationEngine(object):
         return self
 
     def __enter__(self):
+        """Context manager entry - sets up model hooks and decorators."""
+
         def do_nothing_decorator(orig_func: Callable) -> Callable:
             @functools.wraps(orig_func)
             def do_nothing(*args, **kwargs):
@@ -499,6 +562,7 @@ class EmulationEngine(object):
 
     # clean up initialization hooks
     def __exit__(self, exc_type, exc_value, traceback):
+        """Context manager exit - restores original methods and removes hooks."""
         self.cls.__init__ = self.cls._old_init
         self.cls.from_pretrained = self.cls._old_from_pretrained
         torch.nn.modules.module.Module.apply = (

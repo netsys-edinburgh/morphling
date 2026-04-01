@@ -6,9 +6,18 @@ project(emulator)
 # Adapted from https://github.com/vllm-project/vllm/blob/a1242324c99ff8b1e29981006dfb504da198c7c3/CMakeLists.txt
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 
-add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0) # needed for torch backward compatibility
+# ============================================================================
+# Compiler Optimization Flags
+# ============================================================================
+# Performance optimization flags for memory-intensive operations
+# These flags are applied to all targets in the project
+set(OPTIMIZATION_FLAGS "-O3 -march=native -mtune=native -funroll-loops -mavx -mavx2")
 
-# Set c++ 17
+# Apply optimization flags to C and CXX
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OPTIMIZATION_FLAGS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OPTIMIZATION_FLAGS} -g3 -Wall")
+
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_ARCHITECTURES native)
 
@@ -20,112 +29,20 @@ set(ENABLE_TESTS OFF)
 
 message(STATUS "CMAKE_BINARY_DIR: ${CMAKE_BINARY_DIR}")
 
-# # Specify the directory where the UMPIRE project will be cloned and built
-# set(EXTERNAL_DIR ${CMAKE_BINARY_DIR}/external)
-# set(UMPIRE_REPO_URL https://github.com/LLNL/Umpire.git)
-# set(UMPIRE_REPO_TAG v2024.07.0)
-
-# clone_and_build_external_project(${EXTERNAL_DIR}
-#   umpire
-#   ${UMPIRE_REPO_URL}
-#   ${UMPIRE_REPO_TAG}
-#   -DENABLE_TESTS=OFF -DENABLE_CUDA=ON -DENABLE_OPENMP=ON -DENABLE_MPI=ON
-#   -DUMPIRE_ENABLE_IPC_SHARED_MEMORY=ON -DUMPIRE_ENABLE_ASAN=ON -DUMPIRE_ENABLE_NUMA=ON -DUMPIRE_ENABLE_LOGGING=ON
-#   -DBLT_CXX_STD=c++17 -DCMAKE_CUDA_STANDARD=17 -DUMPIRE_ENABLE_GMOCK=OFF -DUMPIRE_ENABLE_FORTRAN=OFF
-# )
-# set(UMPIRE_INCLUDE_DIRS ${EXTERNAL_DIR}/umpire/src ${EXTERNAL_DIR}/umpire/build/include)
-# set(UMPIRE_LIBRARY_DIRS ${EXTERNAL_DIR}/umpire/build/lib)
-
-# RTTR Support Flags
 set(BUILD_UNIT_TESTS OFF)
 set(BUILD_EXAMPLES OFF)
-
 set(BUILD_SHARED_LIBS ON)
 
+set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+#set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+add_subdirectory(external/protobuf/cmake)
+set(Protobuf_PROTOC_EXECUTABLE $<TARGET_FILE:protoc>)
+set(Protobuf_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/external/protobuf/src")
+set(Protobuf_LIBRARIES protobuf::libprotobuf)
+include(FindProtobuf)
 
-set(HIREDIS_HEADER $ENV{HOME}/hiredis)
-set(HIREDIS_LIB $ENV{HOME}/hiredis)
-set(TEST_HIREDIS_LIB $ENV{HOME}/hiredis)
-
-
-include_directories($ENV{HOME})
-# # BLT Support Flags
-# set(ENABLE_CUDA ON)
-# set(ENABLE_OPENMP ON)
-# set(ENABLE_MPI ON)
-# set(ENABLE_HIP OFF)
-
-# # Umpire Support Flags
-# set(UMPIRE_ENABLE_IPC_SHARED_MEMORY ON)
-# set(UMPIRE_ENABLE_ASAN ON)
-# set(UMPIRE_ENABLE_NUMA ON)
-
-include(FetchContent)
-set(FETCHCONTENT_QUIET OFF)
-
-FetchContent_Declare(
-  gflags
-  GIT_REPOSITORY https://github.com/gflags/gflags.git
-  GIT_TAG v2.2.2
-)
-
-# FetchContent_Declare(
-# glog
-# GIT_REPOSITORY https://github.com/google/glog.git
-# GIT_TAG v0.6.0
-# )
-FetchContent_Declare(
-  rttr
-  GIT_REPOSITORY https://github.com/rttrorg/rttr.git
-  GIT_TAG v0.9.6
-)
-FetchContent_Declare(
-  rapidjson
-  GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
-  GIT_TAG v1.1.0
-)
-FetchContent_Declare(
-  grpc
-  GIT_REPOSITORY https://github.com/grpc/grpc.git
-  GIT_TAG v1.48.4
-)
-FetchContent_Declare(
-  spdlog
-  GIT_REPOSITORY https://github.com/gabime/spdlog.git
-  GIT_TAG v1.14.1
-)
-FetchContent_Declare(
-  rabbitmq
-  GIT_REPOSITORY https://github.com/alanxz/rabbitmq-c.git
-  GIT_TAG v0.14.0
-)
-FetchContent_Declare(
-  mosquitto
-  GIT_REPOSITORY https://github.com/eclipse-mosquitto/mosquitto.git
-  GIT_TAG v2.0.20
-)
-FetchContent_Declare(
-  tcmalloc
-  GIT_REPOSITORY https://github.com/google/tcmalloc.git
-)
-# FetchContent_Declare(
-#   hiredis
-#   GIT_REPOSITORY https://github.com/redis/hiredis.git
-#   GIT_TAG v1.1.0
-# )
-FetchContent_Declare(
-  redis
-  GIT_REPOSITORY https://github.com/sewenew/redis-plus-plus.git
-  GIT_TAG 1.3.13
-)
-FetchContent_MakeAvailable(rttr rapidjson grpc spdlog gflags rabbitmq mosquitto redis tcmalloc)
-
-# if(NOT rabbitmq_POPULATED)
-#     FetchContent_Populate(rabbitmq)
-#     add_subdirectory(${rabbitmq_SOURCE_DIR} ${rabbitmq_BINARY_DIR})
-# endif()
-
-set(gRPC_INSTALL ON) # Install gRPC for TARGET_FILE
+add_subdirectory(external/rabbitmq-c)
+add_subdirectory(external/redis-plus-plus)
 
 if(DEFINED ENV{CONDA_PREFIX})
   set(CONDA_PREFIX_PATH $ENV{CONDA_PREFIX})
@@ -134,27 +51,12 @@ else()
   message(WARNING "CONDA_PREFIX is not set. Make sure your Conda environment is activated.")
 endif()
 
-# Retrieve the Python version
-# message(STATUS "Python version: ${PYTHON_VERSION_STRING}")
-find_package(PythonInterp REQUIRED)
-
 # find hiredis
 # find_package(hiredis REQUIRED)
 
-# Retrieve the Python major and minor version
-string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\..*" _ ${PYTHON_VERSION_STRING})
-set(Python_VERSION ${CMAKE_MATCH_1}.${CMAKE_MATCH_2})
-message(STATUS "Python version: ${Python_VERSION}")
-
-# set(Python3_EXECUTABLE ${CONDA_PREFIX_PATH}/bin/python3)
-# set(Python_INCLUDE_DIRS ${CONDA_PREFIX_PATH}/include)
-# set(Python3_LIBRARIES ${CONDA_PREFIX_PATH}/lib)
-set(CONDA_INCLUDE_DIRS ${CONDA_PREFIX_PATH}/include)
-set(CONDA_LINK_DIRS ${CONDA_PREFIX_PATH}/lib)
-
 # Supported python versions.  These versions will be searched in order, the
 # first match will be selected.  These should be kept in sync with setup.py.
-set(PYTHON_SUPPORTED_VERSIONS "3.8" "3.9" "3.10" "3.11")
+set(PYTHON_SUPPORTED_VERSIONS "3.8" "3.9" "3.10" "3.11" "3.12")
 
 if(MORPHLING_PYTHON_EXECUTABLE)
   find_python_from_executable(${MORPHLING_PYTHON_EXECUTABLE} "${PYTHON_SUPPORTED_VERSIONS}")
@@ -165,7 +67,7 @@ else()
 endif()
 
 # find_package(Protobuf REQUIRED HINTS ${CONDA_PREFIX_PATH}/lib/python${Python_VERSION}/site-packages/torch/share/cmake/Caffe2/public)
-# find_package(Python COMPONENTS Development REQUIRED)
+find_package(Python COMPONENTS Development REQUIRED)
 # find_package(gRPC CONFIG REQUIRED)
 # find_package(gflags REQUIRED)
 
@@ -192,167 +94,68 @@ find_library(torch_python_LIBRARY torch_python PATHS
   "${TORCH_INSTALL_PREFIX}/lib")
 message(STATUS "torch_python_LIBRARY: ${torch_python_LIBRARY}")
 
-# Find the protoc executable
-# find_program(_PROTOBUF_PROTOC protoc)
-# find_program(_GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin)
-set(_PROTOBUF_LIBPROTOBUF libprotobuf)
-set(_PROTOBUF_PROTOC $<TARGET_FILE:protoc>)
-set(_GRPC_GRPCPP grpc++)
-set(_GRPC_CPP_PLUGIN_EXECUTABLE $<TARGET_FILE:grpc_cpp_plugin>)
+# Find the protoc executable from Protobuf
+set(_PROTOBUF_PROTOC "${Protobuf_PROTOC_EXECUTABLE}")
 
-# Protobuf and gRPC libraries
-# set(_PROTOBUF_LIBPROTOBUF libprotobuf)
-# set(_PROTOBUF_PROTOC $<TARGET_FILE:protoc>)
-# set(_GRPC_GRPCPP grpc++)
-# set(_GRPC_CPP_PLUGIN_EXECUTABLE $<TARGET_FILE:grpc_cpp_plugin>)
+# Proto files
+set(PROTO_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
+set(PROTO_FILES
+  "${PROTO_SRC_DIR}/morphling.proto"
+  "${PROTO_SRC_DIR}/global_api.proto"
+)
 
-# Proto file
-get_filename_component(hw_proto "proto/morphling.proto" ABSOLUTE)
-get_filename_component(hw_proto_path "${hw_proto}" PATH)
-
-# Generated sources
-set(hw_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/morphling.pb.cc")
-set(hw_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/morphling.pb.h")
-set(hw_grpc_srcs "${CMAKE_CURRENT_BINARY_DIR}/morphling.grpc.pb.cc")
-set(hw_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/morphling.grpc.pb.h")
+protobuf_generate(
+  LANGUAGE cpp
+  OUT_VAR PROTO_SRCS
+  PROTOS ${PROTO_FILES}
+  PROTOC_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+  IMPORT_DIRS "${PROTO_SRC_DIR}"
+)
+protobuf_generate(
+  LANGUAGE python
+  OUT_VAR PROTO_PY
+  PROTOS ${PROTO_FILES}
+  PROTOC_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+  IMPORT_DIRS "${PROTO_SRC_DIR}"
+)
 
 message(STATUS "_PROTOBUF_PROTOC: ${_PROTOBUF_PROTOC}")
-message(STATUS "_GRPC_CPP_PLUGIN_EXECUTABLE: ${_GRPC_CPP_PLUGIN_EXECUTABLE}")
 
 message(STATUS "Python3_LIBRARIES: ${Python3_LIBRARIES}")
 
-# # Path to .proto files
-# set(PROTO_FILES ${CMAKE_SOURCE_DIR}/proto/morphling.proto)
-
-# # Specify where the generated files will be located
-# set(PROTO_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
-
-# # Ensure the generated directory exists
-# file(MAKE_DIRECTORY ${PROTO_GEN_DIR})
-
-# # Generate the protobuf (.pb.cc and .pb.h) and gRPC files (.grpc.pb.cc and .grpc.pb.h)
-# foreach(proto_file ${PROTO_FILES})
-# get_filename_component(proto_filename ${proto_file} NAME_WE)
-
-# add_custom_command(
-# OUTPUT ${PROTO_GEN_DIR}/${proto_filename}.pb.cc ${PROTO_GEN_DIR}/${proto_filename}.pb.h
-# ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.cc ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.h
-# COMMAND ${PROTOC_EXECUTABLE}
-# ARGS --proto_path=${CMAKE_SOURCE_DIR}/proto
-# --cpp_out=${PROTO_GEN_DIR}
-# --grpc_out=${PROTO_GEN_DIR}
-# --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN_EXECUTABLE}
-# ${proto_file}
-# DEPENDS ${proto_file}
-# COMMENT "Generating C++ code from ${proto_file}"
-# )
-
-# # Add the generated files to the list of sources
-# list(APPEND PROTO_SRCS ${PROTO_GEN_DIR}/${proto_filename}.pb.cc)
-# list(APPEND PROTO_SRCS ${PROTO_GEN_DIR}/${proto_filename}.grpc.pb.cc)
-# endforeach()
 add_custom_target(
   generate_proto_files ALL
-  DEPENDS "${hw_proto_srcs}" "${hw_proto_hdrs}" "${hw_grpc_srcs}" "${hw_grpc_hdrs}"
-)
-
-add_custom_command(
-  OUTPUT "${hw_proto_srcs}" "${hw_proto_hdrs}" "${hw_grpc_srcs}" "${hw_grpc_hdrs}"
-  COMMAND ${_PROTOBUF_PROTOC}
-  ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
-  --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
-  --python_out "${CMAKE_CURRENT_BINARY_DIR}"
-  -I "${hw_proto_path}"
-  --plugin=protoc-gen-grpc=${_GRPC_CPP_PLUGIN_EXECUTABLE}
-  "${hw_proto}"
-  DEPENDS "${hw_proto}"
-  VERBATIM
+  DEPENDS ${PROTO_SRCS} ${PROTO_PY}
 )
 
 # Include generated *.pb.h files
 include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/external
   ${Python3_INCLUDE_DIRS}
-  ${CONDA_PREFIX_PATH}/include
-  ${rttr_SOURCE_DIR}/src
-  ${rttr_BINARY_DIR}/src
   ${absl_SOURCE_DIR}
-  ${grpc_SOURCE_DIR}/include
-  ${protobuf_SOURCE_DIR}/src
-  ${spdlog_SOURCE_DIR}/include
-  ${rabbitmq_SOURCE_DIR}/include
-  ${rabbitmq_BINARY_DIR}/include
-  ${mosquitto_SOURCE_DIR}/include
-  ${redis_SOURCE_DIR}/src
-  ${redis_SOURCE_DIR}/src/sw/redis++/cxx17
-  ${redis_SOURCE_DIR}/src/sw/redis++/no_tls
-  ${redis_BINARY_DIR}/src
-)
-
-link_directories(
-  ${CONDA_PREFIX_PATH}/lib
-  $ENV{HOME}/hiredis
+  ${Protobuf_INCLUDE_DIRS}
+  /usr/local/include
 )
 
 file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
 file(GLOB MEMORY_SRC "csrc/memory/*.cpp")
-file(GLOB UTILS_SRC "csrc/utils/*.cpp")
+# CORE_SRC split: _C only needs the lightweight utils subset;
+# _Msg needs the full core (including env_cfg which pulls in backend vtables)
+set(CORE_UTILS_SRC
+  "csrc/core/cuda_utils.cpp"
+  "csrc/core/logger.cpp"
+)
+file(GLOB CORE_SRC "csrc/core/*.cpp")
 file(GLOB CHECKPOINT_SRC "csrc/checkpoint/*.cpp")
 file(GLOB SCHEDULER_SRC "csrc/scheduler/*.cpp")
 file(GLOB PYTHON_SRC "csrc/python/*.cpp")
-file(GLOB BACKEND_SRC "csrc/backend/*.cpp" "csrc/backend/*.cc")
-file(GLOB COMMON_SRC "csrc/common/*.cpp" "csrc/common/*.cc")
-file(GLOB NETWORK_SRC "csrc/network/*.cc")
-file(GLOB BASE_SRC "csrc/base/*.cc")
+file(GLOB BACKEND_SRC "csrc/backend/*.cpp")
+file(GLOB NETWORK_SRC "csrc/network/*.cpp")
+file(GLOB BASE_SRC "external/muduo_base/*.cc")
+file(GLOB TIMER_SRC "csrc/timer/*.cpp")
 
-# add_library(morphling_interceptor SHARED ${INTERCEPT_SRC} ${UTILS_SRC} ${hw_proto_srcs} ${hw_grpc_srcs} "csrc/memory/caching_allocator.cpp")
-# target_link_libraries(morphling_interceptor PUBLIC
-#   CUDA::cudart Threads::Threads
-#   libspdlog.so grpc++ grpc++_reflection
-# )
-# target_include_directories(morphling_interceptor PUBLIC "csrc" ${CUDA_INCLUDE_DIRS})
-
-# add_library(morphling STATIC ${UTILS_SRC} ${CHECKPOINT_SRC})
-# target_link_libraries(morphling PUBLIC
-#   CUDA::cudart Threads::Threads
-#   libspdlog.so ${TORCH_LIBRARIES}
-# )
-# target_include_directories(morphling PUBLIC "csrc" ${CUDA_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS})
-
-message(STATUS "rttr_SOURCE_DIR: ${rttr_SOURCE_DIR}")
 message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
-
-# set (MORPHLING_EXT_INCLUDE_DIRS
-
-# )
-
-add_executable(morphling_server "csrc/server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs}
-  "csrc/scheduler/gpu_worker.cpp" ${MEMORY_SRC} ${UTILS_SRC} ${INTERCEPT_SRC} ${CHECKPOINT_SRC}
-)
-add_dependencies(morphling_server generate_proto_files)
-target_link_libraries(morphling_server PRIVATE
-  gflags::gflags fmt
-  ${_PROTOBUF_LIBPROTOBUF}
-  grpc++ grpc++_reflection
-  libspdlog.so
-  rttr_core uuid
-  CUDA::cublas CUDA::cudart
-  libpython${Python_VERSION}.so
-  ${TORCH_LIBRARIES}
-  rabbitmq
-)
-target_include_directories(morphling_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
-
-# add_executable(morphling_worker_server "csrc/worker_server.cpp" ${hw_proto_srcs} ${hw_grpc_srcs})
-# add_dependencies(morphling_worker_server generate_proto_files)
-# target_link_libraries(morphling_worker_server PRIVATE
-#   gflags::gflags fmt
-#   ${_PROTOBUF_LIBPROTOBUF}
-#   grpc++ grpc++_reflection
-#   libspdlog.so
-#   uuid
-# )
-# target_include_directories(morphling_worker_server PRIVATE "csrc" ${TORCH_INCLUDE_DIRS} ${CUDA_INCLUDE_DIRS})
 
 
 
@@ -381,21 +184,19 @@ get_torch_gpu_compiler_flags(MORPHLING_GPU_FLAGS ${MORPHLING_GPU_LANG})
 # _C extension
 #
 set(MORPHLING_EXT_SRC
-  ${CHECKPOINT_SRC}
-  ${MEMORY_SRC}
-  ${UTILS_SRC}
-  ${INTERCEPT_SRC}
-  ${hw_proto_srcs}
-  ${hw_grpc_srcs}
+  ${CORE_UTILS_SRC}
+  ${BASE_SRC}
+  ${TIMER_SRC}
+  "csrc/memory/shared_memory.cpp"
   "csrc/python/checkpoint_py.cpp"
 )
 set(MORPHLING_EXT_LIB
   # ${TORCH_LIBRARIES}
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
-  libspdlog.so rttr_core
-  grpc++ grpc++_reflection
+  ${Protobuf_LIBRARIES}
   rabbitmq
+  CUDA::cublas
 )
 
 message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
@@ -416,22 +217,28 @@ set(MORPHLING_MSG_SRC
   ${BACKEND_SRC}
   ${NETWORK_SRC}
   ${BASE_SRC}
-  ${COMMON_SRC}
+  ${TIMER_SRC}
+  ${CORE_SRC}
+  ${PROTO_SRCS}
   "csrc/scheduler/amqp_dispatcher.cpp"
   "csrc/scheduler/amqp_worker.cpp"
+  "csrc/scheduler/cpu_worker.cpp"
+  "csrc/scheduler/gpu_worker.cpp"
   "csrc/python/client_py.cpp"
-  "csrc/utils/logger.cpp"
   "csrc/memory/caching_allocator.cpp"
   "csrc/memory/shared_memory.cpp"
 )
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
-  uuid Threads::Threads fmt rttr_core
-  rabbitmq libmosquitto
-  libspdlog.so
+  uuid Threads::Threads fmt
+  rabbitmq mosquitto
+  ${Protobuf_LIBRARIES}
   redis++
   hiredis
   event
+  openblas
+  CUDA::cublas
+  CUDA::cuda_driver
 )
 
 define_gpu_extension_target(
@@ -446,47 +253,33 @@ define_gpu_extension_target(
   WITH_SOABI
 )
 
-# set(MORPHLING_INTERCEPTOR_SRC
-# ${INTERCEPT_SRC}
-# ${MEMORY_SRC}
-# ${UTILS_SRC}
-# ${hw_proto_srcs}
-# ${hw_grpc_srcs}
-# "csrc/python/intercept_py.cpp"
-# )
-# set(MORPHLING_INTERCEPTOR_LIB
-# mkl_rt grpc++ grpc++_reflection rttr_core
-# libspdlog.so uuid
-# )
-# define_gpu_extension_target(
-# _intercept
-# DESTINATION morphling
-# LANGUAGE ${MORPHLING_GPU_LANG}
-# SOURCES ${MORPHLING_INTERCEPTOR_SRC}
-# COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
-# ARCHITECTURES ${MORPHLING_GPU_ARCHES}
-# LIBRARIES ${MORPHLING_INTERCEPTOR_LIB}
-# WITH_SOABI
-# )
+#
+# _GreenCtx extension (green context runtime for dynamic SM partitioning)
+#
+set(MORPHLING_GREENCTX_SRC
+  ${BASE_SRC}
+  "csrc/scheduler/green_context_runtime.cpp"
+  "csrc/scheduler/green_trace_parser.cpp"
+  "csrc/python/green_ctx_py.cpp"
+  "csrc/core/logger.cpp"
+  "csrc/core/cuda_utils.cpp"
+)
+set(MORPHLING_GREENCTX_LIB
+  torch ${torch_python_LIBRARY}
+  uuid Threads::Threads fmt
+  CUDA::cuda_driver
+)
 
-# set(MORPHLING_ALLOCATOR_SRC
-# ${MEMORY_SRC}
-# ${UTILS_SRC}
-# )
-# set(MORPHLING_ALLOCATOR_LIB
-# uuid Threads::Threads
-# libspdlog.so
-# )
-# define_gpu_extension_target(
-# morphling_allocator
-# DESTINATION morphling
-# LANGUAGE ${MORPHLING_GPU_LANG}
-# SOURCES ${MORPHLING_ALLOCATOR_SRC}
-# COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
-# ARCHITECTURES ${MORPHLING_GPU_ARCHES}
-# LIBRARIES ${MORPHLING_ALLOCATOR_LIB}
-# WITH_SOABI
-# )
+define_gpu_extension_target(
+  _GreenCtx
+  DESTINATION morphling
+  LANGUAGE ${MORPHLING_GPU_LANG}
+  SOURCES ${MORPHLING_GREENCTX_SRC}
+  COMPILE_FLAGS ${MORPHLING_GPU_FLAGS}
+  ARCHITECTURES ${MORPHLING_GPU_ARCHES}
+  LIBRARIES ${MORPHLING_GREENCTX_LIB}
+  WITH_SOABI
+)
 
 # Enable testing if the option is ON
 message(STATUS "BUILD_TESTS: ${BUILD_TESTS}")

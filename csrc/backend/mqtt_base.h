@@ -12,10 +12,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "common/generator.h"
-#include "common/types_and_defs.h"
+#include "core/generator.h"
+#include "core/logger.h"
+#include "core/types_and_defs.h"
 #include "redis_base.h"
-#include "utils/logger.h"
 
 #define MQTT_COMPUTE_TOPIC_REQ "/morphling/comp/req/"
 #define MQTT_COMPUTE_TOPIC_RSP "/morphling/comp/rsp/"
@@ -62,7 +62,7 @@ class MQTTBase {
     pub_cb_count_--;
     // fprintf(stderr, "Published message %d\n", mid);
     if (pub_cb_count_ == 0) {
-      LOG_DEBUG("All messages published, clearing buffer");
+      LOG_DEBUG << "All messages published, clearing buffer";
       for (auto* ptr : pub_buffer_) {
         free(ptr);
       }
@@ -95,7 +95,7 @@ class MQTTBase {
     mosquitto_lib_init();
 
     num_mosq_ = std::stoi(GETENV("MORPHLING_NUM_CONN", "1"));
-    LOG_DEBUG("Number of connections: {}", num_mosq_);
+    LOG_DEBUG << "Number of connections: " << num_mosq_;
     pub_mutex_ = std::move(std::vector<std::mutex>(num_mosq_));
     pub_cv_ = std::move(std::vector<std::condition_variable>(num_mosq_));
     for (int i = 0; i < num_mosq_; i++) {
@@ -154,8 +154,8 @@ class MQTTBase {
       int ret = mosquitto_publish(mosq_[idx], NULL, task.topic.c_str(),
                                   task.payloadlen, task.payload, 0, false);
       if (ret != MOSQ_ERR_SUCCESS) {
-        LOG_ERROR("Failed to publish message {}, error code {}", task.topic,
-                  ret);
+        LOG_ERROR << "Failed to publish message " << task.topic
+                  << ", error code " << ret;
       }
     }
   }

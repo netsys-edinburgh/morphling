@@ -1,3 +1,9 @@
+"""Keyword constant lists for Python object introspection.
+
+Provides lists of Python and framework-specific keywords used for
+filtering or identifying special attributes during introspection.
+"""
+
 pyobj_keywords = [
     "__class__",
     "__delattr__",

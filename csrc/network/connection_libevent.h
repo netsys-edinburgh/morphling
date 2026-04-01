@@ -1,10 +1,10 @@
 #ifndef CONNECTION_LIBEVENT_H
 #define CONNECTION_LIBEVENT_H
 
-#include "base/logging.h"
 #include "event2/buffer.h"
 #include "event2/bufferevent.h"
 #include "event2/event.h"
+#include "muduo_base/logging.h"
 #include "uevent.h"
 
 // BEV_EVENT_READING   0x01    /**< 读取过程中遇到的错误 */
@@ -27,6 +27,15 @@ class BuffereventWrapper {
   inline ssize_t ReadableLength() { return evbuffer_get_length(inbuf_); }
   inline int SendData(const void* data, size_t data_len) {
     return evbuffer_add(outbuf_, data, data_len);
+  }
+  inline int SendDataZeroCopy(const void* data, size_t data_len,
+                              void (*cleanup_cb)(const void*, size_t, void*),
+                              void* cleanup_arg) {
+    return evbuffer_add_reference(outbuf_, data, data_len, cleanup_cb,
+                                  cleanup_arg);
+  }
+  inline unsigned char* PullupData(size_t len) {
+    return evbuffer_pullup(inbuf_, static_cast<ev_ssize_t>(len));
   }
   inline int ReceiveData(void* data, size_t data_len) {
     return evbuffer_copyout(inbuf_, data, data_len);
@@ -59,6 +68,10 @@ class ConnectionLibevent : public ConnectionUevent {
   virtual void SetFd();  // connector 确认连接成功后调用
   virtual ssize_t ReadableLength();
   virtual int SendData(const void* data, size_t data_len);
+  virtual int SendDataZeroCopy(const void* data, size_t data_len,
+                               void (*cleanup_cb)(const void*, size_t, void*),
+                               void* cleanup_arg);
+  virtual unsigned char* PullupData(size_t len);
   virtual int ReceiveData(void* data, size_t data_len);
   virtual int DrainData(size_t len);
   virtual int RemoveData(void* data, size_t data_len);

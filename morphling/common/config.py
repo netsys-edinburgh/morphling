@@ -1,3 +1,9 @@
+"""Configuration classes and utilities for DeviceEmulator.
+
+Provides configuration dataclasses for device and emulator settings,
+byte conversion utilities, and logging setup.
+"""
+
 import dataclasses
 import json
 import logging
@@ -8,7 +14,10 @@ import psutil
 import torch
 from transformers import HfArgumentParser
 
-from morphling.common.types_and_defs import *
+from morphling.common.types_and_defs import (
+    compute_pin_offsets,
+    compute_shm_offsets,
+)
 
 KB = 1024
 MB = 1024 * KB
@@ -43,6 +52,22 @@ SYMBOLS = {
 
 
 def bytes2human(n, format="%(value).1f %(symbol)s", symbols="customary"):
+    """Convert bytes to human-readable string.
+
+    Args:
+        n: Number of bytes.
+        format: Format string with %(value)s and %(symbol)s placeholders.
+        symbols: Symbol set - "customary", "customary_ext", "iec", or "iec_ext".
+
+    Returns:
+        Human-readable string representation of bytes.
+
+    Examples:
+        >>> bytes2human(1024)
+        '1.0 K'
+        >>> bytes2human(1048576)
+        '1.0 M'
+    """
     """
     Convert n bytes into a human readable string based on format.
     symbols can be either "customary", "customary_ext", "iec" or "iec_ext",
@@ -94,6 +119,17 @@ def bytes2human(n, format="%(value).1f %(symbol)s", symbols="customary"):
 
 
 def human2bytes(s):
+    """Convert human-readable byte string to bytes.
+
+    Args:
+        s: Human-readable string like "1K", "1M", "1Gi".
+
+    Returns:
+        Integer number of bytes.
+
+    Raises:
+        ValueError: If format cannot be interpreted.
+    """
     """
     Attempts to guess the string format based on default symbols
     set and return the corresponding bytes as an integer.
@@ -155,6 +191,8 @@ def human2bytes(s):
 
 @dataclass
 class TrainigConfig:
+    """Training configuration for device emulation."""
+
     batch_size: int = field(default=128, metadata={"help": "Batch size"})
     seq_length: int = field(default=1024, metadata={"help": "Sequence length"})
     model: str = field(default="gpt2", metadata={"help": "Model name"})
@@ -162,6 +200,8 @@ class TrainigConfig:
 
 @dataclass
 class DeviceConfig:
+    """Device configuration for a single compute device."""
+
     rank: int
     # ip: str
     # port: int
@@ -208,6 +248,8 @@ class DeviceConfig:
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):
+    """JSON encoder that handles dataclasses."""
+
     def default(self, o):
         if dataclasses.is_dataclass(o):
             return dataclasses.asdict(o)
@@ -216,6 +258,8 @@ class EnhancedJSONEncoder(json.JSONEncoder):
 
 @dataclass
 class EmulatorConfig:
+    """Configuration for the device emulator."""
+
     gpu_memory: int = field(
         default=10,
         metadata={"help": "an integer in GB"},
@@ -307,12 +351,13 @@ from logging import Formatter, StreamHandler, getLogger
 
 
 def get_logger():
+    """Get the morphling logger instance."""
     logger = getLogger("morphling")
     logger.setLevel(LOG_LEVEL)
     handler = StreamHandler()
     handler.setLevel(LOG_LEVEL)
     formatter = Formatter(
-        "%(asctime)s - %(className)s.%(funcName)s - %(levelname)s - %(message)s"
+        "%(asctime)s - %(name)s.%(funcName)s - %(levelname)s - %(message)s"
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
