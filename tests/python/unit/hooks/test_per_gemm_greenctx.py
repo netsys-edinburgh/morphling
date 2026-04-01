@@ -11,9 +11,7 @@ import torch
 import torch.nn as nn
 
 _ROOT = Path(__file__).resolve().parents[4]
-_TRACE_PATH = (
-    _ROOT / "tests" / "data" / "greenctx" / "second_level_wall.trace"
-)
+_TRACE_PATH = _ROOT / "tests" / "data" / "greenctx" / "second_level_wall.trace"
 
 
 class _LocalMatmulBackend:
@@ -143,7 +141,9 @@ def hooked_linear_real_controller(hooks_api):
     hooks, autograd = hooks_api
 
     if not torch.cuda.is_available():
-        pytest.skip("CUDA is required for real GreenContextController select_backend('auto') integration")
+        pytest.skip(
+            "CUDA is required for real GreenContextController select_backend('auto') integration"
+        )
 
     try:
         runtime_mod = importlib.import_module("morphling.runtime.green_context")
@@ -169,11 +169,15 @@ def hooked_linear_real_controller(hooks_api):
 
     if not controller.backend.load_trace(str(_TRACE_PATH)):
         controller.close()
-        pytest.skip("Selected green context backend could not load second_level_wall.trace")
+        pytest.skip(
+            "Selected green context backend could not load second_level_wall.trace"
+        )
 
     if not controller.backend.is_supported():
         controller.close()
-        pytest.skip("No supported green context backend available for real-controller integration")
+        pytest.skip(
+            "No supported green context backend available for real-controller integration"
+        )
 
     orig_linear_forward = torch.nn.Linear.forward
     orig_functional_linear = torch.nn.functional.linear

@@ -8,10 +8,10 @@
 #include <mutex>
 #include <unordered_map>
 
-#include "core/types_and_defs.h"
-#include "memory/shared_memory.h"
 #include "core/logger.h"
 #include "core/noncopyable.h"
+#include "core/types_and_defs.h"
+#include "memory/shared_memory.h"
 
 #define MEMORY_TYPE_VALUES(X, EnumType) \
   X(SHM, EnumType)                      \

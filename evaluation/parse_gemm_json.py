@@ -48,7 +48,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Parse bench_green_ctx GEMM JSON into CSV"
     )
-    _ = parser.add_argument("--input", required=True, help="Path to benchmark JSON")
+    _ = parser.add_argument(
+        "--input", required=True, help="Path to benchmark JSON"
+    )
     _ = parser.add_argument("--output", required=True, help="Output CSV path")
     args = parser.parse_args()
     input_path = cast(str, args.input)

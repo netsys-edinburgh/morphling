@@ -2,8 +2,8 @@
 
 #include <iostream>
 
-#include "core/types_and_defs.h"
 #include "core/logger.h"
+#include "core/types_and_defs.h"
 
 void MQTTServer::OnMessage(struct mosquitto* mosq, void* obj,
                            const struct mosquitto_message* message) {

@@ -4,9 +4,9 @@
 
 #include <iostream>
 
+#include "core/logger.h"
 #include "core/pytorch_defs.h"
 #include "server_base.h"
-#include "core/logger.h"
 
 void MQTTWorker::OnMessage(struct mosquitto* mosq, void* obj,
                            const struct mosquitto_message* message) {

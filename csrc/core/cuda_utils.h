@@ -35,14 +35,14 @@
         << "CUDA error. message: " << cudaGetErrorString(err); \
   }
 
-#define CHECK_CU_RESULT(call)                                             \
-  {                                                                       \
-    CUresult err = (call);                                                \
-    if (err != CUDA_SUCCESS) {                                            \
-      const char* err_str = nullptr;                                      \
-      cuGetErrorString(err, &err_str);                                    \
+#define CHECK_CU_RESULT(call)                                            \
+  {                                                                      \
+    CUresult err = (call);                                               \
+    if (err != CUDA_SUCCESS) {                                           \
+      const char* err_str = nullptr;                                     \
+      cuGetErrorString(err, &err_str);                                   \
       LOG_FATAL << "CUDA driver error: " << (err_str ? err_str : "???"); \
-    }                                                                     \
+    }                                                                    \
   }
 
 bool LogCudaError(cudaError_t status, const char* context);

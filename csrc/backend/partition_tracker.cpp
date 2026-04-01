@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <sstream>
 
-#include "sched_policy.h"
 #include "core/logger.h"
+#include "sched_policy.h"
 
 namespace morphling {
 namespace backend {

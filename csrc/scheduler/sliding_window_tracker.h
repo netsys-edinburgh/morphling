@@ -25,10 +25,8 @@ class SlidingWindowDurationTracker {
     size_t count = SampleCount();
     if (count == 0) return default_us_;
     int64_t sum = 0;
-    size_t start =
-        (write_idx_ > WindowSize) ? write_idx_ - WindowSize : 0;
-    for (size_t i = start; i < write_idx_; i++)
-      sum += samples_[i % WindowSize];
+    size_t start = (write_idx_ > WindowSize) ? write_idx_ - WindowSize : 0;
+    for (size_t i = start; i < write_idx_; i++) sum += samples_[i % WindowSize];
     return sum / static_cast<int64_t>(count);
   }
 
@@ -39,8 +37,8 @@ class SlidingWindowDurationTracker {
   static TimePoint Now() { return Clock::now(); }
 
   static int64_t ElapsedUs(TimePoint start) {
-    return std::chrono::duration_cast<std::chrono::microseconds>(
-               Clock::now() - start)
+    return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() -
+                                                                 start)
         .count();
   }
 

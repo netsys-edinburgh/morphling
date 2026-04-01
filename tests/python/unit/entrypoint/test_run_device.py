@@ -9,7 +9,6 @@ from unittest import mock
 
 import pytest
 
-
 RUN_DEVICE_PATH = (
     Path(__file__).resolve().parents[4]
     / "morphling"

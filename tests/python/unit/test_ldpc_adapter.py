@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -29,7 +30,9 @@ def _bootstrap_morphling() -> None:
         sys.modules["morphling.runtime"] = runtime_mod
     so_path = root / "morphling" / "_GreenCtx.so"
     if so_path.exists() and "morphling._GreenCtx" not in sys.modules:
-        spec = importlib.util.spec_from_file_location("morphling._GreenCtx", str(so_path))
+        spec = importlib.util.spec_from_file_location(
+            "morphling._GreenCtx", str(so_path)
+        )
         if spec is not None and spec.loader is not None:
             greenctx = importlib.util.module_from_spec(spec)
             sys.modules["morphling._GreenCtx"] = greenctx
@@ -143,7 +146,10 @@ def test_switch_gap_calculation() -> None:
         adapter = LdpcTraceAdapter(csv_path)
         violations = adapter.detect_violations()
         first = violations.iloc[0]
-        expected_gap = rows[1]["time_decode_start_actual_ns"] - rows[1]["time_slot_sched_ns"]
+        expected_gap = (
+            rows[1]["time_decode_start_actual_ns"]
+            - rows[1]["time_slot_sched_ns"]
+        )
         assert int(first.switch_gap_ns) == expected_gap
 
 
@@ -164,9 +170,9 @@ def test_empty_csv() -> None:
 def test_missing_columns() -> None:
     with tempfile.TemporaryDirectory() as td:
         csv_path = Path(td) / "missing_cols.csv"
-        pd.DataFrame(
-            [{"time_slot_sched_ns": 1, "sm_count": 2}]
-        ).to_csv(csv_path, index=False)
+        pd.DataFrame([{"time_slot_sched_ns": 1, "sm_count": 2}]).to_csv(
+            csv_path, index=False
+        )
         try:
             LdpcTraceAdapter(csv_path)
             raise AssertionError("Expected ValueError for missing columns")

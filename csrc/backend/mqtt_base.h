@@ -13,9 +13,9 @@
 #include <vector>
 
 #include "core/generator.h"
+#include "core/logger.h"
 #include "core/types_and_defs.h"
 #include "redis_base.h"
-#include "core/logger.h"
 
 #define MQTT_COMPUTE_TOPIC_REQ "/morphling/comp/req/"
 #define MQTT_COMPUTE_TOPIC_RSP "/morphling/comp/rsp/"

@@ -81,9 +81,7 @@ class GreenContextController:
         self._bundles: Dict[int, StreamBundle] = {}
         if backend.is_supported():
             for sm in backend.available_sm_counts():
-                self._bundles[sm] = (
-                    backend.get_stream_bundle(sm)
-                )
+                self._bundles[sm] = backend.get_stream_bundle(sm)
 
         # Also cache for off backend
         if not backend.is_supported():
@@ -97,9 +95,7 @@ class GreenContextController:
     ) -> "GreenContextController":
         """Create controller from config."""
         if not cfg.enabled:
-            backend = OffBackend(
-                gpu_id=device_id, strict=False
-            )
+            backend = OffBackend(gpu_id=device_id, strict=False)
             return cls(backend=backend, config=cfg)
 
         backend = select_backend(
@@ -118,8 +114,7 @@ class GreenContextController:
             if not backend.load_trace(cfg.trace_path):
                 if cfg.strict:
                     raise RuntimeError(
-                        f"Failed to load trace: "
-                        f"{cfg.trace_path}"
+                        f"Failed to load trace: {cfg.trace_path}"
                     )
                 logger.warning(
                     "Failed to load trace: %s",
@@ -137,9 +132,7 @@ class GreenContextController:
         return self._backend
 
     @contextmanager
-    def step_scope(
-        self, step_idx: int
-    ) -> Generator[StreamBundle, None, None]:
+    def step_scope(self, step_idx: int) -> Generator[StreamBundle, None, None]:
         """Context manager for one training step.
 
         Activates the SM partition for the given step,

@@ -6,6 +6,7 @@ Usage (Docker with GPU):
       --gemm-shapes results/gemm_shapes.json \
       --output results/gflops_per_sm.json
 """
+
 import argparse
 import json
 import os
@@ -47,9 +48,7 @@ def benchmark_gemm(
     arr = np.array(times_ms)
     flops = 2.0 * m * n * k
     mean_ms = float(np.mean(arr))
-    gflops = (
-        flops / (mean_ms * 1e-3) / 1e9 if mean_ms > 0 else 0.0
-    )
+    gflops = flops / (mean_ms * 1e-3) / 1e9 if mean_ms > 0 else 0.0
 
     return {
         "mean_ms": mean_ms,
@@ -93,10 +92,7 @@ def main():
 
     with open(args.gemm_shapes) as f:
         shapes = json.load(f)
-    print(
-        f"Benchmarking {len(shapes)} GEMM shapes "
-        f"at SM counts: {sm_counts}"
-    )
+    print(f"Benchmarking {len(shapes)} GEMM shapes at SM counts: {sm_counts}")
 
     # Try green context
     has_green_ctx = False
@@ -131,13 +127,10 @@ def main():
         for shape in shapes:
             m, n, k = shape["m"], shape["n"], shape["k"]
             gk = f"{m}x{n}x{k}_{shape['phase']}"
-            r = benchmark_gemm(
-                m, n, k, args.n_warmup, args.n_iters
-            )
+            r = benchmark_gemm(m, n, k, args.n_warmup, args.n_iters)
             results[sm_key][gk] = r
             print(
-                f"  {gk}: {r['mean_gflops']:.1f} GFLOPS "
-                f"({r['mean_ms']:.3f} ms)"
+                f"  {gk}: {r['mean_gflops']:.1f} GFLOPS ({r['mean_ms']:.3f} ms)"
             )
 
         # Deactivate
@@ -153,20 +146,11 @@ def main():
         total_flops = 0.0
         total_time_s = 0.0
         for shape in shapes:
-            gk = (
-                f"{shape['m']}x{shape['n']}x{shape['k']}"
-                f"_{shape['phase']}"
-            )
+            gk = f"{shape['m']}x{shape['n']}x{shape['k']}_{shape['phase']}"
             if gk in results[sm_key]:
                 cnt = shape.get("count_per_step", 1)
                 r = results[sm_key][gk]
-                total_flops += (
-                    2.0
-                    * shape["m"]
-                    * shape["n"]
-                    * shape["k"]
-                    * cnt
-                )
+                total_flops += 2.0 * shape["m"] * shape["n"] * shape["k"] * cnt
                 total_time_s += r["mean_ms"] * cnt / 1000.0
         if total_time_s > 0:
             aggregate[sm_key] = {
@@ -185,9 +169,7 @@ def main():
         },
     }
 
-    os.makedirs(
-        os.path.dirname(args.output) or ".", exist_ok=True
-    )
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     with open(args.output, "w") as f:
         json.dump(output, f, indent=2)
     print(f"\nSaved to {args.output}")

@@ -1,8 +1,8 @@
 #pragma once
 
 // #include "client.h"
-#include "memory/caching_allocator.h"
 #include "core/logger.h"
+#include "memory/caching_allocator.h"
 
 extern "C" {
 

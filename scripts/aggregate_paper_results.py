@@ -5,10 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Union
+from typing import Dict, List, Optional, Union
 
 Numeric = Union[int, float]
 

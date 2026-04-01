@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
-
 COUNTERS = [
     "trace_entries",
     "violations",
@@ -40,7 +39,9 @@ def _first_value(
     return None
 
 
-def _summarize_trace(trace_type: str, json_path: str) -> dict[str, Scalar | None]:
+def _summarize_trace(
+    trace_type: str, json_path: str
+) -> dict[str, Scalar | None]:
     raw_data_obj = cast(object, json.loads(Path(json_path).read_text()))
     if not isinstance(raw_data_obj, dict):
         raise ValueError(f"Invalid benchmark JSON at {json_path}")

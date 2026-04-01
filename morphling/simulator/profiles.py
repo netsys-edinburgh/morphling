@@ -5,6 +5,7 @@ helper functions for generating homogeneous profiles.
 """
 
 import json
+
 from .events import NodeProfile, ProfilingData
 
 

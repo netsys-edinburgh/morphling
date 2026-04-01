@@ -6,12 +6,12 @@
 #include <string>
 #include <vector>
 
+#include "core/logger.h"
+#include "core/thread_affinity.h"
 #include "core/types_and_defs.h"
 #include "scheduler/cpu_worker.h"
 #include "scheduler/gpu_worker.h"
 #include "scheduler/sliding_window_tracker.h"
-#include "core/logger.h"
-#include "core/thread_affinity.h"
 
 // ---- RAII helpers --------------------------------------------------------
 
@@ -90,8 +90,8 @@ struct HostBuffer {
 
 // TN layout matching proxy_cli.cc:BuildGemmArgs (transa='T', transb='N')
 static std::shared_ptr<GemmArgs> MakeTNGemmArgs(int m, int n, int k,
-                                                 const float* a,
-                                                 const float* b, float* c) {
+                                                const float* a, const float* b,
+                                                float* c) {
   auto args = std::make_shared<GemmArgs>();
   args->group_size = 1;
   args->transa[0] = 'T';
@@ -132,8 +132,7 @@ static std::unique_ptr<CpuWorkerPool> MakeCpuPool() {
     cores.push_back(i);
   }
   return std::make_unique<CpuWorkerPool>(
-      num_workers, std::move(cores),
-      WorkerSchedulingPolicy::kRoundRobinCpu);
+      num_workers, std::move(cores), WorkerSchedulingPolicy::kRoundRobinCpu);
 }
 
 // =========================================================================
@@ -237,7 +236,7 @@ static void BM_GpuPool_Throughput(benchmark::State& state) {
     bufs_b.emplace_back(elems);
     bufs_c.emplace_back(elems);
     args_vec.push_back(MakeTNGemmArgs(dim, dim, dim, bufs_a[i].ptr,
-                                       bufs_b[i].ptr, bufs_c[i].ptr));
+                                      bufs_b[i].ptr, bufs_c[i].ptr));
   }
 
   auto worker = MakeGpuWorker();
@@ -262,9 +261,9 @@ static void BM_GpuPool_Throughput(benchmark::State& state) {
   state.counters["GFLOPS"] = benchmark::Counter(
       total_flops, benchmark::Counter::kIsIterationInvariantRate,
       benchmark::Counter::kIs1000);
-  state.counters["tasks/s"] = benchmark::Counter(
-      static_cast<double>(num_tasks),
-      benchmark::Counter::kIsIterationInvariantRate);
+  state.counters["tasks/s"] =
+      benchmark::Counter(static_cast<double>(num_tasks),
+                         benchmark::Counter::kIsIterationInvariantRate);
 
   worker->Stop();
 }
@@ -299,7 +298,7 @@ static void BM_CpuPool_Throughput(benchmark::State& state) {
     bufs_b.emplace_back(elems);
     bufs_c.emplace_back(elems);
     args_vec.push_back(MakeTNGemmArgs(dim, dim, dim, bufs_a[i].ptr,
-                                       bufs_b[i].ptr, bufs_c[i].ptr));
+                                      bufs_b[i].ptr, bufs_c[i].ptr));
   }
 
   auto cpu_pool = MakeCpuPool();
@@ -323,9 +322,9 @@ static void BM_CpuPool_Throughput(benchmark::State& state) {
   state.counters["GFLOPS"] = benchmark::Counter(
       total_flops, benchmark::Counter::kIsIterationInvariantRate,
       benchmark::Counter::kIs1000);
-  state.counters["tasks/s"] = benchmark::Counter(
-      static_cast<double>(num_tasks),
-      benchmark::Counter::kIsIterationInvariantRate);
+  state.counters["tasks/s"] =
+      benchmark::Counter(static_cast<double>(num_tasks),
+                         benchmark::Counter::kIsIterationInvariantRate);
 }
 
 BENCHMARK(BM_CpuPool_Throughput)
@@ -364,13 +363,13 @@ static void BM_Hybrid_RoundRobin(benchmark::State& state) {
     gpu_a.emplace_back(elems);
     gpu_b.emplace_back(elems);
     gpu_c.emplace_back(elems);
-    gpu_args.push_back(MakeTNGemmArgs(dim, dim, dim, gpu_a[i].ptr,
-                                       gpu_b[i].ptr, gpu_c[i].ptr));
+    gpu_args.push_back(MakeTNGemmArgs(dim, dim, dim, gpu_a[i].ptr, gpu_b[i].ptr,
+                                      gpu_c[i].ptr));
     cpu_a.emplace_back(elems);
     cpu_b.emplace_back(elems);
     cpu_c.emplace_back(elems);
-    cpu_args.push_back(MakeTNGemmArgs(dim, dim, dim, cpu_a[i].ptr,
-                                       cpu_b[i].ptr, cpu_c[i].ptr));
+    cpu_args.push_back(MakeTNGemmArgs(dim, dim, dim, cpu_a[i].ptr, cpu_b[i].ptr,
+                                      cpu_c[i].ptr));
   }
 
   auto gpu_worker = MakeGpuWorker();
@@ -390,8 +389,7 @@ static void BM_Hybrid_RoundRobin(benchmark::State& state) {
   for (auto _ : state) {
     int gpu_idx = 0, cpu_idx = 0;
     for (int i = 0; i < num_tasks; i++) {
-      std::string tid =
-          "rr_" + std::to_string(iter) + "_" + std::to_string(i);
+      std::string tid = "rr_" + std::to_string(iter) + "_" + std::to_string(i);
       if (i % 2 == 0) {
         // Even tasks -> GPU
         auto& a = gpu_args[gpu_idx++];
@@ -413,9 +411,9 @@ static void BM_Hybrid_RoundRobin(benchmark::State& state) {
   state.counters["GFLOPS"] = benchmark::Counter(
       total_flops, benchmark::Counter::kIsIterationInvariantRate,
       benchmark::Counter::kIs1000);
-  state.counters["tasks/s"] = benchmark::Counter(
-      static_cast<double>(num_tasks),
-      benchmark::Counter::kIsIterationInvariantRate);
+  state.counters["tasks/s"] =
+      benchmark::Counter(static_cast<double>(num_tasks),
+                         benchmark::Counter::kIsIterationInvariantRate);
   state.counters["gpu_tasks"] = static_cast<double>(gpu_task_count);
   state.counters["cpu_tasks"] = static_cast<double>(cpu_task_count);
 
@@ -459,13 +457,13 @@ static void BM_Hybrid_Adaptive(benchmark::State& state) {
     gpu_a.emplace_back(elems);
     gpu_b.emplace_back(elems);
     gpu_c.emplace_back(elems);
-    gpu_args.push_back(MakeTNGemmArgs(dim, dim, dim, gpu_a[i].ptr,
-                                       gpu_b[i].ptr, gpu_c[i].ptr));
+    gpu_args.push_back(MakeTNGemmArgs(dim, dim, dim, gpu_a[i].ptr, gpu_b[i].ptr,
+                                      gpu_c[i].ptr));
     cpu_a.emplace_back(elems);
     cpu_b.emplace_back(elems);
     cpu_c.emplace_back(elems);
-    cpu_args.push_back(MakeTNGemmArgs(dim, dim, dim, cpu_a[i].ptr,
-                                       cpu_b[i].ptr, cpu_c[i].ptr));
+    cpu_args.push_back(MakeTNGemmArgs(dim, dim, dim, cpu_a[i].ptr, cpu_b[i].ptr,
+                                      cpu_c[i].ptr));
   }
 
   auto gpu_worker = MakeGpuWorker();
@@ -482,15 +480,13 @@ static void BM_Hybrid_Adaptive(benchmark::State& state) {
     gpu_worker->AddTask("warmup_gpu",
                         [&]() { gpu_worker->RunXtGemm(gpu_args[0]); });
     gpu_worker->WaitTaskDone("warmup_gpu");
-    gpu_tracker.RecordDuration(
-        SlidingWindowDurationTracker<64>::ElapsedUs(t0));
+    gpu_tracker.RecordDuration(SlidingWindowDurationTracker<64>::ElapsedUs(t0));
   }
   {
     auto t0 = SlidingWindowDurationTracker<64>::Now();
     cpu_pool->EnqueueGemm("warmup_cpu", cpu_args[0]);
     cpu_pool->WaitAll();
-    cpu_tracker.RecordDuration(
-        SlidingWindowDurationTracker<64>::ElapsedUs(t0));
+    cpu_tracker.RecordDuration(SlidingWindowDurationTracker<64>::ElapsedUs(t0));
   }
 
   int iter = 0;
@@ -508,12 +504,10 @@ static void BM_Hybrid_Adaptive(benchmark::State& state) {
       // gpu_wait = pending_gpu * avg_gpu_duration
       // cpu_wait = pending_cpu * avg_cpu_duration
       // prefer GPU on tie (<=)
-      int64_t gpu_wait =
-          static_cast<int64_t>(gpu_worker->GetTaskCount()) *
-          gpu_tracker.GetAverageDurationUs();
-      int64_t cpu_wait =
-          static_cast<int64_t>(cpu_pool->GetPendingTaskCount()) *
-          cpu_tracker.GetAverageDurationUs();
+      int64_t gpu_wait = static_cast<int64_t>(gpu_worker->GetTaskCount()) *
+                         gpu_tracker.GetAverageDurationUs();
+      int64_t cpu_wait = static_cast<int64_t>(cpu_pool->GetPendingTaskCount()) *
+                         cpu_tracker.GetAverageDurationUs();
       bool use_gpu = (gpu_wait <= cpu_wait);
 
       if (use_gpu) {
@@ -529,8 +523,7 @@ static void BM_Hybrid_Adaptive(benchmark::State& state) {
       } else {
         auto t0 = SlidingWindowDurationTracker<64>::Now();
         cpu_pool->EnqueueGemm(
-            tid, cpu_args[cpu_idx++],
-            [&cpu_tracker, t0](const std::string&) {
+            tid, cpu_args[cpu_idx++], [&cpu_tracker, t0](const std::string&) {
               cpu_tracker.RecordDuration(
                   SlidingWindowDurationTracker<64>::ElapsedUs(t0));
             });
@@ -546,9 +539,9 @@ static void BM_Hybrid_Adaptive(benchmark::State& state) {
   state.counters["GFLOPS"] = benchmark::Counter(
       total_flops, benchmark::Counter::kIsIterationInvariantRate,
       benchmark::Counter::kIs1000);
-  state.counters["tasks/s"] = benchmark::Counter(
-      static_cast<double>(num_tasks),
-      benchmark::Counter::kIsIterationInvariantRate);
+  state.counters["tasks/s"] =
+      benchmark::Counter(static_cast<double>(num_tasks),
+                         benchmark::Counter::kIsIterationInvariantRate);
   state.counters["gpu_tasks"] = static_cast<double>(gpu_task_count);
   state.counters["cpu_tasks"] = static_cast<double>(cpu_task_count);
 

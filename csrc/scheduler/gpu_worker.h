@@ -1,7 +1,7 @@
 #pragma once
 
-#include <cublas_v2.h>
 #include <cublasXt.h>
+#include <cublas_v2.h>
 #include <cuda.h>  // CUDA driver API (green contexts)
 #include <cuda_runtime_api.h>
 
@@ -13,10 +13,10 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/cuda_utils.h"
 #include "intercept/interceptor.h"
 #include "memory/caching_allocator.h"
 #include "scheduling_policy.h"
-#include "core/cuda_utils.h"
 #include "worker_base.h"
 
 // One entry in an SM switching schedule file.
@@ -91,9 +91,7 @@ class XtGemmWorker : public WorkerBase,
   int GetActiveSmCount() const;
   std::vector<int> GetAvailableSmCounts() const;
 
-  CachingAllocator* GetAllocator() const {
-    return allocator_.get();
-  }
+  CachingAllocator* GetAllocator() const { return allocator_.get(); }
 
   // Load an SM switching schedule from a text file.
   // Returns false on parse error or invalid SM counts.

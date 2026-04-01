@@ -94,8 +94,7 @@ namespace backend {
 class ProxyCliHandle : public uevent::LoopHandle {
  public:
   ProxyCliHandle(ProxyEnvCfg& ctx, uevent::UeventLoop* loop,
-                 int64_t device_id = 0,
-                 XtGemmWorkerPool* gpu_pool = nullptr,
+                 int64_t device_id = 0, XtGemmWorkerPool* gpu_pool = nullptr,
                  CpuWorkerPool* cpu_pool = nullptr);
   ~ProxyCliHandle();
 
@@ -122,35 +121,28 @@ class ProxyCliHandle : public uevent::LoopHandle {
  private:
   bool ShouldUseGpu() const;
 
-  void SubmitToGpuPool(const uevent::ConnectionUeventPtr& conn,
-                       const MatrixPartition& partition,
-                       float* out_ptr, int64_t out_bytes,
-                       const float* row_ptr, int64_t row_size,
-                       const float* col_ptr, int64_t col_size,
-                       int64_t h_dim, uint64_t vt_compute_start,
-                       bool is_host_alloc,
-                       SlidingWindowDurationTracker<>::TimePoint
-                           task_enqueue_time);
-  void SubmitToCpuPool(const uevent::ConnectionUeventPtr& conn,
-                       const MatrixPartition& partition,
-                       float* out_ptr, int64_t out_bytes,
-                       const float* row_ptr, int64_t row_size,
-                       const float* col_ptr, int64_t col_size,
-                       int64_t h_dim, uint64_t vt_compute_start,
-                       bool is_host_alloc,
-                       SlidingWindowDurationTracker<>::TimePoint
-                           task_enqueue_time);
-  static std::shared_ptr<GemmArgs> BuildGemmArgs(
-      const float* col_ptr, int64_t col_size,
-      const float* row_ptr, int64_t row_size,
-      int64_t h_dim, float* out_ptr);
-  void OnComputeComplete(const uevent::ConnectionUeventPtr& conn,
-                         const MatrixPartition& partition,
-                         float* out_ptr, int64_t out_bytes,
-                         int64_t col_size, uint64_t vt_compute_start,
-                         bool is_host_alloc, bool is_gpu_task,
-                         SlidingWindowDurationTracker<>::TimePoint
-                             task_enqueue_time);
+  void SubmitToGpuPool(
+      const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
+      float* out_ptr, int64_t out_bytes, const float* row_ptr, int64_t row_size,
+      const float* col_ptr, int64_t col_size, int64_t h_dim,
+      uint64_t vt_compute_start, bool is_host_alloc,
+      SlidingWindowDurationTracker<>::TimePoint task_enqueue_time);
+  void SubmitToCpuPool(
+      const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
+      float* out_ptr, int64_t out_bytes, const float* row_ptr, int64_t row_size,
+      const float* col_ptr, int64_t col_size, int64_t h_dim,
+      uint64_t vt_compute_start, bool is_host_alloc,
+      SlidingWindowDurationTracker<>::TimePoint task_enqueue_time);
+  static std::shared_ptr<GemmArgs> BuildGemmArgs(const float* col_ptr,
+                                                 int64_t col_size,
+                                                 const float* row_ptr,
+                                                 int64_t row_size,
+                                                 int64_t h_dim, float* out_ptr);
+  void OnComputeComplete(
+      const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
+      float* out_ptr, int64_t out_bytes, int64_t col_size,
+      uint64_t vt_compute_start, bool is_host_alloc, bool is_gpu_task,
+      SlidingWindowDurationTracker<>::TimePoint task_enqueue_time);
 
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;

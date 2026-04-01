@@ -11,7 +11,9 @@ try:
     from transformers import AutoConfig
     from transformers.models.opt.modeling_opt import OPTDecoderLayer
 except (ImportError, TypeError):
-    pytest.skip("transformers unavailable or incompatible", allow_module_level=True)
+    pytest.skip(
+        "transformers unavailable or incompatible", allow_module_level=True
+    )
 
 
 def test_autograd_hooks_forward_backward():
@@ -29,6 +31,7 @@ def test_autograd_hooks_forward_backward():
         def add_arguments(func):
             def wrapper(*args, **kwargs):
                 return func(*args, **kwargs)
+
             return wrapper
 
         torch.Tensor.__add__ = add_arguments(AddFunction.apply)

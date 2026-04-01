@@ -16,52 +16,38 @@ from typing import Protocol, cast
 
 
 class _CudaStream(Protocol):
-    def synchronize(self) -> None:
-        ...
+    def synchronize(self) -> None: ...
 
 
 class _CudaEvent(Protocol):
-    def record(self, stream: _CudaStream) -> None:
-        ...
+    def record(self, stream: _CudaStream) -> None: ...
 
-    def synchronize(self) -> None:
-        ...
+    def synchronize(self) -> None: ...
 
-    def elapsed_time(self, end_event: "_CudaEvent") -> float:
-        ...
+    def elapsed_time(self, end_event: "_CudaEvent") -> float: ...
 
 
 class _CudaApi(Protocol):
-    def is_available(self) -> bool:
-        ...
+    def is_available(self) -> bool: ...
 
-    def device_count(self) -> int:
-        ...
+    def device_count(self) -> int: ...
 
-    def default_stream(self) -> _CudaStream:
-        ...
+    def default_stream(self) -> _CudaStream: ...
 
-    def Event(self, *, enable_timing: bool) -> _CudaEvent:
-        ...
+    def Event(self, *, enable_timing: bool) -> _CudaEvent: ...
 
-    def stream(
-        self, stream: _CudaStream
-    ) -> AbstractContextManager[object]:
-        ...
+    def stream(self, stream: _CudaStream) -> AbstractContextManager[object]: ...
 
-    def set_device(self, device: int) -> None:
-        ...
+    def set_device(self, device: int) -> None: ...
 
-    def synchronize(self) -> None:
-        ...
+    def synchronize(self) -> None: ...
 
 
 class _TorchApi(Protocol):
     float16: object
     cuda: _CudaApi
 
-    def matmul(self, a: object, b: object) -> object:
-        ...
+    def matmul(self, a: object, b: object) -> object: ...
 
     def randn(
         self,
@@ -69,23 +55,20 @@ class _TorchApi(Protocol):
         *,
         device: object,
         dtype: object,
-    ) -> object:
-        ...
+    ) -> object: ...
 
-    def device(self, device: str) -> object:
-        ...
+    def device(self, device: str) -> object: ...
 
 
 class _GreenRuntime(Protocol):
-    def activate_sm_for_thread(self, sm_count: int) -> int:
-        ...
+    def activate_sm_for_thread(self, sm_count: int) -> int: ...
+
 
 torch_mod = cast(object, importlib.import_module("torch"))
 torch = cast(_TorchApi, torch_mod)
 
 TORCH_LIB_PATH = (
-    "/mnt/data/xly/.conda/envs/emulator/lib/python3.9/"
-    "site-packages/torch/lib"
+    "/mnt/data/xly/.conda/envs/emulator/lib/python3.9/site-packages/torch/lib"
 )
 CUDA_LIB_PATH = "/usr/local/cuda-12.6/lib64"
 
@@ -206,9 +189,7 @@ def _measure_switch_overhead_us(
     iterations: int,
 ) -> float:
     stream = torch.cuda.default_stream()
-    runtime = cast(
-        _GreenRuntime, cast(object, getattr(backend, "_rt"))
-    )
+    runtime = cast(_GreenRuntime, cast(object, getattr(backend, "_rt")))
     overhead_us: list[float] = []
 
     for _ in range(iterations):
@@ -234,9 +215,7 @@ def _measure_greenctx_ms(
     warmup_iters: int,
     bench_iters: int,
 ) -> float:
-    runtime = cast(
-        _GreenRuntime, cast(object, getattr(backend, "_rt"))
-    )
+    runtime = cast(_GreenRuntime, cast(object, getattr(backend, "_rt")))
     bundle = backend.get_stream_bundle(sm_count)
     comp_stream = cast(_CudaStream, bundle.comp)
 
@@ -278,11 +257,7 @@ def _print_table(rows: list[BenchRow]) -> None:
         "Switch Overhead (us)",
     ]
 
-    print(
-        "| "
-        + " | ".join(headers)
-        + " |"
-    )
+    print("| " + " | ".join(headers) + " |")
     print("|---:|:---|---:|---:|---:|")
 
     for row in rows:
@@ -328,12 +303,8 @@ def main() -> None:
         for size in MATRIX_SIZES:
             bench_iters = BENCH_ITERS[size]
 
-            a = torch.randn(
-                (size, size), device=device, dtype=DTYPE
-            )
-            b = torch.randn(
-                (size, size), device=device, dtype=DTYPE
-            )
+            a = torch.randn((size, size), device=device, dtype=DTYPE)
+            b = torch.randn((size, size), device=device, dtype=DTYPE)
 
             baseline_ms = _measure_baseline_ms(
                 a,

@@ -482,7 +482,7 @@ node_modules/
 
 # Task files
 # tasks.json
-# tasks/ 
+# tasks/
 
 # Prerequisites
 *.d
@@ -535,11 +535,11 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
-install_manifest.txt 
+install_manifest.txt
 compile_commands.json
 
 # Temporary files
-*.tmp 
+*.tmp
 *.log
 
 # Development artifacts
@@ -549,8 +549,8 @@ compile_commands.json
 
 # PRD drafts (local planning)
 PRD_*.md
-*.bak 
-*.swp 
+*.bak
+*.swp
 
 # vcpkg
 vcpkg_installed/

@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import importlib.util
-from pathlib import Path
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import matplotlib
@@ -24,7 +24,9 @@ if str(REPO_ROOT) not in sys.path:
 
 def _load_adapter_cls() -> Any:
     module_path = REPO_ROOT / "morphling" / "runtime" / "ldpc_trace_adapter.py"
-    spec = importlib.util.spec_from_file_location("ldpc_trace_adapter", module_path)
+    spec = importlib.util.spec_from_file_location(
+        "ldpc_trace_adapter", module_path
+    )
     if spec is None or spec.loader is None:
         raise ImportError(f"Unable to load adapter module from {module_path}")
     module = importlib.util.module_from_spec(spec)
@@ -94,7 +96,12 @@ def _load_trace(path: Path, total_sms: int, name: str) -> TraceData:
     adapter = LdpcTraceAdapter(path, total_sms=total_sms)
     df = adapter._df.copy()
 
-    required_cols = ["decode_dur_us", "deadline_met", "sum_prb", "sum_tbs_bytes"]
+    required_cols = [
+        "decode_dur_us",
+        "deadline_met",
+        "sum_prb",
+        "sum_tbs_bytes",
+    ]
     for col in required_cols:
         df[col] = _ensure_numeric(df, col)
 
@@ -132,17 +139,23 @@ def _save_dual(fig, out_dir: Path, stem: str) -> None:
     plt.close(fig)
 
 
-def _deadline_compliance(trace_a: TraceData, trace_b: TraceData, out_dir: Path) -> None:
+def _deadline_compliance(
+    trace_a: TraceData, trace_b: TraceData, out_dir: Path
+) -> None:
     labels = ["≤10", "11-40", "41-80", ">80", "overall"]
     bins = [-np.inf, 10, 40, 80, np.inf]
 
     def compute(df: pd.DataFrame) -> list[float]:
-        bucket = pd.cut(df["sum_prb"], bins=bins, labels=labels[:-1], right=True)
+        bucket = pd.cut(
+            df["sum_prb"], bins=bins, labels=labels[:-1], right=True
+        )
         grouped = df.groupby(bucket, observed=True)["deadline_met"].mean()
         values: list[float] = []
         for lbl in labels[:-1]:
             raw = grouped.get(lbl)
-            values.append(float(raw) * 100.0 if raw is not None else float("nan"))
+            values.append(
+                float(raw) * 100.0 if raw is not None else float("nan")
+            )
         values.append(float(df["deadline_met"].mean()) * 100.0)
         return values
 
@@ -205,9 +218,13 @@ def _latency_cdf(trace_a: TraceData, trace_b: TraceData, out_dir: Path) -> None:
 
         styles = ["--", ":", "-."]
         for idx, q in enumerate(q_a):
-            ax.axvline(q, color=WONG_PALETTE[5], linestyle=styles[idx], alpha=0.8)
+            ax.axvline(
+                q, color=WONG_PALETTE[5], linestyle=styles[idx], alpha=0.8
+            )
         for idx, q in enumerate(q_b):
-            ax.axvline(q, color=WONG_PALETTE[1], linestyle=styles[idx], alpha=0.8)
+            ax.axvline(
+                q, color=WONG_PALETTE[1], linestyle=styles[idx], alpha=0.8
+            )
 
         annotation = (
             f"{trace_a.name} p50/p95/p99: {q_a[0]:.1f}/{q_a[1]:.1f}/{q_a[2]:.1f} µs\n"
@@ -232,10 +249,17 @@ def _timeline(trace_a: TraceData, trace_b: TraceData, out_dir: Path) -> None:
     with plt.rc_context(_paper_rc()):
         fig, axes = plt.subplots(2, 1, figsize=(7.0, 3.2), sharex=True)
 
-        for trace, color in ((trace_a, WONG_PALETTE[5]), (trace_b, WONG_PALETTE[1])):
+        for trace, color in (
+            (trace_a, WONG_PALETTE[5]),
+            (trace_b, WONG_PALETTE[1]),
+        ):
             idx = trace.df["row_idx"]
-            rolling = trace.df["decode_dur_us"].rolling(100, min_periods=1).median()
-            axes[0].plot(idx, rolling, color=color, label=f"{trace.name} rolling p50")
+            rolling = (
+                trace.df["decode_dur_us"].rolling(100, min_periods=1).median()
+            )
+            axes[0].plot(
+                idx, rolling, color=color, label=f"{trace.name} rolling p50"
+            )
 
             miss_df = trace.df.loc[trace.df["deadline_met"] == 0]
             axes[0].scatter(
@@ -327,7 +351,10 @@ def _violation_inefficiency_timeline(
     with plt.rc_context(_paper_rc()):
         fig, axes = plt.subplots(2, 1, figsize=(7.0, 3.2), sharex=True)
 
-        for trace, base_color in ((trace_a, WONG_PALETTE[5]), (trace_b, WONG_PALETTE[1])):
+        for trace, base_color in (
+            (trace_a, WONG_PALETTE[5]),
+            (trace_b, WONG_PALETTE[1]),
+        ):
             vio = trace.violations.copy()
             ine = trace.inefficiencies.copy()
 
@@ -442,12 +469,7 @@ def _print_summary(trace_with: TraceData, trace_without: TraceData) -> None:
         with_val = stats_with[key]
         without_val = stats_without[key]
         delta = _improvement(with_val, without_val)
-        print(
-            f"{label:<26}"
-            f"{with_val:>18.3f}"
-            f"{without_val:>18.3f}"
-            f"{delta:>18.2f}"
-        )
+        print(f"{label:<26}{with_val:>18.3f}{without_val:>18.3f}{delta:>18.2f}")
     print("=" * 96)
 
 
@@ -490,7 +512,9 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     with_ctrl = _load_trace(args.with_ctrl, args.total_sms, "with_ctrl")
-    without_ctrl = _load_trace(args.without_ctrl, args.total_sms, "without_ctrl")
+    without_ctrl = _load_trace(
+        args.without_ctrl, args.total_sms, "without_ctrl"
+    )
 
     _deadline_compliance(with_ctrl, without_ctrl, args.output_dir)
     _latency_cdf(with_ctrl, without_ctrl, args.output_dir)

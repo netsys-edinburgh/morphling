@@ -5,7 +5,7 @@
 #include "core/types_and_defs.h"
 
 #define SCHEDULING_POLICY_VALUES(X, EnumType) \
-  X(kRoundRobinGemm, EnumType)               \
+  X(kRoundRobinGemm, EnumType)                \
   X(kRoundRobinCpu, EnumType)
 
 DEFINE_ENUM_CLASS(WorkerSchedulingPolicy, SCHEDULING_POLICY_VALUES)

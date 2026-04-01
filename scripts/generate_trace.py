@@ -11,7 +11,6 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-
 SCS_PRESETS = {
     15: {"slot_ns": 1_000_000, "budget_min_us": 500, "budget_max_us": 714},
     30: {"slot_ns": 500_000, "budget_min_us": 200, "budget_max_us": 429},
@@ -233,14 +232,20 @@ def parse_args() -> argparse.Namespace:
         default=30,
         help="Subcarrier spacing preset (kHz)",
     )
-    parser.add_argument("--sm-min", type=int, default=8, help="Minimum SM count")
-    parser.add_argument("--sm-max", type=int, default=64, help="Maximum SM count")
+    parser.add_argument(
+        "--sm-min", type=int, default=8, help="Minimum SM count"
+    )
+    parser.add_argument(
+        "--sm-max", type=int, default=64, help="Maximum SM count"
+    )
     parser.add_argument(
         "--sm-step",
         default="auto",
         help="SM quantization step (auto or integer)",
     )
-    parser.add_argument("--hurst", type=float, default=0.85, help="Hurst parameter")
+    parser.add_argument(
+        "--hurst", type=float, default=0.85, help="Hurst parameter"
+    )
     parser.add_argument(
         "--mean-load",
         type=float,
@@ -337,9 +342,7 @@ def main() -> None:
         f"SM transitions: {transitions}/{total_edges} "
         f"({100.0 * transition_rate:.2f}%)"
     )
-    print(
-        f"Budget range (us): {budgets_us.min():.0f}..{budgets_us.max():.0f}"
-    )
+    print(f"Budget range (us): {budgets_us.min():.0f}..{budgets_us.max():.0f}")
 
     if args.mode == "shaped":
         runs = _stability_runs(sm_count)

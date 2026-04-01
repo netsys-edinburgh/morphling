@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <limits>
 
+#include "core/logger.h"
 #include "device_tracker.h"
 #include "partition_tracker.h"
-#include "core/logger.h"
 
 namespace morphling {
 namespace backend {

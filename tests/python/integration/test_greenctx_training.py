@@ -8,7 +8,6 @@ from importlib import import_module
 from pathlib import Path
 from typing import Callable, NoReturn, Protocol, TypeVar, cast
 
-
 _FuncT = TypeVar("_FuncT", bound=Callable[..., object])
 
 
@@ -88,15 +87,10 @@ class _NNModuleProto(Protocol):
 
     def MSELoss(self) -> _CriterionProto: ...
 
-pytest = cast(
-    _PytestModuleProto, cast(object, import_module("pytest"))
-)
-torch = cast(
-    _TorchModuleProto, cast(object, import_module("torch"))
-)
-nn = cast(
-    _NNModuleProto, cast(object, import_module("torch.nn"))
-)
+
+pytest = cast(_PytestModuleProto, cast(object, import_module("pytest")))
+torch = cast(_TorchModuleProto, cast(object, import_module("torch")))
+nn = cast(_NNModuleProto, cast(object, import_module("torch.nn")))
 
 
 def _bootstrap_morphling() -> None:
@@ -204,9 +198,7 @@ def test_greenctx_training_trace_e2e(gpu_id: int, trace_path: str) -> None:
         nn.Linear(128, 64),
     ).to(device)
     criterion: _CriterionProto = nn.MSELoss()
-    optimizer: _OptimizerProto = torch.optim.SGD(
-        model.parameters(), lr=0.01
-    )
+    optimizer: _OptimizerProto = torch.optim.SGD(model.parameters(), lr=0.01)
 
     x = torch.randn(64, 256, device=device)
     target = torch.randn(64, 64, device=device)

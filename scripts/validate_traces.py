@@ -69,8 +69,7 @@ def main() -> None:
             print(f"  Rows: {len(df)}")
             print(f"  SM counts: {sorted(df['sm_count'].unique())}")
             print(
-                "  SM distribution: "
-                f"{df['sm_count'].value_counts().to_dict()}"
+                f"  SM distribution: {df['sm_count'].value_counts().to_dict()}"
             )
             transitions = int((df["sm_count"].diff() != 0).sum() - 1)
             print(f"  SM transitions: {transitions}")

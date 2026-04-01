@@ -7,7 +7,9 @@
 #include <cstring>
 #include <thread>
 
+#include "core/cuda_utils.h"
 #include "core/generator.h"
+#include "core/logger.h"
 #include "core/stats.h"
 #include "device_tracker.h"
 #include "muduo_base/my_uuid.h"
@@ -16,8 +18,6 @@
 #include "proto_base.h"
 #include "scheduler/cpu_worker.h"
 #include "scheduler/gpu_worker.h"
-#include "core/cuda_utils.h"
-#include "core/logger.h"
 
 using namespace std;
 using namespace std::placeholders;

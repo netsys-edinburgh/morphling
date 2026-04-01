@@ -9,9 +9,9 @@
 #include <memory>
 #include <vector>
 
+#include "core/cuda_utils.h"
 #include "muduo_base/logging.h"
 #include "scheduler/gpu_worker.h"
-#include "core/cuda_utils.h"
 
 #ifdef CHECK_CUBLAS_ERROR
 #undef CHECK_CUBLAS_ERROR

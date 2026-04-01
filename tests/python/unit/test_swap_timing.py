@@ -4,6 +4,7 @@
 These tests avoid importing morphling package init, because it requires
 compiled extension modules that may be unavailable in CI.
 """
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
