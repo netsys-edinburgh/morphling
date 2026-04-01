@@ -1,0 +1,9 @@
+{
+  "seed": 42,
+  "model": "facebook/opt-125m",
+  "steps": 20,
+  "pytorch_version": "2.10.0+cu128",
+  "cuda_version": "12.8",
+  "gpu_name": "NVIDIA RTX A5000",
+  "timestamp": "2026-04-01T23:24:46.264721+00:00"
+}
