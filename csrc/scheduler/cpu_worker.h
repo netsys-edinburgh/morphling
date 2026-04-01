@@ -10,10 +10,10 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/thread_affinity.h"
 #include "intercept/interceptor.h"
 #include "memory/caching_allocator.h"
 #include "scheduling_policy.h"
-#include "core/thread_affinity.h"
 #include "worker_base.h"
 
 // RAII wrapper for a CPU core-affinity bitmask at a specific core
@@ -89,15 +89,11 @@ class CpuWorker : public WorkerBase,
 
   int GetActiveCoreCount() const;
   std::vector<int> GetActiveCores() const;
-  const std::vector<int>& GetAssignedCores() const {
-    return assigned_cores_;
-  }
+  const std::vector<int>& GetAssignedCores() const { return assigned_cores_; }
   std::vector<int> GetAvailableCoreCounts() const;
   int GetPartitionIdx() const { return partition_idx_; }
 
-  CachingAllocator* GetAllocator() const {
-    return allocator_.get();
-  }
+  CachingAllocator* GetAllocator() const { return allocator_.get(); }
 
  private:
   void Run() override;
@@ -128,8 +124,7 @@ class CpuWorkerPool : public noncopyable {
 
   DELETE_COPY_AND_ASSIGN(CpuWorkerPool);
 
-  TaskHandle EnqueueTask(const std::string& task_id,
-                         WorkerBase::Task task,
+  TaskHandle EnqueueTask(const std::string& task_id, WorkerBase::Task task,
                          TaskCallback callback = nullptr);
   TaskHandle EnqueueGemm(const std::string& task_id,
                          std::shared_ptr<GemmArgs> args,
@@ -145,9 +140,7 @@ class CpuWorkerPool : public noncopyable {
     return total;
   }
 
-  std::shared_ptr<CpuWorker> GetWorker(size_t idx) {
-    return workers_.at(idx);
-  }
+  std::shared_ptr<CpuWorker> GetWorker(size_t idx) { return workers_.at(idx); }
 
  private:
   std::vector<std::shared_ptr<CpuWorker>> workers_;

@@ -9,8 +9,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
-#include <string>
 #include <set>
+#include <string>
 #include <vector>
 
 #if __has_include("csrc/scheduler/green_trace_parser.h")
@@ -47,8 +47,7 @@ class GreenTraceParser {
                     GreenTraceConfig& config, std::string& error);
 
   static bool Validate(const std::vector<GreenTraceEntry>& entries,
-                       const std::set<int>& valid_sm_set,
-                       std::string& error);
+                       const std::set<int>& valid_sm_set, std::string& error);
 
   static int SmCountAtTime(const std::vector<GreenTraceEntry>& entries,
                            int64_t elapsed, int default_sm);
@@ -261,7 +260,7 @@ TEST_F(GreenTraceParserTest, Parse_NonMonotonic_Fails) {
   // ParseV2 rejects non-monotonic timestamps at parse time
   EXPECT_FALSE(GreenTraceParser::Parse(path, entries, config, error));
   EXPECT_FALSE(error.empty());
-  }
+}
 TEST_F(GreenTraceParserTest, Parse_EmptyFile_Fails) {
   const std::string path = MakeTraceFile("");
 

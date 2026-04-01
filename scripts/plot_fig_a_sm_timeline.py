@@ -9,11 +9,13 @@ Usage:
       --violations-with-ctrl results/with_ctrl/run_0/violations.json \
       --output figures/fig_a_sm_timeline.pdf
 """
+
 import argparse
 import json
 import os
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,28 +28,30 @@ WONG = {
     "green": "#009E73",
     "yellow": "#F0E442",
     "blue": "#0072B2",
-    "vermillion": "#D55E00",
+    "vermilion": "#D55E00",
     "purple": "#CC79A7",
     "black": "#000000",
 }
 
 # Paper RC params (matching eval_greenctx_training.py)
-plt.rcParams.update({
-    "figure.figsize": (3.33, 3.0),
-    "font.size": 8,
-    "font.family": "serif",
-    "axes.labelsize": 8,
-    "axes.titlesize": 9,
-    "xtick.labelsize": 7,
-    "ytick.labelsize": 7,
-    "legend.fontsize": 7,
-    "lines.linewidth": 0.6,
-    "axes.linewidth": 0.5,
-    "grid.linewidth": 0.3,
-    "savefig.dpi": 300,
-    "savefig.bbox": "tight",
-    "savefig.pad_inches": 0.02,
-})
+plt.rcParams.update(
+    {
+        "figure.figsize": (3.33, 3.0),
+        "font.size": 8,
+        "font.family": "serif",
+        "axes.labelsize": 8,
+        "axes.titlesize": 9,
+        "xtick.labelsize": 7,
+        "ytick.labelsize": 7,
+        "legend.fontsize": 7,
+        "lines.linewidth": 0.6,
+        "axes.linewidth": 0.5,
+        "grid.linewidth": 0.3,
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "savefig.pad_inches": 0.02,
+    }
+)
 
 
 def load_violations(path: str) -> set:
@@ -77,19 +81,23 @@ def main():
     )
     parser.add_argument("--violations-no-ctrl", default="")
     parser.add_argument("--violations-with-ctrl", default="")
+    parser.add_argument("--output", default="figures/fig_a_sm_timeline.pdf")
     parser.add_argument(
-        "--output", default="figures/fig_a_sm_timeline.pdf"
-    )
-    parser.add_argument(
-        "--max-sms", type=int, default=48,
+        "--max-sms",
+        type=int,
+        default=48,
         help="Y-axis max",
     )
     parser.add_argument(
-        "--window-start", type=int, default=0,
+        "--window-start",
+        type=int,
+        default=0,
         help="Start slot index for window (0=full trace)",
     )
     parser.add_argument(
-        "--window-size", type=int, default=0,
+        "--window-size",
+        type=int,
+        default=0,
         help="Window size in slots (0=full trace)",
     )
     args = parser.parse_args()
@@ -117,18 +125,22 @@ def main():
     viol_with = load_violations(args.violations_with_ctrl)
 
     # Create figure
-    fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1, sharex=True, figsize=(3.33, 3.0)
-    )
+    fig, (ax_top, ax_bot) = plt.subplots(2, 1, sharex=True, figsize=(3.33, 3.0))
 
     # TOP: No Control (gray/orange family)
     ax_top.fill_between(
-        x_no, y_no, alpha=0.3, color=WONG["orange"],
+        x_no,
+        y_no,
+        alpha=0.3,
+        color=WONG["orange"],
         step="post",
     )
     ax_top.step(
-        x_no, y_no, where="post",
-        color=WONG["orange"], linewidth=0.6,
+        x_no,
+        y_no,
+        where="post",
+        color=WONG["orange"],
+        linewidth=0.6,
     )
 
     # Violation ticks
@@ -138,8 +150,10 @@ def main():
             viol_x = x_no[viol_mask]
             for vx in viol_x:
                 ax_top.axvline(
-                    vx, color=WONG["vermillion"],
-                    alpha=0.4, linewidth=0.3,
+                    vx,
+                    color=WONG["vermilion"],
+                    alpha=0.4,
+                    linewidth=0.3,
                 )
 
     ax_top.set_ylabel("RAN SMs")
@@ -150,21 +164,30 @@ def main():
     # Annotation: SM swap count
     n_swaps_no = (df_no["sm_count"].diff() != 0).sum() - 1
     ax_top.text(
-        0.98, 0.92,
+        0.98,
+        0.92,
         f"{n_swaps_no:,} swaps",
         transform=ax_top.transAxes,
-        fontsize=6, ha="right", va="top",
+        fontsize=6,
+        ha="right",
+        va="top",
         bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.8),
     )
 
     # BOTTOM: Weaver (blue/green family)
     ax_bot.fill_between(
-        x_with, y_with, alpha=0.3, color=WONG["blue"],
+        x_with,
+        y_with,
+        alpha=0.3,
+        color=WONG["blue"],
         step="post",
     )
     ax_bot.step(
-        x_with, y_with, where="post",
-        color=WONG["blue"], linewidth=0.6,
+        x_with,
+        y_with,
+        where="post",
+        color=WONG["blue"],
+        linewidth=0.6,
     )
 
     # Violation ticks
@@ -174,8 +197,10 @@ def main():
             viol_x = x_with[viol_mask]
             for vx in viol_x:
                 ax_bot.axvline(
-                    vx, color=WONG["vermillion"],
-                    alpha=0.4, linewidth=0.3,
+                    vx,
+                    color=WONG["vermilion"],
+                    alpha=0.4,
+                    linewidth=0.3,
                 )
 
     ax_bot.set_ylabel("RAN SMs")
@@ -188,10 +213,13 @@ def main():
     n_swaps_with = (df_with["sm_count"].diff() != 0).sum() - 1
     reduction = (1 - n_swaps_with / max(n_swaps_no, 1)) * 100
     ax_bot.text(
-        0.98, 0.92,
+        0.98,
+        0.92,
         f"{n_swaps_with:,} swaps ({reduction:.0f}% fewer)",
         transform=ax_bot.transAxes,
-        fontsize=6, ha="right", va="top",
+        fontsize=6,
+        ha="right",
+        va="top",
         bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.8),
     )
 

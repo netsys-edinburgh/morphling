@@ -26,7 +26,7 @@ size_t ResolvePoolBytes(size_t buffer_size) {
 // ---------------------------------------------------------------------------
 
 CpuWorker::CpuWorker(std::vector<int> assigned_cores, int partition_idx,
-                      size_t buffer_size)
+                     size_t buffer_size)
     : assigned_cores_(std::move(assigned_cores)),
       partition_idx_(partition_idx),
       buffer_size_(buffer_size) {
@@ -44,11 +44,10 @@ CpuWorker::~CpuWorker() {
 void CpuWorker::InitAllAffinitySlots() {
   int total_cores = static_cast<int>(assigned_cores_.size());
   LOG_FATAL_IF(total_cores == 0)
-      << "CpuWorker partition " << partition_idx_
-      << " has no assigned cores";
+      << "CpuWorker partition " << partition_idx_ << " has no assigned cores";
 
-  LOG_INFO << "CpuWorker partition " << partition_idx_ << ": "
-           << total_cores << " assigned cores [";
+  LOG_INFO << "CpuWorker partition " << partition_idx_ << ": " << total_cores
+           << " assigned cores [";
 
   // Create a slot for each valid core count: 1, 2, ..., N
   for (int n = 1; n <= total_cores; n++) {
@@ -63,8 +62,7 @@ void CpuWorker::InitAllAffinitySlots() {
 
   // Initialize per-worker pinned memory pool
   size_t pool_bytes = ResolvePoolBytes(buffer_size_);
-  allocator_ =
-      std::make_unique<CachingAllocator>(pool_bytes, MemoryType::PIN);
+  allocator_ = std::make_unique<CachingAllocator>(pool_bytes, MemoryType::PIN);
   LOG_INFO << "CpuWorker partition=" << partition_idx_
            << " allocator initialized: " << pool_bytes << " bytes";
 
@@ -93,8 +91,7 @@ bool CpuWorker::SwitchAffinity(const std::vector<int>& cores) {
                                        assigned_cores_.end());
   for (int core : cores) {
     if (assigned_set.find(core) == assigned_set.end()) {
-      LOG_WARN << "Core " << core
-               << " is not in assigned set for partition "
+      LOG_WARN << "Core " << core << " is not in assigned set for partition "
                << partition_idx_;
       return false;
     }
@@ -155,16 +152,14 @@ void CpuWorker::RunMklGemm(std::shared_ptr<GemmArgs> args) {
 
   CBLAS_TRANSPOSE cblas_transa =
       (args->transa[0] == 'N' || args->transa[0] == 'n') ? CblasNoTrans
-                                                          : CblasTrans;
+                                                         : CblasTrans;
   CBLAS_TRANSPOSE cblas_transb =
       (args->transb[0] == 'N' || args->transb[0] == 'n') ? CblasNoTrans
-                                                          : CblasTrans;
+                                                         : CblasTrans;
 
-  cblas_sgemm(CblasColMajor, cblas_transa, cblas_transb,
-              args->m[0], args->n[0], args->k[0],
-              args->alpha[0], args->a[0], args->lda[0],
-              args->b[0], args->ldb[0],
-              args->beta[0], args->c[0], args->ldc[0]);
+  cblas_sgemm(CblasColMajor, cblas_transa, cblas_transb, args->m[0], args->n[0],
+              args->k[0], args->alpha[0], args->a[0], args->lda[0], args->b[0],
+              args->ldb[0], args->beta[0], args->c[0], args->ldc[0]);
 
   LOG_DEBUG << "RunMklGemm completed on partition=" << partition_idx_;
 }
@@ -173,38 +168,34 @@ void CpuWorker::RunMklGemm(std::shared_ptr<GemmArgs> args) {
 // CpuWorkerPool
 // ---------------------------------------------------------------------------
 
-CpuWorkerPool::CpuWorkerPool(int num_workers,
-                              std::vector<int> assignable_cores,
-                              WorkerSchedulingPolicy policy,
-                              size_t buffer_size) {
+CpuWorkerPool::CpuWorkerPool(int num_workers, std::vector<int> assignable_cores,
+                             WorkerSchedulingPolicy policy,
+                             size_t buffer_size) {
   int total_cores = static_cast<int>(assignable_cores.size());
   int cores_per_worker = total_cores / num_workers;
-  LOG_FATAL_IF(cores_per_worker == 0)
-      << "Not enough cores (" << total_cores << ") for "
-      << num_workers << " workers";
+  LOG_FATAL_IF(cores_per_worker == 0) << "Not enough cores (" << total_cores
+                                      << ") for " << num_workers << " workers";
 
   for (int w = 0; w < num_workers; w++) {
     int start = w * cores_per_worker;
-    int end = (w == num_workers - 1) ? total_cores
-                                     : start + cores_per_worker;
+    int end = (w == num_workers - 1) ? total_cores : start + cores_per_worker;
     std::vector<int> partition(assignable_cores.begin() + start,
                                assignable_cores.begin() + end);
-    workers_.emplace_back(std::make_shared<CpuWorker>(
-        std::move(partition), w, buffer_size));
+    workers_.emplace_back(
+        std::make_shared<CpuWorker>(std::move(partition), w, buffer_size));
   }
 
   switch (policy) {
     case WorkerSchedulingPolicy::kRoundRobinCpu:
-      scheduler_ =
-          std::make_unique<RoundRobinCpuPolicy>(num_workers);
+      scheduler_ = std::make_unique<RoundRobinCpuPolicy>(num_workers);
       break;
     default:
       LOG_FATAL << "Unsupported scheduling policy for CpuWorkerPool: "
                 << WorkerSchedulingPolicyToString(policy);
   }
 
-  LOG_INFO << "CpuWorkerPool created: " << num_workers
-           << " workers over " << total_cores
+  LOG_INFO << "CpuWorkerPool created: " << num_workers << " workers over "
+           << total_cores
            << " cores, policy=" << WorkerSchedulingPolicyToString(policy);
 }
 
@@ -215,21 +206,20 @@ CpuWorkerPool::~CpuWorkerPool() {
 }
 
 TaskHandle CpuWorkerPool::EnqueueTask(const std::string& task_id,
-                                       WorkerBase::Task task,
-                                       TaskCallback callback) {
+                                      WorkerBase::Task task,
+                                      TaskCallback callback) {
   auto [worker_idx, priority] = scheduler_->Schedule(nullptr);
-  return workers_[worker_idx]->AddTask(
-      task_id, std::move(task), std::move(callback));
+  return workers_[worker_idx]->AddTask(task_id, std::move(task),
+                                       std::move(callback));
 }
 
-TaskHandle CpuWorkerPool::EnqueueGemm(
-    const std::string& task_id,
-    std::shared_ptr<GemmArgs> args,
-    TaskCallback callback) {
+TaskHandle CpuWorkerPool::EnqueueGemm(const std::string& task_id,
+                                      std::shared_ptr<GemmArgs> args,
+                                      TaskCallback callback) {
   auto [worker_idx, priority] = scheduler_->Schedule(args.get());
   auto task = std::bind(&CpuWorker::RunMklGemm, workers_[worker_idx], args);
-  return workers_[worker_idx]->AddTask(
-      task_id, std::move(task), std::move(callback));
+  return workers_[worker_idx]->AddTask(task_id, std::move(task),
+                                       std::move(callback));
 }
 
 void CpuWorkerPool::WaitAll() {

@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "scheduler/gpu_worker.h"
 #include "core/logger.h"
+#include "scheduler/gpu_worker.h"
 
 // Helper: build a GemmArgs for a single column-major SGEMM
 // C(m,n) = alpha * op(A)(m,k) * op(B)(k,n) + beta * C(m,n)

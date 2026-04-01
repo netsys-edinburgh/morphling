@@ -55,7 +55,9 @@ def parse_header(
 ) -> Tuple[List[Tuple[str, str, str]], Optional[str]]:
     lines = header_path.read_text(errors="ignore").splitlines()
     entries: List[Tuple[str, str, str]] = []
-    version_macro = "CUDA_VERSION" if api_macro == "CUDAAPI" else "CUDART_VERSION"
+    version_macro = (
+        "CUDA_VERSION" if api_macro == "CUDAAPI" else "CUDART_VERSION"
+    )
     version = extract_macro_value(lines, version_macro)
 
     pending_comment: Optional[List[str]] = None
@@ -167,7 +169,11 @@ def write_readme(
         (
             "- [CUDA Runtime API](runtime_api.md)"
             f" — {runtime_count} functions"
-            + (f" (CUDART_VERSION={runtime_version})" if runtime_version else "")
+            + (
+                f" (CUDART_VERSION={runtime_version})"
+                if runtime_version
+                else ""
+            )
         ),
         "",
         "## Regenerate",

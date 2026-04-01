@@ -9,13 +9,13 @@ import importlib.util
 import json
 import math
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
 import types
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Protocol, cast
 
 
@@ -23,22 +23,17 @@ class SwapStatsProto(Protocol):
     count: int
     total_overhead_us: int
 
-    def avg_overhead_us(self) -> float:
-        ...
+    def avg_overhead_us(self) -> float: ...
 
 
 class RuntimeProto(Protocol):
-    def activate_sm_for_thread(self, num_sms: int) -> int:
-        ...
+    def activate_sm_for_thread(self, num_sms: int) -> int: ...
 
-    def deactivate_for_thread(self, prev_sm_count: int) -> None:
-        ...
+    def deactivate_for_thread(self, prev_sm_count: int) -> None: ...
 
-    def swap_stats(self) -> SwapStatsProto:
-        ...
+    def swap_stats(self) -> SwapStatsProto: ...
 
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
 
 
 class GreenCtxModule(Protocol):
@@ -48,8 +43,7 @@ class GreenCtxModule(Protocol):
         gpu_id: int,
         num_partitions: int,
         partition_idx: int,
-    ) -> RuntimeProto:
-        ...
+    ) -> RuntimeProto: ...
 
 
 class ParsedArgs(Protocol):
@@ -261,7 +255,9 @@ def _parse_replay_violation_bench_json(
     return {
         "trace_entries": int(_find_first_numeric(replay, ("trace_entries",))),
         "violations": int(_find_first_numeric(replay, ("violations",))),
-        "violation_rate": float(_find_first_numeric(replay, ("violation_rate",))),
+        "violation_rate": float(
+            _find_first_numeric(replay, ("violation_rate",))
+        ),
         "actual_ctx_switches": int(
             _find_first_numeric(replay, ("actual_ctx_switches",))
         ),
@@ -669,7 +665,9 @@ def main() -> None:
         if has_isolated_metric
         else 0.0
     )
-    python_to_inline_ratio = _safe_ratio(inline_py_metric_us, inline_cpp_metric_us)
+    python_to_inline_ratio = _safe_ratio(
+        inline_py_metric_us, inline_cpp_metric_us
+    )
 
     isolated_within_2x = has_isolated_metric and _within_factor(
         isolated_to_inline_ratio,
@@ -678,7 +676,9 @@ def main() -> None:
     isolated_discrepancy_over_5x = has_isolated_metric and (
         not _within_factor(isolated_to_inline_ratio, 5.0)
     )
-    python_within_5x = python_to_inline_ratio > 0.0 and python_to_inline_ratio <= 5.0
+    python_within_5x = (
+        python_to_inline_ratio > 0.0 and python_to_inline_ratio <= 5.0
+    )
 
     warning_note = ""
     if not has_isolated_metric:
@@ -696,7 +696,9 @@ def main() -> None:
     bench_status = "missing"
     if bench_with.get("status") == "ok" and bench_without.get("status") == "ok":
         bench_status = "ok"
-    elif bench_with.get("status") == "ok" or bench_without.get("status") == "ok":
+    elif (
+        bench_with.get("status") == "ok" or bench_without.get("status") == "ok"
+    ):
         bench_status = "partial"
 
     output_data: dict[str, object] = {
@@ -719,33 +721,53 @@ def main() -> None:
                 "without_ctrl": inline_without["cpp_quantization_fallback"],
                 "aggregate": {
                     "used": bool(
-                        cast(dict[str, object], inline_with["cpp_quantization_fallback"]).get("used", False)
-                        or cast(dict[str, object], inline_without["cpp_quantization_fallback"]).get("used", False)
+                        cast(
+                            dict[str, object],
+                            inline_with["cpp_quantization_fallback"],
+                        ).get("used", False)
+                        or cast(
+                            dict[str, object],
+                            inline_without["cpp_quantization_fallback"],
+                        ).get("used", False)
                     ),
                     "rows": _to_int(
-                        cast(dict[str, object], inline_with["cpp_quantization_fallback"]).get("rows", 0)
+                        cast(
+                            dict[str, object],
+                            inline_with["cpp_quantization_fallback"],
+                        ).get("rows", 0)
                     )
                     + _to_int(
-                        cast(dict[str, object], inline_without["cpp_quantization_fallback"]).get("rows", 0)
+                        cast(
+                            dict[str, object],
+                            inline_without["cpp_quantization_fallback"],
+                        ).get("rows", 0)
                     ),
                     "switches": _to_int(
-                        cast(dict[str, object], inline_with["cpp_quantization_fallback"]).get("switches", 0)
+                        cast(
+                            dict[str, object],
+                            inline_with["cpp_quantization_fallback"],
+                        ).get("switches", 0)
                     )
                     + _to_int(
-                        cast(dict[str, object], inline_without["cpp_quantization_fallback"]).get("switches", 0)
+                        cast(
+                            dict[str, object],
+                            inline_without["cpp_quantization_fallback"],
+                        ).get("switches", 0)
                     ),
                     "proxy_total_overhead_us": float(
                         _as_float(
-                            cast(dict[str, object], inline_with["cpp_quantization_fallback"]).get(
-                                "proxy_total_overhead_us", 0.0
-                            )
+                            cast(
+                                dict[str, object],
+                                inline_with["cpp_quantization_fallback"],
+                            ).get("proxy_total_overhead_us", 0.0)
                         )
                     )
                     + float(
                         _as_float(
-                            cast(dict[str, object], inline_without["cpp_quantization_fallback"]).get(
-                                "proxy_total_overhead_us", 0.0
-                            )
+                            cast(
+                                dict[str, object],
+                                inline_without["cpp_quantization_fallback"],
+                            ).get("proxy_total_overhead_us", 0.0)
                         )
                     ),
                 },
@@ -762,8 +784,7 @@ def main() -> None:
                 "inline_python_ratio_metric_us": inline_py_metric_us,
                 "inline_python_ratio_metric_name": inline_py_metric_name,
                 "inline_authoritative": (
-                    (not has_isolated_metric)
-                    or isolated_discrepancy_over_5x
+                    (not has_isolated_metric) or isolated_discrepancy_over_5x
                 ),
                 "note": warning_note,
             },

@@ -83,8 +83,7 @@ TEST_F(WorkerBaseTest, OnComplete_BeforeCompletion) {
   SimpleLatch latch(1);
   std::atomic<bool> cb_fired{false};
 
-  auto handle =
-      worker_->AddTask("t1", [&] { latch.Wait(); });
+  auto handle = worker_->AddTask("t1", [&] { latch.Wait(); });
 
   // Register callback before task completes
   handle->OnComplete([&](const std::string& id) {
@@ -102,8 +101,7 @@ TEST_F(WorkerBaseTest, OnComplete_BeforeCompletion) {
 
 // 4. OnComplete_AfterCompletion
 TEST_F(WorkerBaseTest, OnComplete_AfterCompletion) {
-  auto handle =
-      worker_->AddTask("t1", [] {});
+  auto handle = worker_->AddTask("t1", [] {});
   handle->Wait();
 
   std::atomic<bool> cb_fired{false};
@@ -118,8 +116,7 @@ TEST_F(WorkerBaseTest, OnComplete_AfterCompletion) {
 // 5. IsComplete_Poll
 TEST_F(WorkerBaseTest, IsComplete_Poll) {
   SimpleLatch latch(1);
-  auto handle =
-      worker_->AddTask("t1", [&] { latch.Wait(); });
+  auto handle = worker_->AddTask("t1", [&] { latch.Wait(); });
 
   EXPECT_FALSE(handle->IsComplete());
   latch.CountDown();
@@ -133,8 +130,7 @@ TEST_F(WorkerBaseTest, MultipleTasksSerial) {
   std::atomic<int> counter{0};
 
   for (int i = 0; i < N; i++) {
-    worker_->AddTask(
-        "t" + std::to_string(i), [&] { counter++; });
+    worker_->AddTask("t" + std::to_string(i), [&] { counter++; });
   }
   worker_->WaitTaskDone();
   EXPECT_EQ(counter.load(), N);
@@ -150,8 +146,7 @@ TEST_F(WorkerBaseTest, ConcurrentProducers) {
   for (int m = 0; m < M; m++) {
     producers.emplace_back([&, m] {
       for (int n = 0; n < N; n++) {
-        std::string id = "p" + std::to_string(m) + "_t" +
-                         std::to_string(n);
+        std::string id = "p" + std::to_string(m) + "_t" + std::to_string(n);
         worker_->AddTask(id, [&] { counter++; });
       }
     });
@@ -170,8 +165,8 @@ TEST(WorkerPoolTest, RoundRobin) {
   std::vector<TaskHandle> handles;
 
   for (int i = 0; i < N; i++) {
-    handles.push_back(pool.AddTask(
-        "t" + std::to_string(i), [&] { counter++; }));
+    handles.push_back(
+        pool.AddTask("t" + std::to_string(i), [&] { counter++; }));
   }
   pool.WaitTaskDone();
   EXPECT_EQ(counter.load(), N);
@@ -188,8 +183,8 @@ TEST(WorkerPoolTest, HandleWait) {
 
   std::atomic<int> counter{0};
   for (int i = 0; i < N; i++) {
-    handles.push_back(pool.AddTask(
-        "t" + std::to_string(i), [&] { counter++; }));
+    handles.push_back(
+        pool.AddTask("t" + std::to_string(i), [&] { counter++; }));
   }
 
   for (auto& h : handles) {
@@ -210,8 +205,7 @@ TEST(WorkerPoolTest, ConcurrentAddTask) {
   for (int m = 0; m < M; m++) {
     producers.emplace_back([&, m] {
       for (int n = 0; n < N; n++) {
-        std::string id = "p" + std::to_string(m) + "_t" +
-                         std::to_string(n);
+        std::string id = "p" + std::to_string(m) + "_t" + std::to_string(n);
         pool.AddTask(id, [&] { counter++; });
       }
     });
@@ -246,12 +240,9 @@ TEST(WorkerBaseStopTest, StopDuringExecution) {
   });
 
   // Wait up to 5 seconds for clean shutdown
-  auto deadline = std::chrono::steady_clock::now() +
-                  std::chrono::seconds(5);
-  while (!stopped.load() &&
-         std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::sleep_for(
-        std::chrono::milliseconds(10));
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!stopped.load() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   EXPECT_TRUE(stopped.load()) << "Stop() deadlocked";
   stopper.join();

@@ -55,53 +55,37 @@ class StreamBundle:
 class GreenCtxBackend(Protocol):
     """Interface every backend must implement."""
 
-    def is_supported(self) -> bool:
-        ...
+    def is_supported(self) -> bool: ...
 
-    def unsupported_reason(self) -> str:
-        ...
+    def unsupported_reason(self) -> str: ...
 
-    def available_sm_counts(self) -> List[int]:
-        ...
+    def available_sm_counts(self) -> List[int]: ...
 
-    def sm_step(self) -> int:
-        ...
+    def sm_step(self) -> int: ...
 
-    def partition_sm_count(self) -> int:
-        ...
+    def partition_sm_count(self) -> int: ...
 
-    def get_stream_bundle(self, sm_count: int) -> StreamBundle:
-        ...
+    def get_stream_bundle(self, sm_count: int) -> StreamBundle: ...
 
-    def activate_for_step(
-        self, step_or_time: int
-    ) -> Tuple[int, int]:
+    def activate_for_step(self, step_or_time: int) -> Tuple[int, int]:
         """Returns (sm_count, generation)."""
         ...
 
-    def activate_for_time(
-        self, elapsed_us: int
-    ) -> Tuple[int, int]:
+    def activate_for_time(self, elapsed_us: int) -> Tuple[int, int]:
         """Returns (sm_count, generation)."""
         ...
 
-    def deactivate(self, prev_sm_count: int) -> None:
-        ...
+    def deactivate(self, prev_sm_count: int) -> None: ...
 
-    def load_trace(self, path: str) -> bool:
-        ...
+    def load_trace(self, path: str) -> bool: ...
 
-    def sm_count_at_time(self, elapsed_us: int) -> int:
-        ...
+    def sm_count_at_time(self, elapsed_us: int) -> int: ...
 
-    def sm_count_at_step(self, step: int) -> int:
-        ...
+    def sm_count_at_step(self, step: int) -> int: ...
 
-    def switch_count(self) -> int:
-        ...
+    def switch_count(self) -> int: ...
 
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
 
 
 # ── CppBackend ────────────────────────────────────────────
@@ -141,17 +125,13 @@ class CppBackend:
         self._prev_sm_count: int = 0
 
         # Pre-build ExternalStream cache (one-time)
-        self._stream_cache: Dict[
-            Tuple[int, str], torch.cuda.Stream
-        ] = {}
+        self._stream_cache: Dict[Tuple[int, str], torch.cuda.Stream] = {}
         if self._rt.is_supported():
             for sm in self._rt.available_sm_counts():
                 for role in ROLE_NAMES:
                     ptr = self._rt.get_stream_ptr(sm, role)
                     if ptr:
-                        stream = torch.cuda.ExternalStream(
-                            ptr, device=gpu_id
-                        )
+                        stream = torch.cuda.ExternalStream(ptr, device=gpu_id)
                         self._stream_cache[(sm, role)] = stream
 
     def is_supported(self) -> bool:
@@ -180,16 +160,12 @@ class CppBackend:
             generation=gen,
         )
 
-    def activate_for_step(
-        self, step_or_time: int
-    ) -> Tuple[int, int]:
+    def activate_for_step(self, step_or_time: int) -> Tuple[int, int]:
         sm = self._rt.sm_count_at_step(step_or_time)
         prev = self._rt.activate_sm_for_thread(sm)
         return sm, self._rt.generation()
 
-    def activate_for_time(
-        self, elapsed_us: int
-    ) -> Tuple[int, int]:
+    def activate_for_time(self, elapsed_us: int) -> Tuple[int, int]:
         t0 = time.perf_counter_ns()
         sm = self._rt.sm_count_at_time(elapsed_us)
         _ = self._rt.activate_sm_for_thread(sm)
@@ -245,12 +221,9 @@ class CppBackend:
     def get_swap_stats(self):
         return {
             "count": self._swap_count,
-            "total_overhead_us": self._total_python_overhead_ns
-            / 1000,
+            "total_overhead_us": self._total_python_overhead_ns / 1000,
             "avg_overhead_us": (
-                self._total_python_overhead_ns
-                / 1000
-                / max(self._swap_count, 1)
+                self._total_python_overhead_ns / 1000 / max(self._swap_count, 1)
             ),
         }
 
@@ -275,9 +248,7 @@ class CppBackend:
 
 def _parse_trace_file(
     path: str,
-) -> Tuple[
-    List[Tuple[int, int]], str, str
-]:
+) -> Tuple[List[Tuple[int, int]], str, str]:
     """Parse a green context trace file.
 
     Returns (entries, time_unit, clock_mode) where entries
@@ -296,15 +267,9 @@ def _parse_trace_file(
             if line.startswith("#"):
                 directive = line.lstrip("#").strip()
                 if directive.startswith("time_unit="):
-                    time_unit = directive.split(
-                        "=", 1
-                    )[1]
-                elif directive.startswith(
-                    "clock_mode="
-                ):
-                    clock_mode = directive.split(
-                        "=", 1
-                    )[1]
+                    time_unit = directive.split("=", 1)[1]
+                elif directive.startswith("clock_mode="):
+                    clock_mode = directive.split("=", 1)[1]
                 continue
             # Also handle bare directives (no #)
             if line.startswith("time_unit="):
@@ -414,9 +379,7 @@ class TorchNativeBackend:
         self._active_gc: Optional[Any] = None
         self._active_sm = 0
         self._contexts: Dict[int, Any] = {}
-        self._stream_cache: Dict[
-            Tuple[int, str], torch.cuda.Stream
-        ] = {}
+        self._stream_cache: Dict[Tuple[int, str], torch.cuda.Stream] = {}
         self._sm_counts: List[int] = []
         self._sm_step_val = 0
         self._partition_sm = 0
@@ -459,14 +422,14 @@ class TorchNativeBackend:
         self._sm_step_val = 8 if cc >= 90 else 2
 
         # Available SM counts
-        self._sm_counts = list(range(
-            self._sm_step_val,
-            total_sms + 1,
-            self._sm_step_val,
-        ))
-        self._partition_sm = (
-            self._sm_counts[-1] if self._sm_counts else 0
+        self._sm_counts = list(
+            range(
+                self._sm_step_val,
+                total_sms + 1,
+                self._sm_step_val,
+            )
         )
+        self._partition_sm = self._sm_counts[-1] if self._sm_counts else 0
 
         # Create GreenContext + 4 streams per SM count.
         # Streams are created while the green context is
@@ -475,19 +438,13 @@ class TorchNativeBackend:
         created_any = False
         for sm in self._sm_counts:
             try:
-                gc = GreenContext.create(
-                    num_sms=sm, device_id=gpu_id
-                )
+                gc = GreenContext.create(num_sms=sm, device_id=gpu_id)
                 self._contexts[sm] = gc
                 gc.set_context()
                 try:
                     for role in ROLE_NAMES:
-                        stream = torch.cuda.Stream(
-                            device=gpu_id
-                        )
-                        self._stream_cache[
-                            (sm, role)
-                        ] = stream
+                        stream = torch.cuda.Stream(device=gpu_id)
+                        self._stream_cache[(sm, role)] = stream
                 finally:
                     gc.pop_context()
                 created_any = True
@@ -495,8 +452,7 @@ class TorchNativeBackend:
                 if strict:
                     raise
                 logger.warning(
-                    "TorchNative: failed to create "
-                    "green ctx with %d SMs: %s",
+                    "TorchNative: failed to create green ctx with %d SMs: %s",
                     sm,
                     e,
                 )
@@ -505,14 +461,10 @@ class TorchNativeBackend:
         if created_any:
             self._supported = True
             # Filter to only successfully created counts
-            self._sm_counts = sorted(
-                self._contexts.keys()
-            )
+            self._sm_counts = sorted(self._contexts.keys())
             self._partition_sm = self._sm_counts[-1]
         else:
-            self._reason = (
-                "No green contexts could be created"
-            )
+            self._reason = "No green contexts could be created"
 
     def is_supported(self) -> bool:
         return self._supported
@@ -531,23 +483,15 @@ class TorchNativeBackend:
 
     def get_stream_bundle(self, sm_count: int) -> StreamBundle:
         return StreamBundle(
-            comp=self._stream_cache[
-                (sm_count, "compute")
-            ],
-            recv=self._stream_cache[
-                (sm_count, "recv")
-            ],
-            send=self._stream_cache[
-                (sm_count, "send")
-            ],
+            comp=self._stream_cache[(sm_count, "compute")],
+            recv=self._stream_cache[(sm_count, "recv")],
+            send=self._stream_cache[(sm_count, "send")],
             dp=self._stream_cache[(sm_count, "dp")],
             sm_count=sm_count,
             generation=self._generation,
         )
 
-    def activate_for_step(
-        self, step_or_time: int
-    ) -> Tuple[int, int]:
+    def activate_for_step(self, step_or_time: int) -> Tuple[int, int]:
         # Determine target SM count from trace
         if self._trace_entries:
             sm = _sm_count_at_step(
@@ -564,10 +508,7 @@ class TorchNativeBackend:
             sm = self._partition_sm
 
         # Pop current context if different
-        if (
-            self._active_gc is not None
-            and self._active_sm != sm
-        ):
+        if self._active_gc is not None and self._active_sm != sm:
             self._active_gc.pop_context()
             self._active_gc = None
             self._switch_count += 1
@@ -585,9 +526,7 @@ class TorchNativeBackend:
 
         return sm, self._generation
 
-    def activate_for_time(
-        self, elapsed_us: int
-    ) -> Tuple[int, int]:
+    def activate_for_time(self, elapsed_us: int) -> Tuple[int, int]:
         # Determine target SM count from trace
         if self._trace_entries:
             sm = _sm_count_at_time(
@@ -605,10 +544,7 @@ class TorchNativeBackend:
             sm = self._partition_sm
 
         # Pop current context if different
-        if (
-            self._active_gc is not None
-            and self._active_sm != sm
-        ):
+        if self._active_gc is not None and self._active_sm != sm:
             self._active_gc.pop_context()
             self._active_gc = None
             self._switch_count += 1
@@ -681,15 +617,14 @@ class TorchNativeBackend:
             # GreenContext destructor handles cleanup
             self._contexts.clear()
 
+
 # ── OffBackend ────────────────────────────────────────────
 
 
 class OffBackend:
     """No-op backend using regular CUDA streams."""
 
-    def __init__(
-        self, gpu_id: int = 0, strict: bool = False
-    ):
+    def __init__(self, gpu_id: int = 0, strict: bool = False):
         self._gpu_id = gpu_id
         self._strict = strict
         self._closed = False
@@ -735,14 +670,10 @@ class OffBackend:
     def get_stream_bundle(self, sm_count: int) -> StreamBundle:
         return self._bundle
 
-    def activate_for_step(
-        self, step_or_time: int
-    ) -> Tuple[int, int]:
+    def activate_for_step(self, step_or_time: int) -> Tuple[int, int]:
         return 0, 0
 
-    def activate_for_time(
-        self, elapsed_us: int
-    ) -> Tuple[int, int]:
+    def activate_for_time(self, elapsed_us: int) -> Tuple[int, int]:
         return 0, 0
 
     def deactivate(self, prev_sm_count: int) -> None:
@@ -783,21 +714,17 @@ def select_backend(
     """
     if backend == "cpp" or backend == "auto":
         try:
-            b = CppBackend(
-                gpu_id=gpu_id, strict=strict, **kwargs
-            )
+            b = CppBackend(gpu_id=gpu_id, strict=strict, **kwargs)
             if b.is_supported():
                 logger.info("Using CppBackend for green ctx")
                 return b
             if backend == "cpp":
                 if strict:
                     raise RuntimeError(
-                        f"CppBackend not supported: "
-                        f"{b.unsupported_reason()}"
+                        f"CppBackend not supported: {b.unsupported_reason()}"
                     )
                 logger.warning(
-                    "CppBackend requested but not supported: "
-                    "%s. Falling back.",
+                    "CppBackend requested but not supported: %s. Falling back.",
                     b.unsupported_reason(),
                 )
                 b.close()
@@ -805,18 +732,13 @@ def select_backend(
             if backend == "cpp":
                 raise
             logger.debug(
-                "morphling._GreenCtx not available, "
-                "trying next backend"
+                "morphling._GreenCtx not available, trying next backend"
             )
 
     if backend == "torch_native" or backend == "auto":
-        b = TorchNativeBackend(
-            gpu_id=gpu_id, strict=strict, **kwargs
-        )
+        b = TorchNativeBackend(gpu_id=gpu_id, strict=strict, **kwargs)
         if b.is_supported():
-            logger.info(
-                "Using TorchNativeBackend for green ctx"
-            )
+            logger.info("Using TorchNativeBackend for green ctx")
             return b
         if backend == "torch_native":
             if strict:
@@ -825,8 +747,7 @@ def select_backend(
                     f"{b.unsupported_reason()}"
                 )
             logger.warning(
-                "TorchNativeBackend requested but not "
-                "supported: %s",
+                "TorchNativeBackend requested but not supported: %s",
                 b.unsupported_reason(),
             )
 
@@ -835,6 +756,5 @@ def select_backend(
         return OffBackend(gpu_id=gpu_id, strict=strict)
 
     raise ValueError(
-        f"Unknown backend '{backend}'. "
-        f"Expected: auto|cpp|torch_native|off"
+        f"Unknown backend '{backend}'. Expected: auto|cpp|torch_native|off"
     )

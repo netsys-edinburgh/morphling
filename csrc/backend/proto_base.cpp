@@ -2,8 +2,8 @@
 
 #include <cstring>
 
-#include "morphling.pb.h"
 #include "core/logger.h"
+#include "morphling.pb.h"
 
 // SerializationBufferPtr MessageFormat::ReconstructWireFormat(
 //     const void* proto_data, size_t proto_size, const void* tensor_data,

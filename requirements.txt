@@ -2,10 +2,10 @@ accelerate
 aio-pika
 clang-format
 cmake
+matplotlib
 ninja
 numpy
 pandas
-matplotlib
 pre-commit
 protobuf==3.13.0
 psutil

@@ -80,7 +80,7 @@ for i in $(seq 0 $((NUM_DEVICES - 1))); do
       --backend "$DEVICE_BACKEND" \
       --cfg "$DEVICE_CFG" \
       --proxy_host "$DEVICE_PROXY_HOST" | tee "${LOG_DIR}/device_${DEVICE_ID}.log" &
-    
+
     # Save the PID
     pids+=($!)
 

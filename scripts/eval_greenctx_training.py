@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import argparse
 import csv
-from importlib import import_module
 import json
 import logging
-from pathlib import Path
 import sys
 import tempfile
 import time
 import types
+from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -522,8 +522,8 @@ def _dump_gemm_shapes(
     num_steps: int,
     gemm_log: list[dict[str, Any]] | None = None,
 ) -> None:
-    from collections import Counter
     import os
+    from collections import Counter
 
     if gemm_log is None:
         from morphling.hooks.autograd import get_gemm_log
@@ -675,6 +675,7 @@ def _run_benchmark(args: argparse.Namespace) -> None:
         import torch
         from torch.utils.data import DataLoader, TensorDataset
         from transformers import AutoModelForCausalLM, AutoTokenizer
+
         import morphling
         from morphling.hooks import apply_hooks, set_greenctx
         from morphling.hooks.autograd import get_gemm_log

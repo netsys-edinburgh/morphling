@@ -10,8 +10,8 @@
 #include <unistd.h>
 
 #include "core/generator.h"
-#include "core/types_and_defs.h"
 #include "core/logger.h"
+#include "core/types_and_defs.h"
 
 std::unique_ptr<CachingAllocator> kCachingAllocator = nullptr;
 std::once_flag kInitCachingAllocatorFlag;

@@ -9,13 +9,14 @@ from typing import cast
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EVAL_SCRIPT = REPO_ROOT / "scripts" / "eval_greenctx_training.py"
 ANALYZE_SCRIPT = REPO_ROOT / "baselines" / "examples" / "analyze_violations.py"
 
 
-def _run_python(cmd: list[str], *, timeout_s: int = 120) -> subprocess.CompletedProcess[str]:
+def _run_python(
+    cmd: list[str], *, timeout_s: int = 120
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, *cmd],
         cwd=REPO_ROOT,
@@ -90,7 +91,9 @@ def _assert_metrics_columns(metrics_csv: Path) -> None:
 
 
 def _assert_swap_stats_shape(greenctx_csv: Path) -> None:
-    assert greenctx_csv.exists(), f"missing greenctx metrics CSV: {greenctx_csv}"
+    assert greenctx_csv.exists(), (
+        f"missing greenctx metrics CSV: {greenctx_csv}"
+    )
     with greenctx_csv.open("r", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
     assert rows, "greenctx metrics CSV is empty"
@@ -132,7 +135,9 @@ def test_instrumented_training_pipeline_smoke(tmp_path: Path) -> None:
             "out of memory",
         )
         if any(marker in stderr for marker in skip_markers):
-            pytest.skip(f"instrumented run unavailable in this env: {result.stderr.strip()}")
+            pytest.skip(
+                f"instrumented run unavailable in this env: {result.stderr.strip()}"
+            )
         pytest.fail(
             "eval_greenctx_training.py failed\n"
             + f"stdout:\n{result.stdout}\n"
@@ -174,7 +179,9 @@ def test_instrumented_training_pipeline_smoke(tmp_path: Path) -> None:
     )
     assert analysis_json.exists()
 
-    data = cast(dict[str, object], json.loads(analysis_json.read_text(encoding="utf-8")))
+    data = cast(
+        dict[str, object], json.loads(analysis_json.read_text(encoding="utf-8"))
+    )
     assert "total_violations" in data
     assert "total_violation_time_ms" in data
     assert "violations_per_step" in data

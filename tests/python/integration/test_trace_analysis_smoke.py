@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import csv
 import importlib.util
-from importlib import import_module
-from pathlib import Path
 import subprocess
 import sys
 import types
+from importlib import import_module
+from pathlib import Path
 from typing import Protocol, cast
 
 import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -79,7 +78,9 @@ def _bootstrap_morphling() -> None:
 
 def _load_adapter_cls() -> type[_AdapterProto]:
     module_path = REPO_ROOT / "morphling" / "runtime" / "ldpc_trace_adapter.py"
-    spec = importlib.util.spec_from_file_location("ldpc_trace_adapter", module_path)
+    spec = importlib.util.spec_from_file_location(
+        "ldpc_trace_adapter", module_path
+    )
     if spec is None or spec.loader is None:
         raise ImportError(f"Unable to load adapter module from {module_path}")
     module = importlib.util.module_from_spec(spec)

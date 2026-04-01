@@ -13,8 +13,8 @@
 #include "amqp_base.h"
 #include "core/amqp.h"
 #include "core/generator.h"
-#include "core/pytorch_defs.h"
 #include "core/logger.h"
+#include "core/pytorch_defs.h"
 
 template <typename T>
 std::vector<std::vector<T>> cartesian_product(const std::vector<T>& list) {

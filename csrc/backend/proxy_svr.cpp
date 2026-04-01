@@ -3,7 +3,9 @@
 #include <chrono>
 
 #include "core/generator.h"
+#include "core/logger.h"
 #include "core/stats.h"
+#include "core/thread_affinity.h"
 #include "device_tracker.h"
 #include "muduo_base/my_uuid.h"
 #include "network/eventloop_libevent.h"
@@ -11,8 +13,6 @@
 #include "partition_tracker.h"
 #include "proto_base.h"
 #include "server_base.h"
-#include "core/logger.h"
-#include "core/thread_affinity.h"
 
 using namespace std;
 using namespace std::placeholders;

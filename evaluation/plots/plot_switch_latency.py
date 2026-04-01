@@ -39,9 +39,7 @@ with open(csv_path, "r", encoding="utf-8") as f:
                 }
             )
 
-rows_by_key = {
-    (r["trace_type"], r["benchmark_name"]): r for r in rows
-}
+rows_by_key = {(r["trace_type"], r["benchmark_name"]): r for r in rows}
 
 trace_order = ["random", "shaped"]
 benchmark_order = ["ReplayViolation", "ForcedSwitch"]
@@ -130,10 +128,7 @@ for i in range(len(categories)):
     ax_meta.text(
         x[i],
         ctx_switches[i],
-        (
-            f"viol={int(violations[i])}\n"
-            f"rate={violation_rates[i]:.4f}"
-        ),
+        (f"viol={int(violations[i])}\nrate={violation_rates[i]:.4f}"),
         ha="center",
         va="bottom",
         fontsize=11,

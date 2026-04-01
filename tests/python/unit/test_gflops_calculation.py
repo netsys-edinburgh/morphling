@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Unit tests for GFLOPS benchmark script."""
+
 import subprocess
 import sys
+
 import pytest
 
 
@@ -9,7 +11,8 @@ class TestBenchGflopsScript:
     def test_script_help(self):
         result = subprocess.run(
             [sys.executable, "scripts/bench_gflops_per_sm.py", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0
         assert "--gemm-shapes" in result.stdout
@@ -26,9 +29,9 @@ class TestBenchGflopsScript:
 class TestAggregateScript:
     def test_script_help(self):
         result = subprocess.run(
-            [sys.executable, "scripts/aggregate_paper_results.py",
-             "--help"],
-            capture_output=True, text=True,
+            [sys.executable, "scripts/aggregate_paper_results.py", "--help"],
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0
         assert "--results-dir" in result.stdout

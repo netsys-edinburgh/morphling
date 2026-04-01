@@ -12,9 +12,9 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/noncopyable.h"
 #include "core/pytorch_types.h"
 #include "core/types_and_defs.h"
-#include "core/noncopyable.h"
 
 static const std::uint32_t kTensorIndexVersion = 1;
 

@@ -26,7 +26,9 @@ import torch
 
 def _bootstrap_morphling():
     """Stub morphling top-level to avoid _Msg/_C deps."""
-    root = Path(__file__).resolve().parents[5]  # tests/python/unit/morphling/runtime -> project root
+    root = (
+        Path(__file__).resolve().parents[5]
+    )  # tests/python/unit/morphling/runtime -> project root
     sys.path.insert(0, str(root))
 
     if "morphling" not in sys.modules:
@@ -37,18 +39,13 @@ def _bootstrap_morphling():
 
     if "morphling.runtime" not in sys.modules:
         runtime_mod = types.ModuleType("morphling.runtime")
-        runtime_mod.__path__ = [
-            str(root / "morphling" / "runtime")
-        ]
+        runtime_mod.__path__ = [str(root / "morphling" / "runtime")]
         runtime_mod.__package__ = "morphling.runtime"
         sys.modules["morphling.runtime"] = runtime_mod
 
     # Load _GreenCtx .so if present
     so_path = root / "morphling" / "_GreenCtx.so"
-    if (
-        so_path.exists()
-        and "morphling._GreenCtx" not in sys.modules
-    ):
+    if so_path.exists() and "morphling._GreenCtx" not in sys.modules:
         spec = importlib.util.spec_from_file_location(
             "morphling._GreenCtx", str(so_path)
         )
@@ -69,7 +66,6 @@ from morphling.runtime.green_context_backends import (
     StreamBundle,
     select_backend,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────
 
@@ -99,9 +95,7 @@ def _greenctx_supported(gpu_id: int) -> bool:
 def gpu_id():
     gid = _get_idle_gpu()
     if not _greenctx_supported(gid):
-        pytest.skip(
-            f"Green contexts not supported on GPU {gid}"
-        )
+        pytest.skip(f"Green contexts not supported on GPU {gid}")
     return gid
 
 
@@ -236,38 +230,28 @@ class TestBackendSelection:
 class TestGreenContextController:
     def test_enabled(self, gpu_id):
         cfg = GreenContextConfig(enabled=True)
-        ctrl = GreenContextController.from_config(
-            device_id=gpu_id, cfg=cfg
-        )
+        ctrl = GreenContextController.from_config(device_id=gpu_id, cfg=cfg)
         assert ctrl.is_supported
         ctrl.close()
 
     def test_disabled(self):
         cfg = GreenContextConfig(enabled=False)
-        ctrl = GreenContextController.from_config(
-            device_id=0, cfg=cfg
-        )
+        ctrl = GreenContextController.from_config(device_id=0, cfg=cfg)
         assert not ctrl.is_supported
         ctrl.close()
 
     def test_step_scope_returns_bundle(self, gpu_id):
         cfg = GreenContextConfig(enabled=True)
-        ctrl = GreenContextController.from_config(
-            device_id=gpu_id, cfg=cfg
-        )
+        ctrl = GreenContextController.from_config(device_id=gpu_id, cfg=cfg)
         with ctrl.step_scope(0) as bundle:
             assert isinstance(bundle, StreamBundle)
             assert bundle.sm_count > 0
-            assert isinstance(
-                bundle.comp, torch.cuda.Stream
-            )
+            assert isinstance(bundle.comp, torch.cuda.Stream)
         ctrl.close()
 
     def test_step_scope_disabled(self):
         cfg = GreenContextConfig(enabled=False)
-        ctrl = GreenContextController.from_config(
-            device_id=0, cfg=cfg
-        )
+        ctrl = GreenContextController.from_config(device_id=0, cfg=cfg)
         with ctrl.step_scope(0) as bundle:
             assert bundle.sm_count == 0
         ctrl.close()
@@ -284,9 +268,7 @@ class TestTraceDriven:
             trace_path=trace_path,
             clock_mode="step",
         )
-        ctrl = GreenContextController.from_config(
-            device_id=gpu_id, cfg=cfg
-        )
+        ctrl = GreenContextController.from_config(device_id=gpu_id, cfg=cfg)
         # Trace: 0→8, 1→32, 2→64, 3→16, 4→48, 5→64
         expected = {0: 8, 1: 32, 2: 64, 3: 16, 4: 48, 5: 64}
         actual = {}
@@ -296,32 +278,24 @@ class TestTraceDriven:
         assert actual == expected
         ctrl.close()
 
-    def test_beyond_trace_holds_last(
-        self, gpu_id, trace_path
-    ):
+    def test_beyond_trace_holds_last(self, gpu_id, trace_path):
         cfg = GreenContextConfig(
             enabled=True,
             trace_path=trace_path,
             clock_mode="step",
         )
-        ctrl = GreenContextController.from_config(
-            device_id=gpu_id, cfg=cfg
-        )
+        ctrl = GreenContextController.from_config(device_id=gpu_id, cfg=cfg)
         with ctrl.step_scope(100) as s:
             assert s.sm_count == 64
         ctrl.close()
 
-    def test_switch_count_increments(
-        self, gpu_id, trace_path
-    ):
+    def test_switch_count_increments(self, gpu_id, trace_path):
         cfg = GreenContextConfig(
             enabled=True,
             trace_path=trace_path,
             clock_mode="step",
         )
-        ctrl = GreenContextController.from_config(
-            device_id=gpu_id, cfg=cfg
-        )
+        ctrl = GreenContextController.from_config(device_id=gpu_id, cfg=cfg)
         for step in range(6):
             with ctrl.step_scope(step):
                 pass
@@ -336,29 +310,19 @@ class TestWallClockTrace:
     @pytest.fixture
     def wall_trace_path(self):
         root = Path(__file__).resolve().parents[5]
-        p = (
-            root
-            / "tests"
-            / "data"
-            / "greenctx"
-            / "second_level_wall.trace"
-        )
+        p = root / "tests" / "data" / "greenctx" / "second_level_wall.trace"
         if not p.exists():
             pytest.skip("Wall-clock trace not found")
         return str(p)
 
-    def test_wall_trace_parses_time_unit(
-        self, wall_trace_path
-    ):
+    def test_wall_trace_parses_time_unit(self, wall_trace_path):
         """Verify time_unit=s is parsed from comment
         directive."""
         from morphling.runtime.green_context_backends import (
             _parse_trace_file,
         )
 
-        entries, tu, cm = _parse_trace_file(
-            wall_trace_path
-        )
+        entries, tu, cm = _parse_trace_file(wall_trace_path)
         assert tu == "s"
         assert len(entries) == 6
         # First entry: 0s -> 8 SMs
@@ -366,9 +330,7 @@ class TestWallClockTrace:
         # Last entry: 5s -> 64 SMs
         assert entries[-1] == (5, 64)
 
-    def test_sm_count_at_time_seconds(
-        self, wall_trace_path
-    ):
+    def test_sm_count_at_time_seconds(self, wall_trace_path):
         """Verify wall-clock lookup converts seconds to
         microseconds correctly."""
         from morphling.runtime.green_context_backends import (
@@ -376,44 +338,21 @@ class TestWallClockTrace:
             _sm_count_at_time,
         )
 
-        entries, tu, _cm = _parse_trace_file(
-            wall_trace_path
-        )
+        entries, tu, _cm = _parse_trace_file(wall_trace_path)
         # At t=0us -> 8 SMs (first entry at 0s)
-        assert (
-            _sm_count_at_time(entries, 0, tu, 64) == 8
-        )
+        assert _sm_count_at_time(entries, 0, tu, 64) == 8
         # At t=0.5s (500000us) -> still 8 SMs
-        assert (
-            _sm_count_at_time(entries, 500_000, tu, 64)
-            == 8
-        )
+        assert _sm_count_at_time(entries, 500_000, tu, 64) == 8
         # At t=1s (1000000us) -> 32 SMs
-        assert (
-            _sm_count_at_time(entries, 1_000_000, tu, 64)
-            == 32
-        )
+        assert _sm_count_at_time(entries, 1_000_000, tu, 64) == 32
         # At t=2.5s (2500000us) -> 64 SMs (entry at 2s)
-        assert (
-            _sm_count_at_time(entries, 2_500_000, tu, 64)
-            == 64
-        )
+        assert _sm_count_at_time(entries, 2_500_000, tu, 64) == 64
         # At t=3s (3000000us) -> 16 SMs (throttle)
-        assert (
-            _sm_count_at_time(entries, 3_000_000, tu, 64)
-            == 16
-        )
+        assert _sm_count_at_time(entries, 3_000_000, tu, 64) == 16
         # Beyond last entry: holds 64 SMs
-        assert (
-            _sm_count_at_time(
-                entries, 10_000_000, tu, 64
-            )
-            == 64
-        )
+        assert _sm_count_at_time(entries, 10_000_000, tu, 64) == 64
 
-    def test_wall_trace_boundary_at_zero(
-        self, wall_trace_path
-    ):
+    def test_wall_trace_boundary_at_zero(self, wall_trace_path):
         """Verify t=0 maps correctly when first entry
         is at t=0."""
         from morphling.runtime.green_context_backends import (
@@ -421,17 +360,11 @@ class TestWallClockTrace:
             _sm_count_at_time,
         )
 
-        entries, tu, _cm = _parse_trace_file(
-            wall_trace_path
-        )
+        entries, tu, _cm = _parse_trace_file(wall_trace_path)
         # Exactly at boundary
-        assert (
-            _sm_count_at_time(entries, 0, tu, 99) == 8
-        )
+        assert _sm_count_at_time(entries, 0, tu, 99) == 8
 
-    def test_wall_trace_with_cpp_backend(
-        self, gpu_id, wall_trace_path
-    ):
+    def test_wall_trace_with_cpp_backend(self, gpu_id, wall_trace_path):
         """Verify CppBackend handles wall-clock trace
         via sm_count_at_time."""
         cpp = CppBackend(gpu_id=gpu_id)
@@ -487,6 +420,7 @@ def _torch_native_available() -> bool:
     and SUPPORTED is True."""
     try:
         from torch.cuda.green_contexts import SUPPORTED
+
         return bool(SUPPORTED)
     except (ImportError, AttributeError):
         return False
@@ -494,7 +428,7 @@ def _torch_native_available() -> bool:
 
 @pytest.mark.skipif(
     not _torch_native_available(),
-    reason="torch.cuda.green_contexts not available"
+    reason="torch.cuda.green_contexts not available",
 )
 class TestTorchNativeBackend:
     """Tests for TorchNativeBackend (PyTorch >= 2.10)."""
@@ -510,10 +444,7 @@ class TestTorchNativeBackend:
         b = TorchNativeBackend(gpu_id=gid)
         if not b.is_supported():
             b.close()
-            pytest.skip(
-                "TorchNativeBackend not supported on "
-                f"GPU {gid}"
-            )
+            pytest.skip(f"TorchNativeBackend not supported on GPU {gid}")
         b.close()
         return gid
 
@@ -572,9 +503,7 @@ class TestTorchNativeBackend:
             TorchNativeBackend,
         )
 
-        backend = TorchNativeBackend(
-            gpu_id=native_gpu_id
-        )
+        backend = TorchNativeBackend(gpu_id=native_gpu_id)
         counts = backend.available_sm_counts()
         sm = counts[0]
         # Activate directly (no trace loaded)
@@ -584,16 +513,12 @@ class TestTorchNativeBackend:
         backend.deactivate(result_sm)
         backend.close()
 
-    def test_load_trace_and_step(
-        self, native_gpu_id, trace_path
-    ):
+    def test_load_trace_and_step(self, native_gpu_id, trace_path):
         from morphling.runtime.green_context_backends import (
             TorchNativeBackend,
         )
 
-        backend = TorchNativeBackend(
-            gpu_id=native_gpu_id
-        )
+        backend = TorchNativeBackend(gpu_id=native_gpu_id)
         loaded = backend.load_trace(trace_path)
         assert loaded
         # Step 0 -> 8 SMs (from trace)
@@ -604,16 +529,12 @@ class TestTorchNativeBackend:
         assert sm1 == 32
         backend.close()
 
-    def test_switch_count(
-        self, native_gpu_id, trace_path
-    ):
+    def test_switch_count(self, native_gpu_id, trace_path):
         from morphling.runtime.green_context_backends import (
             TorchNativeBackend,
         )
 
-        backend = TorchNativeBackend(
-            gpu_id=native_gpu_id
-        )
+        backend = TorchNativeBackend(gpu_id=native_gpu_id)
         loaded = backend.load_trace(trace_path)
         assert loaded
 
@@ -629,9 +550,7 @@ class TestTorchNativeBackend:
         assert backend.switch_count() >= 1
         backend.close()
 
-    def test_select_backend_torch_native(
-        self, native_gpu_id
-    ):
+    def test_select_backend_torch_native(self, native_gpu_id):
         """select_backend('torch_native') picks this."""
         b = select_backend(
             backend="torch_native",

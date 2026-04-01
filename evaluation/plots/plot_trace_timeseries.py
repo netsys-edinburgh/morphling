@@ -32,5 +32,7 @@ plt.tight_layout()
 
 figure_dir = os.path.join(this_dir, "figures")
 os.makedirs(figure_dir, exist_ok=True)
-plt.savefig(os.path.join(figure_dir, "trace_timeseries.pdf"), bbox_inches="tight")
+plt.savefig(
+    os.path.join(figure_dir, "trace_timeseries.pdf"), bbox_inches="tight"
+)
 plt.close()

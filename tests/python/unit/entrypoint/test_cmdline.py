@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 CMDLINE_PATH = (
     Path(__file__).resolve().parents[4]
     / "morphling"

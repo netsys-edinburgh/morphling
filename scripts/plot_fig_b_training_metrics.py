@@ -6,11 +6,13 @@ Usage:
       --data results/paper_data.json \
       --output figures/fig_b_training_metrics.pdf
 """
+
 import argparse
 import json
 import os
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,25 +21,27 @@ WONG = {
     "orange": "#E69F00",
     "blue": "#0072B2",
     "green": "#009E73",
-    "vermillion": "#D55E00",
+    "vermilion": "#D55E00",
     "black": "#000000",
 }
 
-plt.rcParams.update({
-    "figure.figsize": (3.33, 2.5),
-    "font.size": 8,
-    "font.family": "serif",
-    "axes.labelsize": 8,
-    "axes.titlesize": 9,
-    "xtick.labelsize": 7,
-    "ytick.labelsize": 7,
-    "legend.fontsize": 7,
-    "axes.linewidth": 0.5,
-    "grid.linewidth": 0.3,
-    "savefig.dpi": 300,
-    "savefig.bbox": "tight",
-    "savefig.pad_inches": 0.02,
-})
+plt.rcParams.update(
+    {
+        "figure.figsize": (3.33, 2.5),
+        "font.size": 8,
+        "font.family": "serif",
+        "axes.labelsize": 8,
+        "axes.titlesize": 9,
+        "xtick.labelsize": 7,
+        "ytick.labelsize": 7,
+        "legend.fontsize": 7,
+        "axes.linewidth": 0.5,
+        "grid.linewidth": 0.3,
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "savefig.pad_inches": 0.02,
+    }
+)
 
 COLOR_NO_CTRL = "#999999"  # gray
 COLOR_WEAVER = WONG["blue"]
@@ -47,9 +51,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Plot Figure B: Training metrics bar chart"
     )
-    parser.add_argument(
-        "--data", default="results/paper_data.json"
-    )
+    parser.add_argument("--data", default="results/paper_data.json")
     parser.add_argument(
         "--output", default="figures/fig_b_training_metrics.pdf"
     )
@@ -122,17 +124,27 @@ def main():
             we_errs.append(max(we_low, we_high))
 
     bars_no = ax.bar(
-        x - width / 2, no_vals, width,
-        yerr=no_errs, capsize=2,
-        label="No Control", color=COLOR_NO_CTRL,
-        edgecolor="white", linewidth=0.3,
+        x - width / 2,
+        no_vals,
+        width,
+        yerr=no_errs,
+        capsize=2,
+        label="No Control",
+        color=COLOR_NO_CTRL,
+        edgecolor="white",
+        linewidth=0.3,
         error_kw={"linewidth": 0.5},
     )
     bars_we = ax.bar(
-        x + width / 2, we_vals, width,
-        yerr=we_errs, capsize=2,
-        label="Weaver", color=COLOR_WEAVER,
-        edgecolor="white", linewidth=0.3,
+        x + width / 2,
+        we_vals,
+        width,
+        yerr=we_errs,
+        capsize=2,
+        label="Weaver",
+        color=COLOR_WEAVER,
+        edgecolor="white",
+        linewidth=0.3,
         error_kw={"linewidth": 0.5},
     )
 
@@ -141,10 +153,13 @@ def main():
         delta = (wv - nv) / nv * 100
         sign = "+" if delta >= 0 else ""
         ax.text(
-            x[i] + width / 2, wv + we_errs[i] + 0.02,
+            x[i] + width / 2,
+            wv + we_errs[i] + 0.02,
             f"{sign}{delta:.1f}%",
-            ha="center", va="bottom", fontsize=6,
-            color=WONG["green"] if delta >= 0 else WONG["vermillion"],
+            ha="center",
+            va="bottom",
+            fontsize=6,
+            color=WONG["green"] if delta >= 0 else WONG["vermilion"],
         )
 
     # Baseline reference line

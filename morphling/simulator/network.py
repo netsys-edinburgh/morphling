@@ -6,7 +6,8 @@ building homogeneous and heterogeneous network meshes.
 """
 
 from math import ceil
-from .events import NetworkLink, NetworkConfig
+
+from .events import NetworkConfig, NetworkLink
 
 
 class NetworkTopology:

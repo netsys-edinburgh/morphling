@@ -11,8 +11,7 @@
 // Helper: run one full green context lifecycle (split -> create -> destroy)
 static void WarmupGreenCtxLifecycle(CUdevice dev, unsigned int min_sm) {
   CUdevResource sm = {};
-  CHECK_CU_RESULT(
-      cuDeviceGetDevResource(dev, &sm, CU_DEV_RESOURCE_TYPE_SM));
+  CHECK_CU_RESULT(cuDeviceGetDevResource(dev, &sm, CU_DEV_RESOURCE_TYPE_SM));
   unsigned int n = 0;
   CHECK_CU_RESULT(cuDevSmResourceSplitByCount(
       nullptr, &n, &sm, nullptr,
@@ -83,8 +82,8 @@ BENCHMARK_DEFINE_F(GreenCtxLifecycle, FullLifecycle)
     CHECK_CU_RESULT(cuDevResourceGenerateDesc(&desc, &splits[0], 1));
 
     CUgreenCtx green_ctx = nullptr;
-    CHECK_CU_RESULT(cuGreenCtxCreate(&green_ctx, desc, dev_,
-                                     CU_GREEN_CTX_DEFAULT_STREAM));
+    CHECK_CU_RESULT(
+        cuGreenCtxCreate(&green_ctx, desc, dev_, CU_GREEN_CTX_DEFAULT_STREAM));
     CUcontext cuda_ctx = nullptr;
     CHECK_CU_RESULT(cuCtxFromGreenCtx(&cuda_ctx, green_ctx));
 
@@ -121,8 +120,7 @@ class GreenCtxSplit : public benchmark::Fixture {
 
     // Warmup: one split cycle
     CUdevResource sm = {};
-    CHECK_CU_RESULT(
-        cuDeviceGetDevResource(dev_, &sm, CU_DEV_RESOURCE_TYPE_SM));
+    CHECK_CU_RESULT(cuDeviceGetDevResource(dev_, &sm, CU_DEV_RESOURCE_TYPE_SM));
     unsigned int n = 0;
     CHECK_CU_RESULT(cuDevSmResourceSplitByCount(
         nullptr, &n, &sm, nullptr,
@@ -173,8 +171,7 @@ class GreenCtxCreate : public benchmark::Fixture {
     EnsureDriverInit();
     int sm_count = GetSmCount();
     int num_partitions = state.range(0);
-    unsigned int min_sm =
-        static_cast<unsigned int>(sm_count / num_partitions);
+    unsigned int min_sm = static_cast<unsigned int>(sm_count / num_partitions);
     if (min_sm == 0) {
       state.SkipWithMessage("Not enough SMs for requested partitions");
       return;
@@ -199,8 +196,8 @@ class GreenCtxCreate : public benchmark::Fixture {
 
     // Warmup: one create/destroy cycle
     CUgreenCtx gc = nullptr;
-    CHECK_CU_RESULT(cuGreenCtxCreate(&gc, desc_, dev_,
-                                     CU_GREEN_CTX_DEFAULT_STREAM));
+    CHECK_CU_RESULT(
+        cuGreenCtxCreate(&gc, desc_, dev_, CU_GREEN_CTX_DEFAULT_STREAM));
     CUcontext ctx = nullptr;
     CHECK_CU_RESULT(cuCtxFromGreenCtx(&ctx, gc));
     cuCtxDestroy(ctx);
@@ -216,8 +213,8 @@ class GreenCtxCreate : public benchmark::Fixture {
 BENCHMARK_DEFINE_F(GreenCtxCreate, CreateOnly)(benchmark::State& state) {
   for (auto _ : state) {
     CUgreenCtx green_ctx = nullptr;
-    CHECK_CU_RESULT(cuGreenCtxCreate(&green_ctx, desc_, dev_,
-                                     CU_GREEN_CTX_DEFAULT_STREAM));
+    CHECK_CU_RESULT(
+        cuGreenCtxCreate(&green_ctx, desc_, dev_, CU_GREEN_CTX_DEFAULT_STREAM));
     CUcontext cuda_ctx = nullptr;
     CHECK_CU_RESULT(cuCtxFromGreenCtx(&cuda_ctx, green_ctx));
 
@@ -261,8 +258,8 @@ class GreenCtxDestroy : public benchmark::Fixture {
 
     // Warmup: one create/destroy cycle
     CUgreenCtx gc = nullptr;
-    CHECK_CU_RESULT(cuGreenCtxCreate(&gc, desc_, dev_,
-                                     CU_GREEN_CTX_DEFAULT_STREAM));
+    CHECK_CU_RESULT(
+        cuGreenCtxCreate(&gc, desc_, dev_, CU_GREEN_CTX_DEFAULT_STREAM));
     CUcontext ctx = nullptr;
     CHECK_CU_RESULT(cuCtxFromGreenCtx(&ctx, gc));
     cuCtxDestroy(ctx);
@@ -280,8 +277,8 @@ BENCHMARK_DEFINE_F(GreenCtxDestroy, DestroyOnly)
   for (auto _ : state) {
     state.PauseTiming();
     CUgreenCtx green_ctx = nullptr;
-    CHECK_CU_RESULT(cuGreenCtxCreate(&green_ctx, desc_, dev_,
-                                     CU_GREEN_CTX_DEFAULT_STREAM));
+    CHECK_CU_RESULT(
+        cuGreenCtxCreate(&green_ctx, desc_, dev_, CU_GREEN_CTX_DEFAULT_STREAM));
     CUcontext cuda_ctx = nullptr;
     CHECK_CU_RESULT(cuCtxFromGreenCtx(&cuda_ctx, green_ctx));
     state.ResumeTiming();
@@ -338,10 +335,8 @@ class GreenCtxGemmPerf : public benchmark::Fixture {
     h_B_ = PinnedBuffer(elems);
     h_C_ = PinnedBuffer(elems);
 
-    worker_ = std::make_shared<XtGemmWorker>(
-        0, num_partitions_, 0, 512_MB);
-    args_ = MakeNNGemmArgs(dim_, dim_, dim_,
-                           h_A_.ptr, h_B_.ptr, h_C_.ptr);
+    worker_ = std::make_shared<XtGemmWorker>(0, num_partitions_, 0, 512_MB);
+    args_ = MakeNNGemmArgs(dim_, dim_, dim_, h_A_.ptr, h_B_.ptr, h_C_.ptr);
 
     // Warmup GEMM
     worker_->AddTask("warmup", [this]() { worker_->RunXtGemm(args_); });
@@ -411,10 +406,9 @@ class GreenCtxGemmScaling : public benchmark::Fixture {
       d->h_A = PinnedBuffer(elems);
       d->h_B = PinnedBuffer(elems);
       d->h_C = PinnedBuffer(elems);
-      d->worker = std::make_shared<XtGemmWorker>(
-          0, num_partitions_, i, 512_MB);
-      d->args = MakeNNGemmArgs(kDim, kDim, kDim,
-                               d->h_A.ptr, d->h_B.ptr, d->h_C.ptr);
+      d->worker = std::make_shared<XtGemmWorker>(0, num_partitions_, i, 512_MB);
+      d->args =
+          MakeNNGemmArgs(kDim, kDim, kDim, d->h_A.ptr, d->h_B.ptr, d->h_C.ptr);
       data_.push_back(std::move(d));
     }
 
@@ -510,9 +504,9 @@ class MultiGreenCtxCoexist : public benchmark::Fixture {
     static constexpr int kTotalGroupsNeeded = 15;
 
     if (split_.nb_groups < kTotalGroupsNeeded) {
-      state.SkipWithMessage(
-          "Not enough groups (" + std::to_string(split_.nb_groups) +
-          ") for 15 required");
+      state.SkipWithMessage("Not enough groups (" +
+                            std::to_string(split_.nb_groups) +
+                            ") for 15 required");
       return;
     }
 
@@ -541,20 +535,17 @@ class MultiGreenCtxCoexist : public benchmark::Fixture {
       CHECK_CUBLAS_ERROR(cublasSetStream(s.cublas_handle, s.stream));
 
       // Allocate device memory in this context
-      CHECK_CUDA_ERROR(
-          cudaMalloc(reinterpret_cast<void**>(&s.d_A), bytes));
-      CHECK_CUDA_ERROR(
-          cudaMalloc(reinterpret_cast<void**>(&s.d_B), bytes));
-      CHECK_CUDA_ERROR(
-          cudaMalloc(reinterpret_cast<void**>(&s.d_C), bytes));
+      CHECK_CUDA_ERROR(cudaMalloc(reinterpret_cast<void**>(&s.d_A), bytes));
+      CHECK_CUDA_ERROR(cudaMalloc(reinterpret_cast<void**>(&s.d_B), bytes));
+      CHECK_CUDA_ERROR(cudaMalloc(reinterpret_cast<void**>(&s.d_C), bytes));
 
       // Pinned host buffers per slot
       s.h_A = PinnedBuffer(elems);
       s.h_B = PinnedBuffer(elems);
       s.h_C = PinnedBuffer(elems);
 
-      s.args = MakeNNGemmArgs(dim_, dim_, dim_,
-                              s.h_A.ptr, s.h_B.ptr, s.h_C.ptr);
+      s.args =
+          MakeNNGemmArgs(dim_, dim_, dim_, s.h_A.ptr, s.h_B.ptr, s.h_C.ptr);
     }
 
     // Warmup: run one GEMM per slot
@@ -656,9 +647,9 @@ class GreenCtxImmutability : public benchmark::Fixture {
       return;
     }
     if (split_.nb_groups < 4) {
-      state.SkipWithMessage(
-          "Not enough groups (" + std::to_string(split_.nb_groups) +
-          ") for immutability test");
+      state.SkipWithMessage("Not enough groups (" +
+                            std::to_string(split_.nb_groups) +
+                            ") for immutability test");
       return;
     }
 
@@ -671,8 +662,8 @@ class GreenCtxImmutability : public benchmark::Fixture {
     // Warmup: one create/destroy cycle with each
     for (auto desc : {small_desc_, large_desc_}) {
       CUgreenCtx gc = nullptr;
-      CHECK_CU_RESULT(cuGreenCtxCreate(&gc, desc, split_.dev,
-                                       CU_GREEN_CTX_DEFAULT_STREAM));
+      CHECK_CU_RESULT(
+          cuGreenCtxCreate(&gc, desc, split_.dev, CU_GREEN_CTX_DEFAULT_STREAM));
       CUcontext ctx = nullptr;
       CHECK_CU_RESULT(cuCtxFromGreenCtx(&ctx, gc));
       cuCtxDestroy(ctx);
@@ -694,8 +685,8 @@ BENCHMARK_DEFINE_F(GreenCtxImmutability, DestroyRecreate)
     use_small = !use_small;
 
     CUgreenCtx gc = nullptr;
-    CHECK_CU_RESULT(cuGreenCtxCreate(&gc, desc, split_.dev,
-                                     CU_GREEN_CTX_DEFAULT_STREAM));
+    CHECK_CU_RESULT(
+        cuGreenCtxCreate(&gc, desc, split_.dev, CU_GREEN_CTX_DEFAULT_STREAM));
     CUcontext ctx = nullptr;
     CHECK_CU_RESULT(cuCtxFromGreenCtx(&ctx, gc));
 
@@ -703,10 +694,8 @@ BENCHMARK_DEFINE_F(GreenCtxImmutability, DestroyRecreate)
     cuGreenCtxDestroy(gc);
   }
 
-  state.counters["small_SMs"] =
-      1 * static_cast<double>(split_.group_sm_count);
-  state.counters["large_SMs"] =
-      4 * static_cast<double>(split_.group_sm_count);
+  state.counters["small_SMs"] = 1 * static_cast<double>(split_.group_sm_count);
+  state.counters["large_SMs"] = 4 * static_cast<double>(split_.group_sm_count);
 }
 
 BENCHMARK_REGISTER_F(GreenCtxImmutability, DestroyRecreate)
@@ -730,9 +719,9 @@ BENCHMARK_DEFINE_F(GreenCtxImmutability, VerifyBoundSMs)
     CHECK_CU_RESULT(
         cuGreenCtxGetDevResource(gc, &queried, CU_DEV_RESOURCE_TYPE_SM));
     if (queried.sm.smCount != expected_sm) {
-      state.SkipWithMessage(
-          "SM count mismatch: expected " + std::to_string(expected_sm) +
-          " got " + std::to_string(queried.sm.smCount));
+      state.SkipWithMessage("SM count mismatch: expected " +
+                            std::to_string(expected_sm) + " got " +
+                            std::to_string(queried.sm.smCount));
       break;
     }
     queries++;
@@ -801,19 +790,16 @@ class RoundRobinGreenCtxStreams : public benchmark::Fixture {
       CHECK_CUBLAS_ERROR(cublasCreate(&s.cublas_handle));
       CHECK_CUBLAS_ERROR(cublasSetStream(s.cublas_handle, s.stream));
 
-      CHECK_CUDA_ERROR(
-          cudaMalloc(reinterpret_cast<void**>(&s.d_A), bytes));
-      CHECK_CUDA_ERROR(
-          cudaMalloc(reinterpret_cast<void**>(&s.d_B), bytes));
-      CHECK_CUDA_ERROR(
-          cudaMalloc(reinterpret_cast<void**>(&s.d_C), bytes));
+      CHECK_CUDA_ERROR(cudaMalloc(reinterpret_cast<void**>(&s.d_A), bytes));
+      CHECK_CUDA_ERROR(cudaMalloc(reinterpret_cast<void**>(&s.d_B), bytes));
+      CHECK_CUDA_ERROR(cudaMalloc(reinterpret_cast<void**>(&s.d_C), bytes));
 
       s.h_A = PinnedBuffer(elems);
       s.h_B = PinnedBuffer(elems);
       s.h_C = PinnedBuffer(elems);
 
-      s.args = MakeNNGemmArgs(dim_, dim_, dim_,
-                              s.h_A.ptr, s.h_B.ptr, s.h_C.ptr);
+      s.args =
+          MakeNNGemmArgs(dim_, dim_, dim_, s.h_A.ptr, s.h_B.ptr, s.h_C.ptr);
     }
 
     // Warmup
@@ -869,8 +855,8 @@ BENCHMARK_DEFINE_F(RoundRobinGreenCtxStreams, RoundRobin)
     }
   }
 
-  double total_flops = static_cast<double>(total_tasks_) * 2.0 *
-                       dim_ * dim_ * dim_;
+  double total_flops =
+      static_cast<double>(total_tasks_) * 2.0 * dim_ * dim_ * dim_;
   state.counters["Aggregate_GFLOPS"] = benchmark::Counter(
       total_flops, benchmark::Counter::kIsIterationInvariantRate,
       benchmark::Counter::kIs1000);
@@ -947,17 +933,16 @@ class GreenCtxMemory : public benchmark::Fixture {
     group_sm_ = groups_[0].sm.smCount;
 
     if (static_cast<unsigned int>(num_ctx_) > nb) {
-      state.SkipWithMessage(
-          "Requested " + std::to_string(num_ctx_) + " contexts but only " +
-          std::to_string(nb) + " SM groups available");
+      state.SkipWithMessage("Requested " + std::to_string(num_ctx_) +
+                            " contexts but only " + std::to_string(nb) +
+                            " SM groups available");
       return;
     }
 
     // Pre-build one descriptor per context (each gets 1 SM group)
     descs_.resize(num_ctx_);
     for (int i = 0; i < num_ctx_; i++) {
-      CHECK_CU_RESULT(
-          cuDevResourceGenerateDesc(&descs_[i], &groups_[i], 1));
+      CHECK_CU_RESULT(cuDevResourceGenerateDesc(&descs_[i], &groups_[i], 1));
     }
 
     // Warmup: one green ctx create/destroy cycle
@@ -1011,8 +996,8 @@ BENCHMARK_DEFINE_F(GreenCtxMemory, BareCtx)(benchmark::State& state) {
 
     state.PauseTiming();
     size_t free_after = QueryFreeBytes();
-    int64_t consumed = static_cast<int64_t>(free_before) -
-                       static_cast<int64_t>(free_after);
+    int64_t consumed =
+        static_cast<int64_t>(free_before) - static_cast<int64_t>(free_after);
     state.counters["total_MB"] =
         static_cast<double>(consumed) / (1024.0 * 1024.0);
     state.counters["per_ctx_KB"] =
@@ -1056,15 +1041,15 @@ BENCHMARK_DEFINE_F(GreenCtxMemory, WithStream)(benchmark::State& state) {
       CHECK_CU_RESULT(cuCtxFromGreenCtx(&ctxs[i], gcs[i]));
       CHECK_CU_RESULT(cuCtxSetCurrent(ctxs[i]));
       CUstream s;
-      CHECK_CU_RESULT(cuGreenCtxStreamCreate(
-          &s, gcs[i], CU_STREAM_NON_BLOCKING, 0));
+      CHECK_CU_RESULT(
+          cuGreenCtxStreamCreate(&s, gcs[i], CU_STREAM_NON_BLOCKING, 0));
       streams[i] = s;
     }
 
     state.PauseTiming();
     size_t free_after = QueryFreeBytes();
-    int64_t consumed = static_cast<int64_t>(free_before) -
-                       static_cast<int64_t>(free_after);
+    int64_t consumed =
+        static_cast<int64_t>(free_before) - static_cast<int64_t>(free_after);
     state.counters["total_MB"] =
         static_cast<double>(consumed) / (1024.0 * 1024.0);
     state.counters["per_ctx_KB"] =
@@ -1111,8 +1096,8 @@ BENCHMARK_DEFINE_F(GreenCtxMemory, FullSlot)(benchmark::State& state) {
       CHECK_CU_RESULT(cuCtxFromGreenCtx(&ctxs[i], gcs[i]));
       CHECK_CU_RESULT(cuCtxSetCurrent(ctxs[i]));
       CUstream s;
-      CHECK_CU_RESULT(cuGreenCtxStreamCreate(
-          &s, gcs[i], CU_STREAM_NON_BLOCKING, 0));
+      CHECK_CU_RESULT(
+          cuGreenCtxStreamCreate(&s, gcs[i], CU_STREAM_NON_BLOCKING, 0));
       streams[i] = s;
       CHECK_CUBLAS_ERROR(cublasCreate(&handles[i]));
       CHECK_CUBLAS_ERROR(cublasSetStream(handles[i], streams[i]));
@@ -1120,8 +1105,8 @@ BENCHMARK_DEFINE_F(GreenCtxMemory, FullSlot)(benchmark::State& state) {
 
     state.PauseTiming();
     size_t free_after = QueryFreeBytes();
-    int64_t consumed = static_cast<int64_t>(free_before) -
-                       static_cast<int64_t>(free_after);
+    int64_t consumed =
+        static_cast<int64_t>(free_before) - static_cast<int64_t>(free_after);
     state.counters["total_MB"] =
         static_cast<double>(consumed) / (1024.0 * 1024.0);
     state.counters["per_ctx_KB"] =
@@ -1163,8 +1148,9 @@ BENCHMARK_REGISTER_F(GreenCtxMemory, FullSlot)
 // captures H2D + compute + D2H on the green ctx stream:
 //
 //   SameCtx:        launch+sync on ctx A every iteration          (baseline)
-//   AlternateCtx:   alternate A→B→A→B… each iteration             (2-ctx switch)
-//   RoundRobinCtx:  round-robin across N contexts (arg = N)       (N-ctx switch)
+//   AlternateCtx:   alternate A→B→A→B… each iteration             (2-ctx
+//   switch) RoundRobinCtx:  round-robin across N contexts (arg = N) (N-ctx
+//   switch)
 //
 // arg(0) = GEMM dim (M=N=K), arg(1) = num_contexts (ignored for SameCtx)
 
@@ -1184,9 +1170,9 @@ class GreenCtxKernelSwitch : public benchmark::Fixture {
 
     // Each context gets 1 SM group (equal-sized partitions)
     if (static_cast<unsigned int>(num_ctx_) > split_.nb_groups) {
-      state.SkipWithMessage(
-          "Not enough SM groups (" + std::to_string(split_.nb_groups) +
-          ") for " + std::to_string(num_ctx_) + " contexts");
+      state.SkipWithMessage("Not enough SM groups (" +
+                            std::to_string(split_.nb_groups) + ") for " +
+                            std::to_string(num_ctx_) + " contexts");
       return;
     }
 
@@ -1196,8 +1182,8 @@ class GreenCtxKernelSwitch : public benchmark::Fixture {
       s.num_groups = 1;
       s.sm_count = static_cast<int>(split_.group_sm_count);
 
-      CHECK_CU_RESULT(cuDevResourceGenerateDesc(
-          &s.desc, &split_.all_groups[i], 1));
+      CHECK_CU_RESULT(
+          cuDevResourceGenerateDesc(&s.desc, &split_.all_groups[i], 1));
       CHECK_CU_RESULT(cuGreenCtxCreate(&s.green_ctx, s.desc, split_.dev,
                                        CU_GREEN_CTX_DEFAULT_STREAM));
       CHECK_CU_RESULT(cuCtxFromGreenCtx(&s.cuda_ctx, s.green_ctx));
@@ -1210,19 +1196,16 @@ class GreenCtxKernelSwitch : public benchmark::Fixture {
       CHECK_CUBLAS_ERROR(cublasCreate(&s.cublas_handle));
       CHECK_CUBLAS_ERROR(cublasSetStream(s.cublas_handle, s.stream));
 
-      CHECK_CUDA_ERROR(
-          cudaMalloc(reinterpret_cast<void**>(&s.d_A), bytes));
-      CHECK_CUDA_ERROR(
-          cudaMalloc(reinterpret_cast<void**>(&s.d_B), bytes));
-      CHECK_CUDA_ERROR(
-          cudaMalloc(reinterpret_cast<void**>(&s.d_C), bytes));
+      CHECK_CUDA_ERROR(cudaMalloc(reinterpret_cast<void**>(&s.d_A), bytes));
+      CHECK_CUDA_ERROR(cudaMalloc(reinterpret_cast<void**>(&s.d_B), bytes));
+      CHECK_CUDA_ERROR(cudaMalloc(reinterpret_cast<void**>(&s.d_C), bytes));
 
       s.h_A = PinnedBuffer(elems);
       s.h_B = PinnedBuffer(elems);
       s.h_C = PinnedBuffer(elems);
 
-      s.args = MakeNNGemmArgs(dim_, dim_, dim_,
-                              s.h_A.ptr, s.h_B.ptr, s.h_C.ptr);
+      s.args =
+          MakeNNGemmArgs(dim_, dim_, dim_, s.h_A.ptr, s.h_B.ptr, s.h_C.ptr);
     }
 
     // Warmup: run one GEMM per slot
@@ -1265,8 +1248,7 @@ BENCHMARK_DEFINE_F(GreenCtxKernelSwitch, SameCtx)
   CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
 
   for (auto _ : state) {
-    RunGemmDirect(s.cublas_handle, s.stream, s.d_A, s.d_B, s.d_C,
-                  s.args.get());
+    RunGemmDirect(s.cublas_handle, s.stream, s.d_A, s.d_B, s.d_C, s.args.get());
     CHECK_CUDA_ERROR(cudaStreamSynchronize(s.stream));
   }
 
@@ -1290,8 +1272,7 @@ BENCHMARK_DEFINE_F(GreenCtxKernelSwitch, AlternateCtx)
   for (auto _ : state) {
     auto& s = slots_[idx];
     CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
-    RunGemmDirect(s.cublas_handle, s.stream, s.d_A, s.d_B, s.d_C,
-                  s.args.get());
+    RunGemmDirect(s.cublas_handle, s.stream, s.d_A, s.d_B, s.d_C, s.args.get());
     CHECK_CUDA_ERROR(cudaStreamSynchronize(s.stream));
     idx = 1 - idx;
   }
@@ -1318,8 +1299,7 @@ BENCHMARK_DEFINE_F(GreenCtxKernelSwitch, RoundRobinCtx)
   for (auto _ : state) {
     auto& s = slots_[idx];
     CHECK_CU_RESULT(cuCtxSetCurrent(s.cuda_ctx));
-    RunGemmDirect(s.cublas_handle, s.stream, s.d_A, s.d_B, s.d_C,
-                  s.args.get());
+    RunGemmDirect(s.cublas_handle, s.stream, s.d_A, s.d_B, s.d_C, s.args.get());
     CHECK_CUDA_ERROR(cudaStreamSynchronize(s.stream));
     idx = (idx + 1) % n;
   }

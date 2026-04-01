@@ -18,10 +18,10 @@ Usage:
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
-import warnings
 
 import pandas as pd
 
