@@ -11,3 +11,4 @@ protobuf==3.13.0
 psutil
 redis
 transformers
+pytest-timeout
