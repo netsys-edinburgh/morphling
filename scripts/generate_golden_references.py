@@ -67,7 +67,9 @@ def _load_real_model_and_tokenizer(
 ) -> Tuple[torch.nn.Module, Any]:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    model = AutoModelForCausalLM.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name, torch_dtype=torch.float32
+    )
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     return model, tokenizer
 
@@ -105,14 +107,16 @@ def _run_once(
         losses: List[float] = []
         grad_norms: List[float] = []
 
+        cpu_gen = torch.Generator(device="cpu")
+        cpu_gen.manual_seed(seed)
         for _ in range(steps):
             input_ids = torch.randint(
                 low=0,
                 high=vocab_size,
                 size=(batch_size, seq_length),
-                device=device,
                 dtype=torch.long,
-            )
+                generator=cpu_gen,
+            ).to(device)
 
             optimizer.zero_grad()
             outputs = model(input_ids=input_ids, labels=input_ids)
@@ -139,12 +143,14 @@ def _run_once(
             optimizer.step()
 
         model.eval()
-        torch.manual_seed(999)
+        eval_gen = torch.Generator(device="cpu")
+        eval_gen.manual_seed(999)
         eval_input_ids = torch.randint(
             low=0,
             high=vocab_size,
             size=(batch_size, seq_length),
             dtype=torch.long,
+            generator=eval_gen,
         ).to(device)
 
         with torch.no_grad():
