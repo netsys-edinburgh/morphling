@@ -1,6 +1,6 @@
 from __future__ import annotations
-# pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnusedCallResult=false, reportUnannotatedClassAttribute=false, reportImplicitOverride=false
 
+# pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnusedCallResult=false, reportUnannotatedClassAttribute=false, reportImplicitOverride=false
 import json
 import subprocess
 from pathlib import Path

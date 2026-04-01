@@ -6,8 +6,8 @@ stability across repeated executions of the same tiny model.
 
 from typing import Callable, cast
 
-import torch
 import pytest
+import torch
 
 from tests.python.testutils.determinism import (
     deterministic_context,
