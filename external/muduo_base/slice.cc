@@ -24,7 +24,7 @@ Slice::Slice(void* data_, uint64_t size, bool data_mem_new)
 Slice::~Slice() {
   // TODO Auto-generated destructor stub
   if (data_mem_new_)
-    delete[]((char*)data_mem_new_);
+    delete[] ((char*)data_mem_new_);
   else
     free(data_);
 }

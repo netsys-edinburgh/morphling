@@ -768,8 +768,8 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
       // Check if partitions are stuck in RUNNING state
       if (total_running > 0 && total_running == rsp_cb_counts_[oid] &&
           total_idle == 0) {
-        LOG_ERROR << "[WaitMatMul] ⚠️  STUCK PARTITIONS: All "
-                  << total_running << " partitions stuck in RUNNING state for "
+        LOG_ERROR << "[WaitMatMul] ⚠️  STUCK PARTITIONS: All " << total_running
+                  << " partitions stuck in RUNNING state for "
                   << poll_count * 100 << "ms";
         LOG_ERROR << "[WaitMatMul] Possible causes: 1) Devices not responding "
                      "2) Network issues 3) Devices processing too slowly";
