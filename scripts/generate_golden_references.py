@@ -190,16 +190,16 @@ def _persist_outputs(output_dir: Path, result: Dict[str, Any]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     (output_dir / "per_step_loss.json").write_text(
-        json.dumps(result["losses"], indent=2),
+        json.dumps(result["losses"], indent=2) + "\n",
         encoding="utf-8",
     )
     (output_dir / "per_step_grad_norm.json").write_text(
-        json.dumps(result["grad_norms"], indent=2),
+        json.dumps(result["grad_norms"], indent=2) + "\n",
         encoding="utf-8",
     )
     torch.save(result["logits_sample"], output_dir / "logits_sample.pt")
     (output_dir / "metadata.json").write_text(
-        json.dumps(result["metadata"], indent=2),
+        json.dumps(result["metadata"], indent=2) + "\n",
         encoding="utf-8",
     )
 
