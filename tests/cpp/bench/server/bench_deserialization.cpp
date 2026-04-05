@@ -9,8 +9,6 @@
 #include <string>
 #include <vector>
 
-#include "../../../../external/protobuf/src/google/protobuf/port_def.inc"
-#include "../../../../external/protobuf/src/google/protobuf/port_undef.inc"
 #include "../../../../external/protobuf/src/google/protobuf/wrappers.pb.h"
 
 namespace {
