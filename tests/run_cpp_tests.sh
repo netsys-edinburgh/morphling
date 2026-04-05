@@ -73,9 +73,9 @@ case "${CATEGORY}" in
             mkdir -p "${SCRIPT_DIR}/results"
             JSON_OUTPUT="${SCRIPT_DIR}/results"
         fi
-        for bench in "${BUILD_DIR}"/bench_*; do
+        while IFS= read -r -d '' bench; do
             if [ -x "$bench" ]; then
-                BENCH_NAME="$(basename $bench)"
+                BENCH_NAME="$(basename "$bench")"
                 echo "  [RUNNING] ${BENCH_NAME}..."
                 if [ -n "$JSON_OUTPUT" ]; then
                     "$bench" --benchmark_min_time=0.5 --benchmark_format=json \
@@ -89,7 +89,7 @@ case "${CATEGORY}" in
                 fi
                 BENCH_FOUND=1
             fi
-        done
+        done < <(find "${BUILD_DIR}" -name 'bench_*' -type f -executable -not -name '*.o' -not -name '*.d' -print0 2>/dev/null | sort -z)
         BENCH_END_TIME=$(date +%s)
         BENCH_ELAPSED=$((BENCH_END_TIME - BENCH_START_TIME))
         echo ""
