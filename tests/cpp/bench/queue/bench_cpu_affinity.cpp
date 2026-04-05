@@ -47,6 +47,7 @@ void BM_SetAffinity_SingleCore(benchmark::State& state) {
   }
   state.counters["switches_per_second"] = benchmark::Counter(
       static_cast<double>(state.iterations()), benchmark::Counter::kIsRate);
+  state.counters["ns_per_switch"] = benchmark::Counter(0.0);
 }
 
 void BM_SetAffinity_VaryingCores(benchmark::State& state) {
@@ -59,6 +60,7 @@ void BM_SetAffinity_VaryingCores(benchmark::State& state) {
   }
   state.counters["switches_per_second"] = benchmark::Counter(
       static_cast<double>(state.iterations()), benchmark::Counter::kIsRate);
+  state.counters["ns_per_switch"] = benchmark::Counter(0.0);
 }
 
 void BM_SetAffinity_SameSet(benchmark::State& state) {
@@ -69,6 +71,7 @@ void BM_SetAffinity_SameSet(benchmark::State& state) {
   }
   state.counters["switches_per_second"] = benchmark::Counter(
       static_cast<double>(state.iterations()), benchmark::Counter::kIsRate);
+  state.counters["ns_per_switch"] = benchmark::Counter(0.0);
 }
 
 void BM_AffinitySlotLookup(benchmark::State& state) {
@@ -99,6 +102,7 @@ void BM_BuildCpuSet(benchmark::State& state) {
   }
   state.counters["switches_per_second"] = benchmark::Counter(
       static_cast<double>(state.iterations()), benchmark::Counter::kIsRate);
+  state.counters["ns_per_switch"] = benchmark::Counter(0.0);
 }
 
 BENCHMARK(BM_SetAffinity_SingleCore);

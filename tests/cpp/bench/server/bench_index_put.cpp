@@ -44,6 +44,8 @@ static void BM_IndexPut_SingleBlock(benchmark::State& state) {
   }
 
   RecordBytesPerSecond(state, total_bytes);
+  state.counters["rows_per_second"] = benchmark::Counter(
+      static_cast<double>(kBlockRows), benchmark::Counter::kIsRate);
 }
 BENCHMARK(BM_IndexPut_SingleBlock);
 
@@ -70,6 +72,8 @@ static void BM_IndexPut_MultiBlock(benchmark::State& state) {
   }
 
   RecordBytesPerSecond(state, total_bytes);
+  state.counters["rows_per_second"] = benchmark::Counter(
+      static_cast<double>(kDim), benchmark::Counter::kIsRate);
 }
 BENCHMARK(BM_IndexPut_MultiBlock)->Arg(2)->Arg(4)->Arg(8)->Arg(16);
 
@@ -91,6 +95,8 @@ static void BM_IndexPut_VaryingDims(benchmark::State& state) {
   }
 
   RecordBytesPerSecond(state, total_bytes);
+  state.counters["rows_per_second"] = benchmark::Counter(
+      static_cast<double>(block_rows), benchmark::Counter::kIsRate);
 }
 BENCHMARK(BM_IndexPut_VaryingDims)
     ->Arg(128)

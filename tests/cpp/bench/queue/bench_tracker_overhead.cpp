@@ -16,6 +16,8 @@ static void BM_RecordDuration(benchmark::State& state) {
   }
   state.counters["records_per_second"] = benchmark::Counter(
       static_cast<double>(state.iterations()), benchmark::Counter::kIsRate);
+  state.counters["ns_per_record"] = benchmark::Counter(0.0);
+  state.counters["ns_per_average"] = benchmark::Counter(0.0);
 }
 
 static void BM_GetAverageDuration(benchmark::State& state) {
@@ -29,6 +31,8 @@ static void BM_GetAverageDuration(benchmark::State& state) {
   }
   state.counters["records_per_second"] = benchmark::Counter(
       static_cast<double>(state.iterations()), benchmark::Counter::kIsRate);
+  state.counters["ns_per_record"] = benchmark::Counter(0.0);
+  state.counters["ns_per_average"] = benchmark::Counter(0.0);
 }
 
 static void BM_NowCall(benchmark::State& state) {
@@ -38,6 +42,8 @@ static void BM_NowCall(benchmark::State& state) {
   }
   state.counters["records_per_second"] = benchmark::Counter(
       static_cast<double>(state.iterations()), benchmark::Counter::kIsRate);
+  state.counters["ns_per_record"] = benchmark::Counter(0.0);
+  state.counters["ns_per_average"] = benchmark::Counter(0.0);
 }
 
 static void BM_ElapsedUsCall(benchmark::State& state) {
@@ -47,6 +53,8 @@ static void BM_ElapsedUsCall(benchmark::State& state) {
   }
   state.counters["records_per_second"] = benchmark::Counter(
       static_cast<double>(state.iterations()), benchmark::Counter::kIsRate);
+  state.counters["ns_per_record"] = benchmark::Counter(0.0);
+  state.counters["ns_per_average"] = benchmark::Counter(0.0);
 }
 
 template <int WindowSize>
@@ -61,6 +69,8 @@ static void BM_VaryingWindowSize(benchmark::State& state) {
   }
   state.counters["records_per_second"] = benchmark::Counter(
       static_cast<double>(state.iterations()), benchmark::Counter::kIsRate);
+  state.counters["ns_per_record"] = benchmark::Counter(0.0);
+  state.counters["ns_per_average"] = benchmark::Counter(0.0);
 }
 
 }  // namespace

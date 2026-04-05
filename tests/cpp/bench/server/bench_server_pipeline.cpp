@@ -167,6 +167,7 @@ void RecordRateCounters(benchmark::State& state, double bytes_per_request) {
       benchmark::Counter(1.0, benchmark::Counter::kIsRate);
   state.counters["bytes_per_second"] =
       benchmark::Counter(bytes_per_request, benchmark::Counter::kIsRate);
+  state.counters["stage_breakdown_ns"] = benchmark::Counter(0.0);
 }
 
 WireHeader ParseWireHeader(const uint8_t* data, size_t size) {
