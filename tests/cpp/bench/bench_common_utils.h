@@ -29,3 +29,8 @@ inline unsigned int GetHardwareConcurrency() {
 
 static constexpr int kGpuWarmupIterations = 3;
 static constexpr int kDefaultRepetitions = 5;
+
+// Run any benchmark binary with JSON output:
+//   ./bench_name --benchmark_format=json --benchmark_out=result.json
+// Or via the CI runner:
+//   ./tests/run_cpp_tests.sh bench --json   (writes to tests/results/*.json)

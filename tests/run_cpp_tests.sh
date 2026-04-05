@@ -65,6 +65,8 @@ case "${CATEGORY}" in
         echo "Running benchmarks..."
         BENCH_FOUND=0
         BENCH_FAILED=0
+        BENCH_PASSED=0
+        BENCH_START_TIME=$(date +%s)
         JSON_OUTPUT=""
         # Support optional --json flag: ./run_cpp_tests.sh bench --json
         if [ "${2:-}" = "--json" ]; then
@@ -74,17 +76,24 @@ case "${CATEGORY}" in
         for bench in "${BUILD_DIR}"/bench_*; do
             if [ -x "$bench" ]; then
                 BENCH_NAME="$(basename $bench)"
-                echo "Running ${BENCH_NAME}..."
+                echo "  [RUNNING] ${BENCH_NAME}..."
                 if [ -n "$JSON_OUTPUT" ]; then
                     "$bench" --benchmark_min_time=0.5 --benchmark_format=json \
-                        > "${JSON_OUTPUT}/${BENCH_NAME}.json" || BENCH_FAILED=1
+                        > "${JSON_OUTPUT}/${BENCH_NAME}.json" \
+                        && { BENCH_PASSED=$((BENCH_PASSED+1)); echo "  [PASS]    ${BENCH_NAME}"; } \
+                        || { BENCH_FAILED=$((BENCH_FAILED+1)); echo "  [FAIL]    ${BENCH_NAME}"; }
                 else
                     "$bench" --benchmark_min_time=0.5 --benchmark_format=console \
-                        || BENCH_FAILED=1
+                        && { BENCH_PASSED=$((BENCH_PASSED+1)); echo "  [PASS]    ${BENCH_NAME}"; } \
+                        || { BENCH_FAILED=$((BENCH_FAILED+1)); echo "  [FAIL]    ${BENCH_NAME}"; }
                 fi
                 BENCH_FOUND=1
             fi
         done
+        BENCH_END_TIME=$(date +%s)
+        BENCH_ELAPSED=$((BENCH_END_TIME - BENCH_START_TIME))
+        echo ""
+        echo "Benchmark summary: ${BENCH_PASSED} passed, ${BENCH_FAILED} failed (${BENCH_ELAPSED}s)"
         if [ "$BENCH_FOUND" -eq 0 ]; then
             echo "No benchmark binaries found in ${BUILD_DIR}"
         fi
