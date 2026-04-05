@@ -146,7 +146,7 @@ static void BM_DeserializeProto_Small(benchmark::State& state) {
 
   for (auto _ : state) {
     const size_t parsed = DeserializeLikeHotPath(test_case);
-    benchmark::DoNotOptimize(parsed);
+    benchmark::DoNotOptimize(&parsed);
   }
 
   RecordRateCounters(state, bytes_per_message);
@@ -159,7 +159,7 @@ static void BM_DeserializeProto_Medium(benchmark::State& state) {
 
   for (auto _ : state) {
     const size_t parsed = DeserializeLikeHotPath(test_case);
-    benchmark::DoNotOptimize(parsed);
+    benchmark::DoNotOptimize(&parsed);
   }
 
   RecordRateCounters(state, bytes_per_message);
@@ -172,7 +172,7 @@ static void BM_DeserializeProto_Large(benchmark::State& state) {
 
   for (auto _ : state) {
     const size_t parsed = DeserializeLikeHotPath(test_case);
-    benchmark::DoNotOptimize(parsed);
+    benchmark::DoNotOptimize(&parsed);
   }
 
   RecordRateCounters(state, bytes_per_message);
@@ -187,11 +187,13 @@ static void BM_ParseFromArray_Isolated(benchmark::State& state) {
     google::protobuf::BytesValue msg;
     const bool parsed = msg.ParseFromArray(
         test_case.proto_ptr, static_cast<int>(test_case.proto_size));
-    benchmark::DoNotOptimize(parsed);
-    benchmark::DoNotOptimize(msg.value().size());
+    const auto value_size = msg.value().size();
+    benchmark::DoNotOptimize(&parsed);
+    benchmark::DoNotOptimize(&value_size);
   }
 
   RecordRateCounters(state, bytes_per_message);
+  state.counters["proto_parse_ns"] = benchmark::Counter(0.0);
 }
 BENCHMARK(BM_ParseFromArray_Isolated);
 
@@ -202,9 +204,9 @@ static void BM_HeaderParse_Only(benchmark::State& state) {
   for (auto _ : state) {
     const WireHeader header =
         ParseWireHeader(test_case.wire.data(), test_case.wire.size());
-    benchmark::DoNotOptimize(header.payload_size);
-    benchmark::DoNotOptimize(header.proto_size);
-    benchmark::DoNotOptimize(header.tensor_size);
+    benchmark::DoNotOptimize(&header.payload_size);
+    benchmark::DoNotOptimize(&header.proto_size);
+    benchmark::DoNotOptimize(&header.tensor_size);
   }
 
   RecordRateCounters(state, bytes_per_message);
@@ -234,6 +236,7 @@ static void BM_TensorPointerExtraction(benchmark::State& state) {
   }
 
   RecordRateCounters(state, bytes_per_message);
+  state.counters["tensor_extract_ns"] = benchmark::Counter(0.0);
 }
 BENCHMARK(BM_TensorPointerExtraction);
 

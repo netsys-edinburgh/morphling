@@ -171,7 +171,7 @@ static void BM_TaskRoundtrip_UnderLoad(benchmark::State& state) {
   state.counters["tasks_per_second"] = benchmark::Counter(
       static_cast<double>(state.iterations()), benchmark::Counter::kIsRate);
 }
-BENCHMARK(BM_TaskRoundtrip_UnderLoad)->Arg(0)->Arg(10)->Arg(100);
+BENCHMARK(BM_TaskRoundtrip_UnderLoad)->Arg(0)->Arg(10)->Arg(100)->Arg(1000);
 
 static void BM_WaitTaskDone_Latency(benchmark::State& state) {
   WorkerBase worker;
