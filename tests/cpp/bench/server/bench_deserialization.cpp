@@ -167,17 +167,18 @@ static void BM_DeserializeProto_Medium(benchmark::State& state) {
 BENCHMARK(BM_DeserializeProto_Medium);
 
 static void BM_DeserializeProto_Large(benchmark::State& state) {
-  SerializedCase test_case(4096);
+  const int dim = static_cast<int>(state.range(0));
+  SerializedCase test_case(dim);
   const double bytes_per_message = static_cast<double>(test_case.wire.size());
 
   for (auto _ : state) {
     const size_t parsed = DeserializeLikeHotPath(test_case);
-    benchmark::DoNotOptimize(&parsed);
+    benchmark::DoNotOptimize(parsed);
   }
 
   RecordRateCounters(state, bytes_per_message);
 }
-BENCHMARK(BM_DeserializeProto_Large)->MinTime(0.1);
+BENCHMARK(BM_DeserializeProto_Large)->Arg(4096)->Arg(8192)->MinTime(0.1);
 
 static void BM_ParseFromArray_Isolated(benchmark::State& state) {
   SerializedCase test_case(1024);

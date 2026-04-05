@@ -350,7 +350,7 @@ endif()
 # ============================================================================
 # Queue benchmarks (optional)
 # ============================================================================
-option(ENABLE_QUEUE_TESTS "Build queue benchmarks" OFF)
+option(ENABLE_QUEUE_TESTS "Build queue benchmarks" ON)
 if(ENABLE_QUEUE_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/queue/CMakeLists.txt")
   add_subdirectory(bench/queue)
 endif()
@@ -358,7 +358,7 @@ endif()
 # ============================================================================
 # Server benchmarks (optional)
 # ============================================================================
-option(ENABLE_SERVER_TESTS "Build server benchmarks" OFF)
+option(ENABLE_SERVER_TESTS "Build server benchmarks" ON)
 if(ENABLE_SERVER_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/server/CMakeLists.txt")
   add_subdirectory(bench/server)
 endif()
@@ -366,7 +366,7 @@ endif()
 # ============================================================================
 # Memory benchmarks (optional)
 # ============================================================================
-option(ENABLE_MEMORY_TESTS "Build memory benchmarks" OFF)
+option(ENABLE_MEMORY_TESTS "Build memory benchmarks" ON)
 if(ENABLE_MEMORY_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/memory/CMakeLists.txt")
   add_subdirectory(bench/memory)
 endif()
@@ -374,7 +374,7 @@ endif()
 # ============================================================================
 # Scheduling benchmarks (optional)
 # ============================================================================
-option(ENABLE_SCHEDULING_TESTS "Build scheduling benchmarks" OFF)
+option(ENABLE_SCHEDULING_TESTS "Build scheduling benchmarks" ON)
 if(ENABLE_SCHEDULING_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/scheduling/CMakeLists.txt")
   add_subdirectory(bench/scheduling)
 endif()
