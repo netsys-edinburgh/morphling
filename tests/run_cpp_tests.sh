@@ -64,15 +64,33 @@ case "${CATEGORY}" in
     bench)
         echo "Running benchmarks..."
         BENCH_FOUND=0
+        BENCH_FAILED=0
+        JSON_OUTPUT=""
+        # Support optional --json flag: ./run_cpp_tests.sh bench --json
+        if [ "${2:-}" = "--json" ]; then
+            mkdir -p "${SCRIPT_DIR}/results"
+            JSON_OUTPUT="${SCRIPT_DIR}/results"
+        fi
         for bench in "${BUILD_DIR}"/bench_*; do
             if [ -x "$bench" ]; then
-                echo "Running $(basename $bench)..."
-                "$bench" --benchmark_min_time=0.5 --benchmark_format=console || true
+                BENCH_NAME="$(basename $bench)"
+                echo "Running ${BENCH_NAME}..."
+                if [ -n "$JSON_OUTPUT" ]; then
+                    "$bench" --benchmark_min_time=0.5 --benchmark_format=json \
+                        > "${JSON_OUTPUT}/${BENCH_NAME}.json" || BENCH_FAILED=1
+                else
+                    "$bench" --benchmark_min_time=0.5 --benchmark_format=console \
+                        || BENCH_FAILED=1
+                fi
                 BENCH_FOUND=1
             fi
         done
         if [ "$BENCH_FOUND" -eq 0 ]; then
             echo "No benchmark binaries found in ${BUILD_DIR}"
+        fi
+        if [ "$BENCH_FAILED" -ne 0 ]; then
+            echo "One or more benchmarks failed."
+            exit 1
         fi
         ;;
     worker)
