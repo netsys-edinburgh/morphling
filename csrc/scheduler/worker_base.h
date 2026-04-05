@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "core/noncopyable.h"
@@ -85,7 +86,7 @@ class WorkerBase : public noncopyable {
       std::lock_guard<std::mutex> lock(mutex_);
       tasks_.emplace_back(task_id, std::move(t), state);
       task_count_++;
-      task_ids_.insert(task_id);
+      task_handles_.emplace(task_id, state);
     }
     cv_.notify_all();
     return state;
@@ -119,15 +120,16 @@ class WorkerBase : public noncopyable {
         state->cv.notify_all();
       }
 
-      lock.lock();
-      task_ids_.erase(task_id);
-      lock.unlock();
-
       cv_.notify_all();
 
       // Invoke callback outside all locks
       if (cb) {
         cb(id);
+      }
+
+      {
+        std::lock_guard<std::mutex> lk(mutex_);
+        task_handles_.erase(task_id);
       }
     }
   }
@@ -143,10 +145,14 @@ class WorkerBase : public noncopyable {
   }
 
   void WaitTaskDone(const std::string& task_id) {
-    std::unique_lock<std::mutex> lock(mutex_);
-    cv_.wait(lock, [this, &task_id] {
-      return (task_ids_.count(task_id) == 0) || quit_;
-    });
+    TaskHandle handle;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      auto it = task_handles_.find(task_id);
+      if (it == task_handles_.end()) return;
+      handle = it->second;
+    }
+    if (handle) handle->Wait();
   }
 
  protected:
@@ -155,7 +161,7 @@ class WorkerBase : public noncopyable {
   bool quit_ = false;
   std::thread worker_;
   std::deque<std::tuple<std::string, Task, TaskHandle>> tasks_;
-  std::unordered_set<std::string> task_ids_;
+  std::unordered_map<std::string, TaskHandle> task_handles_;
   std::atomic_int task_count_{0};
 };
 
