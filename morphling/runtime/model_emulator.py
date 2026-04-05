@@ -37,25 +37,7 @@ from tqdm import tqdm
 from transformers import AutoConfig, PreTrainedModel
 from transformers.configuration_utils import PretrainedConfig
 
-try:
-    from morphling._C import (
-        ArcherTensorHandle,
-        MemoryManagerClient,
-        set_tensor_shm,
-    )
-except ImportError:
-    from morphling._C import set_tensor_shm
-
-    class _MissingNativeBackend:
-        def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "morphling._C is missing ArcherTensorHandle/"
-                "MemoryManagerClient symbols"
-            )
-
-    ArcherTensorHandle = _MissingNativeBackend
-    MemoryManagerClient = _MissingNativeBackend
-
+from morphling._C import ArcherTensorHandle, MemoryManagerClient, set_tensor_shm
 
 # from morphling._intercept import MemoryManagerClient
 from morphling.common import EmulatorConfig
