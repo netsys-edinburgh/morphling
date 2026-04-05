@@ -566,4 +566,5 @@ Testing/
 .cache/
 
 build_local/
+tests/cpp/build_*/
 .trace
