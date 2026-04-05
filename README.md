@@ -351,6 +351,5 @@ XtGemm and zerocopy suites.
 - `docs/DOCKER.md`
 - `docs/GEMM_ID_ISSUES.md`
 - `docs/EARLIEST_vs_LATEST.md`
-- `docs/LOG_FORMAT.md`
 - `tests/cpp/README.md`
 - `tests/cpp/zerocopy/README.md`
