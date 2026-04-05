@@ -61,6 +61,20 @@ case "${CATEGORY}" in
             fi
         done
         ;;
+    bench)
+        echo "Running benchmarks..."
+        BENCH_FOUND=0
+        for bench in "${BUILD_DIR}"/bench_*; do
+            if [ -x "$bench" ]; then
+                echo "Running $(basename $bench)..."
+                "$bench" --benchmark_min_time=0.5 --benchmark_format=console || true
+                BENCH_FOUND=1
+            fi
+        done
+        if [ "$BENCH_FOUND" -eq 0 ]; then
+            echo "No benchmark binaries found in ${BUILD_DIR}"
+        fi
+        ;;
     worker)
         echo "Running worker tests..."
         if [ -x "${BUILD_DIR}/test_worker_base" ]; then
@@ -70,7 +84,7 @@ case "${CATEGORY}" in
         ;;
     *)
         echo "Unknown category: ${CATEGORY}"
-        echo "Available categories: all, unit, cuda, worker"
+        echo "Available categories: all, unit, bench, cuda, worker"
         exit 1
         ;;
 esac
