@@ -37,6 +37,8 @@ struct ProxyEnvCfg {
   bool enable_auto_recovery = true;
   int send_high_water_mark = 4194304;  // 4MB
   int max_batch_per_device = 50;
+  int partitions_per_device =
+      4;  // target partitions per device for dynamic block sizing
   std::string pool_mode;  // "gpu", "cpu", or "both"
   std::string loop_strategy;
 
