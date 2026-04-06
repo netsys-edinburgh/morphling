@@ -368,7 +368,6 @@ if(ENABLE_ZEROCOPY_TESTS)
   list(APPEND CMAKE_PREFIX_PATH ${TORCH_PREFIX_PATH})
   find_package(Torch REQUIRED)
 
-  # Generate proto C++ sources
   set(PROTO_SRC_DIR "${PROJECT_ROOT}/proto")
   set(PROTO_FILES
     "${PROTO_SRC_DIR}/morphling.proto"
