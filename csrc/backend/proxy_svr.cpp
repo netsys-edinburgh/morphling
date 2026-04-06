@@ -159,7 +159,8 @@ void ProxySvrHandle::DecodeAndDispatch(const ConnectionUeventPtr& conn,
       HandleMatMul(conn, payload, size);
       conn_inflight_[client_addr] -= 1;
 
-      if (!task_queue_.empty()) {
+      while (conn_inflight_[client_addr] < ctx_.max_inflight &&
+             !task_queue_.empty()) {
         auto task = task_queue_.front();
         task_queue_.pop_front();
         task();
@@ -289,13 +290,15 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                                      "RECEIVE", "END", vt_receive_start,
                                      vt_receive_end);
 
-  // Mark partition as FINISHED and remove from tracker
   PARTITION_TRACKER.MarkPartitionFinished(part_key);
-  PARTITION_TRACKER.RemovePartitionByKey(part_key);
-  DEVICE_TRACKER.RecordPartitionProcessed(partition.dev_id);
 
-  reinterpret_cast<ProxySvrImpl*>(ctx_.instance)
-      ->IncRspCbCount(partition.oid, 1);
+  auto* svr_impl = reinterpret_cast<ProxySvrImpl*>(ctx_.instance);
+  {
+    std::lock_guard<std::mutex> lk(svr_impl->completion_mutex_);
+    svr_impl->completion_queue_.push_back({part_key, partition.dev_id, size});
+  }
+
+  svr_impl->IncRspCbCount(partition.oid, 1);
 }
 
 // Helper for zero-copy send cleanup: releases ScatterGatherBuffer and
@@ -389,13 +392,12 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
                                        end_us);
   });
 
-  if (conn_inflight_[client_addr] >= ctx_.max_inflight) {
-    return;
+  while (conn_inflight_[client_addr] < ctx_.max_inflight &&
+         !task_queue_.empty()) {
+    auto task = task_queue_.front();
+    task_queue_.pop_front();
+    task();
   }
-
-  auto task = task_queue_.front();
-  task_queue_.pop_front();
-  task();
 }
 
 void ProxySvrHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -408,6 +410,9 @@ void ProxySvrHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
 }
 
 void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
+  auto* lh = conn->GetLoop()->GetLoopHandle();
+  if (lh) lh->DecRefs();
+
   string client_addr = conn->GetPeerAddress().ToString();
   LOG_INFO << "disconnected from " << client_addr;
   conn_inflight_.erase(client_addr);
@@ -474,8 +479,14 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
 
   auto create_handle_cb = bind(ProxySvrHandle::CreateMyself, ref(ctx_), _1);
   UsockAddress addr(ctx_.listen_ip, ctx_.listen_port);
+  Option option;
+  if (ctx_.loop_strategy == "lightest") {
+    option.loop_strategy = Option::kLightestOne;
+  } else if (ctx_.loop_strategy == "empty") {
+    option.loop_strategy = Option::kEmptyOne;
+  }
   listener_ =
-      make_shared<ListenerLibevent>(loop, addr, "proxy_listener", Option());
+      make_shared<ListenerLibevent>(loop, addr, "proxy_listener", option);
   listener_->SetCreateLoopHandleCb(create_handle_cb);
   listener_->SetThreadInitCb(ProxySvrHandle::ThreadInit);
   listener_->SetConnectionSuccessCb(
@@ -681,114 +692,113 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
   LOG_INFO << "[WaitMatMul] Starting wait for oid=" << oid
            << ", rsp_cb_counts_[oid]=" << rsp_cb_counts_[oid];
 
-  int poll_count = 0;
-  while (rsp_cb_counts_[oid] > 0) {
-    poll_count++;
-    if (poll_count % 50 == 0) {  // Log every 5 seconds (50 * 100ms)
-      LOG_WARN << "[WaitMatMul] Still waiting for oid=" << oid
-               << ", rsp_cb_counts_[oid]=" << rsp_cb_counts_[oid]
-               << ", poll_count=" << poll_count * 100 << "ms";
+  {
+    std::unique_lock<std::mutex> lk(wait_mutex_);
+    int diag_count = 0;
+    while (rsp_cb_counts_[oid] > 0) {
+      auto status = wait_cv_.wait_for(lk, std::chrono::seconds(5));
+      if (status == std::cv_status::timeout && rsp_cb_counts_[oid] > 0) {
+        diag_count++;
+        LOG_WARN << "[WaitMatMul] Still waiting for oid=" << oid
+                 << ", rsp_cb_counts_[oid]=" << rsp_cb_counts_[oid]
+                 << ", elapsed=" << diag_count * 5 << "s";
 
-      // Diagnose partition states across all devices
-      auto connected_devices = DEVICE_TRACKER.GetConnectedDevices();
-      LOG_WARN << "[WaitMatMul] Connected devices: "
-               << connected_devices.size();
+        auto connected_devices = DEVICE_TRACKER.GetConnectedDevices();
+        LOG_WARN << "[WaitMatMul] Connected devices: "
+                 << connected_devices.size();
 
-      size_t total_idle = 0, total_running = 0, total_finished = 0;
-      size_t devices_with_partitions = 0;
-      std::vector<int64_t> devices_with_oid;
+        size_t total_idle = 0, total_running = 0, total_finished = 0;
+        size_t devices_with_partitions = 0;
+        std::vector<int64_t> devices_with_oid;
 
-      for (int64_t device_id : connected_devices) {
-        auto stats = PARTITION_TRACKER.GetDeviceOidStats(device_id, oid);
-        size_t device_total =
-            stats.idle_count + stats.running_count + stats.finished_count;
+        for (int64_t device_id : connected_devices) {
+          auto stats = PARTITION_TRACKER.GetDeviceOidStats(device_id, oid);
+          size_t device_total =
+              stats.idle_count + stats.running_count + stats.finished_count;
 
-        if (device_total > 0) {
-          devices_with_partitions++;
-          devices_with_oid.push_back(device_id);
-          bool is_connected = DEVICE_TRACKER.IsDeviceConnected(device_id);
-          total_idle += stats.idle_count;
-          total_running += stats.running_count;
-          total_finished += stats.finished_count;
+          if (device_total > 0) {
+            devices_with_partitions++;
+            devices_with_oid.push_back(device_id);
+            bool is_connected = DEVICE_TRACKER.IsDeviceConnected(device_id);
+            total_idle += stats.idle_count;
+            total_running += stats.running_count;
+            total_finished += stats.finished_count;
 
-          LOG_WARN << "[WaitMatMul]   Device " << device_id
-                   << " (connected=" << (is_connected ? "YES" : "NO") << ")"
-                   << ": IDLE=" << stats.idle_count
-                   << ", RUNNING=" << stats.running_count
-                   << ", FINISHED=" << stats.finished_count
-                   << ", Total=" << device_total;
+            LOG_WARN << "[WaitMatMul]   Device " << device_id
+                     << " (connected=" << (is_connected ? "YES" : "NO") << ")"
+                     << ": IDLE=" << stats.idle_count
+                     << ", RUNNING=" << stats.running_count
+                     << ", FINISHED=" << stats.finished_count
+                     << ", Total=" << device_total;
 
-          // Show first few partition keys for debugging (only for first 3
-          // devices)
-          if (devices_with_partitions <= 3) {
-            if (!stats.partition_keys.empty() &&
-                stats.partition_keys.size() <= 5) {
-              std::string keys_str;
-              for (const auto& key : stats.partition_keys) {
-                if (!keys_str.empty()) keys_str += ", ";
-                keys_str += key;
+            if (devices_with_partitions <= 3) {
+              if (!stats.partition_keys.empty() &&
+                  stats.partition_keys.size() <= 5) {
+                std::string keys_str;
+                for (const auto& key : stats.partition_keys) {
+                  if (!keys_str.empty()) keys_str += ", ";
+                  keys_str += key;
+                }
+                LOG_WARN << "[WaitMatMul]     Partition keys: " << keys_str;
+              } else if (stats.partition_keys.size() > 5) {
+                LOG_WARN << "[WaitMatMul]     First partition key: "
+                         << stats.partition_keys[0] << " (+ "
+                         << (stats.partition_keys.size() - 1) << " more)";
               }
-              LOG_WARN << "[WaitMatMul]     Partition keys: " << keys_str;
-            } else if (stats.partition_keys.size() > 5) {
-              LOG_WARN << "[WaitMatMul]     First partition key: "
-                       << stats.partition_keys[0] << " (+ "
-                       << (stats.partition_keys.size() - 1) << " more)";
             }
           }
         }
-      }
 
-      // Summary with device distribution info
-      LOG_WARN << "[WaitMatMul] Summary for oid=" << oid
-               << ": Devices with partitions=" << devices_with_partitions << "/"
-               << connected_devices.size() << ", Total IDLE=" << total_idle
-               << ", RUNNING=" << total_running
-               << ", FINISHED=" << total_finished
-               << ", Expected remaining=" << rsp_cb_counts_[oid];
+        LOG_WARN << "[WaitMatMul] Summary for oid=" << oid
+                 << ": Devices with partitions=" << devices_with_partitions
+                 << "/" << connected_devices.size()
+                 << ", Total IDLE=" << total_idle
+                 << ", RUNNING=" << total_running
+                 << ", FINISHED=" << total_finished
+                 << ", Expected remaining=" << rsp_cb_counts_[oid];
 
-      // Critical: if only 1 device has all partitions, this is a scheduling
-      // problem!
-      if (devices_with_partitions == 1 && connected_devices.size() > 1) {
-        LOG_ERROR << "[WaitMatMul] ⚠️  SCHEDULING ISSUE: All "
-                  << (total_idle + total_running + total_finished)
-                  << " partitions assigned to single device "
-                  << devices_with_oid[0] << " while "
-                  << (connected_devices.size() - 1)
-                  << " other devices are idle!";
-      } else if (devices_with_partitions > 0 && devices_with_partitions <= 10) {
-        std::string device_list;
-        for (auto dev_id : devices_with_oid) {
-          if (!device_list.empty()) device_list += ", ";
-          device_list += std::to_string(dev_id);
+        if (devices_with_partitions == 1 && connected_devices.size() > 1) {
+          LOG_ERROR << "[WaitMatMul] SCHEDULING ISSUE: All "
+                    << (total_idle + total_running + total_finished)
+                    << " partitions assigned to single device "
+                    << devices_with_oid[0] << " while "
+                    << (connected_devices.size() - 1)
+                    << " other devices are idle!";
+        } else if (devices_with_partitions > 0 &&
+                   devices_with_partitions <= 10) {
+          std::string device_list;
+          for (auto dev_id : devices_with_oid) {
+            if (!device_list.empty()) device_list += ", ";
+            device_list += std::to_string(dev_id);
+          }
+          LOG_WARN << "[WaitMatMul] Devices with oid=" << oid << ": ["
+                   << device_list << "]";
         }
-        LOG_WARN << "[WaitMatMul] Devices with oid=" << oid << ": ["
-                 << device_list << "]";
-      }
 
-      // Check if partitions are stuck in RUNNING state
-      if (total_running > 0 && total_running == rsp_cb_counts_[oid] &&
-          total_idle == 0) {
-        LOG_ERROR << "[WaitMatMul] ⚠️  STUCK PARTITIONS: All " << total_running
-                  << " partitions stuck in RUNNING state for "
-                  << poll_count * 100 << "ms";
-        LOG_ERROR << "[WaitMatMul] Possible causes: 1) Devices not responding "
-                     "2) Network issues 3) Devices processing too slowly";
+        if (total_running > 0 && total_running == rsp_cb_counts_[oid] &&
+            total_idle == 0) {
+          LOG_ERROR << "[WaitMatMul] STUCK PARTITIONS: All " << total_running
+                    << " partitions stuck in RUNNING state for "
+                    << diag_count * 5 << "s";
+          LOG_ERROR
+              << "[WaitMatMul] Possible causes: 1) Devices not responding "
+                 "2) Network issues 3) Devices processing too slowly";
 
-        // Sample a few devices to check connection quality
-        size_t check_count = std::min(size_t(5), devices_with_oid.size());
-        for (size_t i = 0; i < check_count; ++i) {
-          int64_t dev_id = devices_with_oid[i];
-          auto conn = DEVICE_TRACKER.GetDeviceConnection(dev_id);
-          bool has_conn = (conn != nullptr);
-          bool conn_closed = has_conn ? conn->IsClosed() : true;
-          LOG_ERROR << "[WaitMatMul]   Sample device " << dev_id
-                    << ": has_connection=" << (has_conn ? "YES" : "NO")
-                    << ", connection_closed=" << (conn_closed ? "YES" : "NO");
+          size_t check_count = std::min(size_t(5), devices_with_oid.size());
+          for (size_t i = 0; i < check_count; ++i) {
+            int64_t dev_id = devices_with_oid[i];
+            auto conn = DEVICE_TRACKER.GetDeviceConnection(dev_id);
+            bool has_conn = (conn != nullptr);
+            bool conn_closed = has_conn ? conn->IsClosed() : true;
+            LOG_ERROR << "[WaitMatMul]   Sample device " << dev_id
+                      << ": has_connection=" << (has_conn ? "YES" : "NO")
+                      << ", connection_closed=" << (conn_closed ? "YES" : "NO");
+          }
         }
       }
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
+
   auto end = std::chrono::high_resolution_clock::now();
   auto shape = outputs_[oid].sizes().vec();
   auto wait_time =
@@ -806,6 +816,9 @@ void ProxySvrImpl::IncRspCbCount(int oid, size_t count) {
   rsp_cb_counts_[oid] -= count;
   LOG_DEBUG << "[IncRspCbCount] oid=" << oid << ", count=" << count
             << ", prev=" << prev << ", now=" << rsp_cb_counts_[oid];
+  if (rsp_cb_counts_[oid] == 0) {
+    wait_cv_.notify_all();
+  }
 }
 
 void ProxySvrImpl::RephrasePartitions(
@@ -861,7 +874,7 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
   size_t num_failed_partitions = 0;
   std::unordered_map<int64_t, size_t> oid_counts;
   for (const auto& part : failed_partitions) {
-    if (part->state == PartitionState::IDLE) {
+    if (part->GetState() == PartitionState::IDLE) {
       num_failed_partitions++;
       oid_counts[part->oid]++;
     }
@@ -905,6 +918,24 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
 }
 
 void ProxySvrHandle::SendIdlePartitions() {
+  auto* svr_impl = reinterpret_cast<ProxySvrImpl*>(ctx_.instance);
+  {
+    std::deque<ProxySvrImpl::CompletionEvent> completions;
+    {
+      std::lock_guard<std::mutex> lk(svr_impl->completion_mutex_);
+      completions.swap(svr_impl->completion_queue_);
+    }
+    if (!completions.empty()) {
+      LOG_INFO << "[SendIdlePartitions] Draining " << completions.size()
+               << " completion events";
+      for (auto& evt : completions) {
+        PARTITION_TRACKER.RemovePartitionByKey(evt.partition_key);
+        DEVICE_TRACKER.RecordBytesReceived(evt.device_id, evt.bytes_received);
+        DEVICE_TRACKER.RecordPartitionProcessed(evt.device_id);
+      }
+    }
+  }
+
   auto idle_partitions = PARTITION_TRACKER.GetIdlePartitions();
 
   if (idle_partitions.empty()) {
