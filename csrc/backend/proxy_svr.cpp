@@ -1163,7 +1163,11 @@ void ProxySvrHandle::SendIdlePartitions() {
     }
 
     size_t part_bytes = static_cast<size_t>(part_info->partition->Size());
-    if (per_device_bytes[dev_id] + part_bytes > hwm) {
+    // Allow at least one partition per device even if it exceeds HWM.
+    // This prevents deadlock when a single partition (e.g. lm_head with
+    // large vocab) is larger than the high-water mark.
+    if (per_device_sent[dev_id] > 0 &&
+        per_device_bytes[dev_id] + part_bytes > hwm) {
       skipped_count++;
       continue;
     }
