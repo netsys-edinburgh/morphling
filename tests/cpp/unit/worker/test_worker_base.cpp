@@ -4,6 +4,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -278,4 +279,64 @@ TEST_F(WorkerBaseTest, WaitTaskDone_ById) {
   latch2.CountDown();
   worker_->WaitTaskDone("id_B");
   EXPECT_TRUE(task2_done.load());
+}
+
+TEST(WorkerBase, TaskExceptionDoesNotKillThread) {
+  WorkerBase worker;
+  worker.Start();
+
+  auto throw_handle = worker.AddTask(
+      "throw_task", [] { throw std::runtime_error("task failure"); });
+  throw_handle->Wait();
+  EXPECT_TRUE(throw_handle->IsComplete());
+
+  std::atomic<bool> ran_after_exception{false};
+  auto post_handle =
+      worker.AddTask("post_throw_task", [&] { ran_after_exception = true; });
+  post_handle->Wait();
+  EXPECT_TRUE(ran_after_exception.load());
+
+  worker.Stop();
+}
+
+TEST(WorkerBase, TaskErrorFieldPopulated) {
+  WorkerBase worker;
+  worker.Start();
+
+  auto throw_handle = worker.AddTask(
+      "throw_task", [] { throw std::runtime_error("expected failure"); });
+  throw_handle->Wait();
+
+  {
+    std::lock_guard<std::mutex> lk(throw_handle->mutex);
+    EXPECT_EQ(throw_handle->error, "expected failure");
+    EXPECT_TRUE(throw_handle->completed);
+  }
+
+  worker.Stop();
+}
+
+TEST(WorkerBase, SubsequentTaskAfterException) {
+  WorkerBase worker;
+  worker.Start();
+
+  std::atomic<int> counter{0};
+
+  auto throw_handle = worker.AddTask(
+      "throw_task", [] { throw std::runtime_error("first task failed"); });
+
+  auto normal_handle = worker.AddTask("normal_task", [&] { counter++; });
+
+  throw_handle->Wait();
+  normal_handle->Wait();
+
+  EXPECT_EQ(counter.load(), 1);
+  EXPECT_TRUE(normal_handle->IsComplete());
+
+  {
+    std::lock_guard<std::mutex> lk(normal_handle->mutex);
+    EXPECT_TRUE(normal_handle->error.empty());
+  }
+
+  worker.Stop();
 }
