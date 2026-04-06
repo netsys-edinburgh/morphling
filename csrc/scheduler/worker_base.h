@@ -3,7 +3,9 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <exception>
 #include <functional>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -11,7 +13,12 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "core/noncopyable.h"
+#include "../core/noncopyable.h"
+#if __has_include("muduo_base/logging.h")
+#include "muduo_base/logging.h"
+#else
+#define LOG_ERROR std::cerr
+#endif
 
 // Async completion callback type
 using TaskCallback = std::function<void(const std::string& task_id)>;
@@ -23,6 +30,7 @@ struct TaskState {
   bool completed = false;
   TaskCallback callback;
   std::string task_id;
+  std::string error;
 
   void Wait() {
     std::unique_lock<std::mutex> lk(mutex);
@@ -104,7 +112,23 @@ class WorkerBase : public noncopyable {
       tasks_.pop_front();
       lock.unlock();
 
-      task();
+      try {
+        task();
+      } catch (const std::exception& e) {
+        LOG_ERROR << "[WorkerBase] Task " << task_id << " threw: " << e.what();
+        if (state) {
+          std::lock_guard<std::mutex> lk(state->mutex);
+          state->error = e.what();
+        }
+      } catch (...) {
+        LOG_ERROR << "[WorkerBase] Task " << task_id
+                  << " threw unknown exception";
+        if (state) {
+          std::lock_guard<std::mutex> lk(state->mutex);
+          state->error = "unknown exception";
+        }
+      }
+
       task_count_--;
 
       // Mark TaskState completed and capture callback

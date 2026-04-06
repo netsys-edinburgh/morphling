@@ -510,27 +510,33 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
 
 void ProxyCliImpl::DecodeAndDispatch(const ConnectionUeventPtr& conn,
                                      const void* payload, size_t size) {
-  // Step 1: Decode proto message header to get message type
-  int32_t message_type = GetMessageType(payload, size);
+  try {
+    // Step 1: Decode proto message header to get message type
+    int32_t message_type = GetMessageType(payload, size);
 
-  if (message_type < 0) {
-    LOG_FATAL << "Failed to decode message type";
+    if (message_type < 0) {
+      LOG_ERROR << "Failed to decode message type";
+      return;
+    }
+
+    // Step 2: Dispatch to appropriate handler based on message type
+    switch (message_type) {
+      case morphling::global_api::DEVICE_REGISTER_REQUEST:
+        HandleRegisterRequest(conn, payload, size);
+        break;
+
+      case morphling::global_api::COMPUTE_GEMM_DATA:
+        HandleMatMulRequest(conn, payload, size);
+        break;
+
+      default:
+        LOG_ERROR << "Unknown message type: " << message_type;
+        break;
+    }
+  } catch (const std::exception& e) {
+    LOG_ERROR << "[DecodeAndDispatch] Failed to decode message: " << e.what()
+              << ", dropping message";
     return;
-  }
-
-  // Step 2: Dispatch to appropriate handler based on message type
-  switch (message_type) {
-    case morphling::global_api::DEVICE_REGISTER_REQUEST:
-      HandleRegisterRequest(conn, payload, size);
-      break;
-
-    case morphling::global_api::COMPUTE_GEMM_DATA:
-      HandleMatMulRequest(conn, payload, size);
-      break;
-
-    default:
-      LOG_FATAL << "Unknown message type: " << message_type;
-      break;
   }
 }
 
@@ -550,7 +556,7 @@ void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
   LOG_DEBUG << "Sending device profile data to server";
 
   DeviceProfileData profile;
-  profile.uuid = GenUUID64();
+  profile.uuid = static_cast<uint64_t>(device_id_);
   profile.flops = 100000000000ull;              // 100 GFLOPS - placeholder
   profile.memory = 16ull * 1024 * 1024 * 1024;  // 16GB - placeholder
   profile.ul_bw = 10ull * 1024 * 1024 * 1024;   // 10 Gbps

@@ -238,6 +238,10 @@ void MQTTWorker::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
     return;
   }
   void* cpy_ptr = kCachingAllocator->Allocate(size);
+  if (cpy_ptr == nullptr) {
+    LOG_ERROR << "CacheTensor: allocator returned nullptr for size=" << size;
+    return;
+  }
   int64_t ld_size = size / h_dim / sizeof(float);
   std::memcpy(cpy_ptr, ptr, size);
   cached_tensors_.Put(key,
