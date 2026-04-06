@@ -753,7 +753,28 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
            << mm_count_;
 
   outputs_[mm_count_].set_data(CreateOutputMatrix(mat_a, mat_b));
-  auto partitions = PartitionMatrices(mat_a, mat_b, ctx_.block_size);
+
+  int64_t effective_block_size = ctx_.block_size;
+  int64_t num_devices =
+      static_cast<int64_t>(DEVICE_TRACKER.GetConnectedDeviceCount());
+  if (num_devices > 0 && ctx_.partitions_per_device > 0) {
+    auto a_shape = mat_a.sizes().vec();
+    auto b_shape = mat_b.sizes().vec();
+    int64_t in_dim = a_shape[a_shape.size() - 2];
+    int64_t out_dim = b_shape[b_shape.size() - 2];
+    int64_t max_dim = std::max(in_dim, out_dim);
+    int64_t target = num_devices * ctx_.partitions_per_device;
+    int64_t adaptive_bs = (max_dim + target - 1) / target;
+    effective_block_size = std::max(adaptive_bs, ctx_.block_size);
+    if (effective_block_size != ctx_.block_size) {
+      LOG_INFO << "[DispatchMatMulAsync] Dynamic block_size: "
+               << ctx_.block_size << " -> " << effective_block_size
+               << " (max_dim=" << max_dim << ", devices=" << num_devices
+               << ", target_partitions=" << target << ")";
+    }
+  }
+
+  auto partitions = PartitionMatrices(mat_a, mat_b, effective_block_size);
   auto a_shape = mat_a.sizes().vec();
   auto b_shape = mat_b.sizes().vec();
 

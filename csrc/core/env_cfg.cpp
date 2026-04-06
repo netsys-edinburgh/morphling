@@ -85,6 +85,8 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
                    max_batch_per_device);
   PARSE_INT_ENVCFG(parser, "internal", "enable_cli_cache", false, 0,
                    enable_cli_cache);
+  PARSE_INT_ENVCFG(parser, "internal", "partitions_per_device", false, 4,
+                   partitions_per_device);
 
   // Parse scheduling policy type (default to ROUND_ROBIN)
   int sched_policy_int = 0;
