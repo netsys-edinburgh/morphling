@@ -28,7 +28,7 @@ std::filesystem::path CheckpointHandle::GetFilePathByID(
          (std::string(ARCHER_PARAM_NAME) + "_" + std::to_string(file_id));
 }
 
-void CheckpointHandle::ReadCheckpoint() {
+bool CheckpointHandle::ReadCheckpoint() {
   int file_id = 0;  // FIXME: hard code only one file
   auto param_filename = GetFilePathByID(file_id);
   auto index_filename = prefix_ / std::string(ARCHER_IHDEX_NAME);
@@ -38,8 +38,9 @@ void CheckpointHandle::ReadCheckpoint() {
   // get param_filename file size
   struct stat st;
   if (stat(param_filename.c_str(), &st) == -1) {
-    LOG_FATAL << "Invalid prefix: " << param_filename.c_str()
+    LOG_ERROR << "Invalid prefix: " << param_filename.c_str()
               << " does not exist";
+    return false;
   }
   auto file_size = st.st_size;
 
@@ -85,6 +86,11 @@ void CheckpointHandle::ReadCheckpoint() {
     size_t aligned_bytes = (num_bytes + 4095) & ~4095;
 
     void* buffer = kCachingAllocator->Allocate(num_bytes);
+    if (buffer == nullptr) {
+      LOG_ERROR << "Allocate failed for parameter " << name << ", size "
+                << num_bytes;
+      return false;
+    }
     auto shm_meta = kCachingAllocator->FindShmMetaByRange(buffer);
     auto shm_name = shm_meta.name;
     param_shm_map_[name] = {.id = -1 /* not used */,
@@ -93,10 +99,19 @@ void CheckpointHandle::ReadCheckpoint() {
                             .name = shm_name};
 
     void* temp_buffer = aligned_alloc(4096, aligned_bytes);
+    if (temp_buffer == nullptr) {
+      LOG_ERROR << "aligned_alloc failed for " << aligned_bytes
+                << " bytes while reading " << name;
+      return false;
+    }
     // read using pread
     int ret = pread(fd, temp_buffer, aligned_bytes, file_offset);
-    LOG_FATAL_IF(ret == -1)
-        << "pread failed: errno " << errno << ", message " << strerror(errno);
+    if (ret == -1) {
+      LOG_ERROR << "pread failed: errno " << errno << ", message "
+                << strerror(errno);
+      free(temp_buffer);
+      return false;
+    }
     // check if temp_buffer contains all zeros
     bool is_zero = true;
     for (size_t i = 0; i < num_bytes; i++) {
@@ -110,6 +125,7 @@ void CheckpointHandle::ReadCheckpoint() {
         "Read all zeros, file: {}, offset: {}, size: {}, aligned_size: {}",
         param_filename.c_str(), file_offset, num_bytes, aligned_bytes);
     memcpy(buffer, temp_buffer, num_bytes);
+    free(temp_buffer);
 
     // prio_aio_handle_.Read(param_filename, buffer, false, num_bytes,
     //                       file_offset);
@@ -119,6 +135,7 @@ void CheckpointHandle::ReadCheckpoint() {
     // {}",
     //           name, id, num_bytes, file_id, file_offset);
   }
+  return true;
 }
 
 std::vector<uint32_t> CheckpointHandle::FindIDsSameSize(size_t size) {

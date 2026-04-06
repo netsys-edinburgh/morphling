@@ -13,11 +13,13 @@ Example:
 
 import argparse
 import asyncio
+import atexit
+import gc
 import os
 import signal
 import sys
 import time
-from typing import Optional
+from typing import Any, Optional, cast
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -95,7 +97,7 @@ def parse_args():
 async def start_backend_async(backend_name: str, block_size: int):
     loop = asyncio.get_event_loop()
     backend = AutoBackend.from_name(backend_name, loop, block_size=block_size)
-    await backend.connect()
+    await asyncio.wait_for(backend.connect(), timeout=30.0)
     return backend
 
 
@@ -125,26 +127,30 @@ def start_backend_sync(
 
                 # Check if initialize accepts cache parameter
                 if enable_cache and hasattr(backend, "set_cache_enabled"):
-                    backend.set_cache_enabled(True)  # type: ignore[attr-defined]
+                    getattr(backend, "set_cache_enabled")(True)
                     print(f"✓ Client-side caching ENABLED")
                 else:
                     print(f"Client-side caching disabled")
 
-                backend.initialize(config_path)  # type: ignore[attr-defined]
+                getattr(backend, "initialize")(config_path)
             else:
                 try:
-                    backend.initialize()  # type: ignore[attr-defined]
+                    getattr(backend, "initialize")()
                 except TypeError:
                     # initialize may accept args in some versions; ignore
-                    backend.initialize(None)  # type: ignore[attr-defined]
+                    getattr(backend, "initialize")(None)
         if hasattr(backend, "start"):
-            backend.start()  # type: ignore[attr-defined]
+            getattr(backend, "start")()
     else:
         # Use asyncio for rabbitmq/amqp style backends
         loop = asyncio.get_event_loop()
-        backend = loop.run_until_complete(
-            start_backend_async(backend_name, block_size)
-        )
+        try:
+            backend = loop.run_until_complete(
+                start_backend_async(backend_name, block_size)
+            )
+        except asyncio.TimeoutError:
+            print("ERROR: Backend connection timed out after 30s")
+            sys.exit(1)
     return backend
 
 
@@ -228,6 +234,11 @@ def main():
     )
     print("Backend started. Server is now listening for device connections.")
 
+    def _server_cleanup():
+        gc.collect()
+
+    atexit.register(_server_cleanup)
+
     # Set backend for morphling hooks
     morphling.hooks.autograd._backend = backend
     morphling.hooks.autograd._enable_verification = args.enable_verification
@@ -286,8 +297,8 @@ def main():
             print("  → All computations will run locally using PyTorch")
 
         inputs = inputs.to("cpu")
-        model = model.to("cpu")
-        model = model.to(torch.float32)
+        model = cast(Any, model).to("cpu")
+        model = cast(Any, model).to(torch.float32)
 
         # Debug: Print input info
         print(f"Input shape: {inputs['input_ids'].shape}")
@@ -347,11 +358,11 @@ def main():
         print("Stopping backend...")
         try:
             if hasattr(backend, "stop"):
-                backend.stop()  # type: ignore[attr-defined]
+                getattr(backend, "stop")()
             if hasattr(backend, "disconnect"):
                 # async disconnect if available
                 loop = asyncio.get_event_loop()
-                loop.run_until_complete(backend.disconnect())  # type: ignore[attr-defined]
+                loop.run_until_complete(getattr(backend, "disconnect")())
         except Exception as e:
             print("Error while stopping backend:", e)
         print("Server shutdown complete.")

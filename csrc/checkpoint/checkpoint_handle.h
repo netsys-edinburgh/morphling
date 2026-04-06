@@ -35,7 +35,7 @@ class CheckpointHandle : public noncopyable {
   explicit CheckpointHandle(const std::filesystem::path& prefix);
   ~CheckpointHandle() = default;
 
-  void ReadCheckpoint();
+  bool ReadCheckpoint();
   ParamShmMap GetParamShmMap() const { return param_shm_map_; }
 
  private:
