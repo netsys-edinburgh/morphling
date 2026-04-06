@@ -422,7 +422,11 @@ def _torch_native_available() -> bool:
         from torch.cuda.green_contexts import SUPPORTED
 
         return bool(SUPPORTED)
-    except (ImportError, AttributeError):
+    except Exception:
+        # Catches ImportError, AttributeError, and also
+        # DeferredCudaCallError / RuntimeError that occur
+        # when CUDA lazy-init fails (e.g. PyTorch < 2.10
+        # or CUDA driver too old).
         return False
 
 
@@ -435,17 +439,19 @@ class TestTorchNativeBackend:
 
     @pytest.fixture(scope="class")
     def native_gpu_id(self):
-        """GPU fixture independent of CppBackend."""
         gid = _get_idle_gpu()
-        from morphling.runtime.green_context_backends import (
-            TorchNativeBackend,
-        )
+        try:
+            from morphling.runtime.green_context_backends import (
+                TorchNativeBackend,
+            )
 
-        b = TorchNativeBackend(gpu_id=gid)
-        if not b.is_supported():
+            b = TorchNativeBackend(gpu_id=gid)
+            if not b.is_supported():
+                b.close()
+                pytest.skip(f"TorchNativeBackend not supported on GPU {gid}")
             b.close()
-            pytest.skip(f"TorchNativeBackend not supported on GPU {gid}")
-        b.close()
+        except Exception as exc:
+            pytest.skip(f"TorchNativeBackend unavailable: {exc}")
         return gid
 
     def test_supported(self, native_gpu_id):

@@ -15,8 +15,12 @@ except (TypeError, ImportError) as e:
     OPTForCausalLM = None
     _TRANSFORMERS_IMPORT_ERROR = e
 
-from morphling.common import EmulatorConfig
-from morphling.runtime import EmulationEngine
+try:
+    from morphling.common import EmulatorConfig
+    from morphling.runtime import EmulationEngine
+except ImportError:
+    EmulatorConfig = None
+    EmulationEngine = None
 
 
 @pytest.mark.skipif(
