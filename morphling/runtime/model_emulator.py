@@ -304,10 +304,12 @@ class EmulationEngine(object):
             return do_nothing
 
         def post_init_decorator(orig_post_init: Callable) -> Callable:
-            # FIXME: this is a hacky way to get rid of the write to weight in the post_init, need a better way to do this if we need to support model training
             @functools.wraps(orig_post_init)
             def archer_post_init(cls, *args, **kwargs):
-                pass
+                from transformers.modeling_utils import no_init_weights
+
+                with no_init_weights():
+                    return orig_post_init(cls, *args, **kwargs)
 
             return archer_post_init
 

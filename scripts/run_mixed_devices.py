@@ -298,14 +298,11 @@ def main():
     # Set environment variables
     os.environ["NUM_DEVICES"] = str(args.num_devices)
 
-    # Initialize environment
-    this_file_path = os.path.dirname(os.path.realpath(__file__))
-    output = subprocess.run(
-        ["bash", f"{this_file_path}/env_init.sh"],
+    subprocess.run(
+        ["pkill", "-f", "morphling_device"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    print("Environment initialized:", output.stdout.decode())
 
     # Load model
     print("Loading model...")

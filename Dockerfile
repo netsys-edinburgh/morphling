@@ -90,6 +90,10 @@ RUN --mount=type=cache,target=/ccache \
     -DENABLE_CUDA_TESTS=ON \
     -DENABLE_XTGEMM_TESTS=ON \
     -DENABLE_ZEROCOPY_TESTS=ON \
+    -DENABLE_QUEUE_TESTS=ON \
+    -DENABLE_SERVER_TESTS=ON \
+    -DENABLE_MEMORY_TESTS=ON \
+    -DENABLE_SCHEDULING_TESTS=ON \
     -DENABLE_GREEN_CTX_TESTS=ON && \
     cmake --build tests/cpp/build -j
 
