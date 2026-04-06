@@ -66,11 +66,7 @@ if __name__ == "__main__":
         stderr=subprocess.PIPE,
     )
 
-    # read the output of the bash script
     script_dir = Path(__file__).resolve().parent
-    output = subprocess.run(
-        ["bash", str(script_dir / "env_init.sh")], stdout=subprocess.PIPE
-    )
 
     # time.sleep(15)
     # start model from here

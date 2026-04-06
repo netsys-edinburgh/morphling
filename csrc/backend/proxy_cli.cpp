@@ -403,6 +403,7 @@ void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 
 ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx, int64_t device_id)
     : ctx_(ctx),
+      device_id_(device_id),
       connector_(nullptr),
       cached_tensors_(GB / 16, [](const TensorKey&, const CachedTensor& t) {
         if (t.data) {

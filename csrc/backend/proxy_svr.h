@@ -89,6 +89,7 @@ class ProxySvrHandle : public uevent::LoopHandle {
   uevent::UeventLoop* loop_;
   std::unordered_map<std::string, uint32_t> conn_inflight_;
   std::deque<std::function<void()>> task_queue_;
+  bool retrigger_pending_ = false;
 
   // Handshake tracking: maps connection address to handshake state
   // true = handshake complete, false = waiting for device_id
@@ -176,6 +177,8 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::condition_variable wait_cv_;
 
  public:
+  std::atomic<bool> has_throttled_partitions_{false};
+
   struct CompletionEvent {
     std::string partition_key;
     int64_t device_id;
