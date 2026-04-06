@@ -15,6 +15,11 @@ enum class SchedulingPolicyType {
   LOAD_BALANCED = 2
 };
 
+enum class DeviceMode {
+  BARRIER = 0,  // Wait for N devices before dispatching
+  DYNAMIC = 1,  // Elastic — devices can join/leave at any time
+};
+
 struct ProxyEnvCfg {
   ProxyEnvCfg();
   ~ProxyEnvCfg();
@@ -48,6 +53,11 @@ struct ProxyEnvCfg {
   // Scheduling policy configuration
   SchedulingPolicyType sched_policy_type;
   std::unique_ptr<morphling::backend::PartitionSchedulingPolicy> sched_policy;
+
+  DeviceMode device_mode = DeviceMode::BARRIER;
+  int64_t barrier_count = 0;       // 0 = use num_device
+  int64_t barrier_timeout_ms = 0;  // 0 = infinite
+  int64_t max_queue_size = 1024;
 
   // Get scheduling policy with type-based reinterpretation
   template <typename T>

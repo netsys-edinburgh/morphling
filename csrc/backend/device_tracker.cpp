@@ -124,6 +124,10 @@ int64_t DevicePartitionTracker::RegisterDevice(
       }
     }
 
+    if (dispatch_gate_) {
+      dispatch_gate_->NotifyDeviceJoined(device_id);
+    }
+
     return device_id;
   }
 
@@ -151,6 +155,10 @@ int64_t DevicePartitionTracker::RegisterDevice(
   }
   devices_map_[device_id] = liveness;
   devices_set_.insert(liveness);
+
+  if (dispatch_gate_) {
+    dispatch_gate_->NotifyDeviceJoined(device_id);
+  }
 
   return device_id;
 }
@@ -210,7 +218,6 @@ void DevicePartitionTracker::PurgeDevice(int64_t device_id) {
   LOG_INFO << "[DeviceTracker] Unregistering device " << device_id << " ("
            << conn_addr << ")";
 
-  // Remove from all mappings
   devices_set_.erase(it->second);
   addr_to_device_id_.erase(conn_addr);
   device_id_to_addr_.erase(device_id);
@@ -218,6 +225,10 @@ void DevicePartitionTracker::PurgeDevice(int64_t device_id) {
     uuid_to_device_id_.erase(it->second->stable_uuid);
   }
   devices_map_.erase(device_id);
+
+  if (dispatch_gate_) {
+    dispatch_gate_->NotifyDeviceLeft(device_id);
+  }
 }
 
 void DevicePartitionTracker::SetCircuitBreakerConfig(
@@ -791,6 +802,59 @@ void DevicePartitionTracker::LogVirtualTimeEvent(
   } else {
     LOG_WARN << "[LogVirtualTimeEvent] Format error, len=" << len;
   }
+}
+
+void DevicePartitionTracker::InitDispatchGate(DeviceMode mode,
+                                              int64_t barrier_count,
+                                              int64_t barrier_timeout_ms,
+                                              int64_t max_queue_size) {
+  dispatch_gate_ = std::make_unique<DispatchGate>(
+      mode, barrier_count, barrier_timeout_ms, max_queue_size);
+  LOG_INFO << "[DeviceTracker] DispatchGate initialized: mode="
+           << static_cast<int>(mode) << " barrier_count=" << barrier_count;
+}
+
+DispatchGate* DevicePartitionTracker::GetDispatchGate() {
+  return dispatch_gate_.get();
+}
+
+void DevicePartitionTracker::SetDeviceDraining(int64_t device_id,
+                                               bool draining) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = devices_map_.find(device_id);
+  if (it != devices_map_.end()) {
+    it->second->is_draining = draining;
+    LOG_INFO << "[DeviceTracker] Device " << device_id
+             << " draining=" << draining;
+  }
+}
+
+bool DevicePartitionTracker::IsDeviceDraining(int64_t device_id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = devices_map_.find(device_id);
+  return it != devices_map_.end() && it->second->is_draining;
+}
+
+std::vector<int64_t> DevicePartitionTracker::GetDrainingDevices() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<int64_t> draining;
+  for (const auto& [device_id, liveness] : devices_map_) {
+    if (liveness->is_draining) {
+      draining.push_back(device_id);
+    }
+  }
+  return draining;
+}
+
+std::vector<int64_t> DevicePartitionTracker::GetSchedulableDevices() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<int64_t> schedulable;
+  for (const auto& [device_id, liveness] : devices_map_) {
+    if (liveness->is_connected && !liveness->is_draining) {
+      schedulable.push_back(device_id);
+    }
+  }
+  return schedulable;
 }
 
 void DevicePartitionTracker::Reset() {
