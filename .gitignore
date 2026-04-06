@@ -95,6 +95,9 @@ test-driver
 compile
 
 src/**/*.log
+emulator.log
+ncu.log
+__pycache__/
 src/**/*.trs
 
 # JavaBuild output.
@@ -563,15 +566,5 @@ Testing/
 .cache/
 
 build_local/
+tests/cpp/build_*/
 .trace
-
-
-# Reference project (not part of baselines)
-asteroid_project/
-
-
-# Deploy secrets (vault-encrypted, per-user)
-baselines/deploy_asteroid/secrets.yml
-
-# Profiling output
-baselines/profiles/

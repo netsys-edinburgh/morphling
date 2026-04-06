@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <unistd.h>
 
+#include <limits>
+
 #include "muduo_base/logging.h"
 #include "uevent.h"
 #include "ueventloop_thread.h"
@@ -76,21 +78,23 @@ UeventLoop* UeventLoopThreadPool::GetEmptyLoop() {
     }
   }
 }
-// TODO
 UeventLoop* UeventLoopThreadPool::GetLightestLoop() {
   base_loop_->AssertInLoopThread();
   assert(started_);
-  UeventLoop* loop = base_loop_;
+  UeventLoop* lightest = base_loop_;
 
   if (!loops_.empty()) {
-    // round-robin
-    loop = loops_[next_];
-    ++next_;
-    if (implicit_cast<size_t>(next_) >= loops_.size()) {
-      next_ = 0;
+    int32_t min_refs = std::numeric_limits<int32_t>::max();
+    for (auto* loop : loops_) {
+      auto* handle = loop->GetLoopHandle();
+      int32_t refs = handle ? handle->GetRefs() : 0;
+      if (refs < min_refs) {
+        min_refs = refs;
+        lightest = loop;
+      }
     }
   }
-  return loop;
+  return lightest;
 }
 
 UeventLoop* UeventLoopThreadPool::GetLoopForHash(size_t hashCode) {

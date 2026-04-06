@@ -49,14 +49,19 @@ void IndexPutMatrixBlock(torch::Tensor& target, torch::Tensor& mat, int64_t r,
   int64_t target_offset =
       pivot * in_dim * out_dim * elem_size + offset_r + offset_c;
 
-  for (int64_t i = 0; i < mat_n_rows; ++i) {
-    int64_t mat_row_offset = i * mat_n_cols * elem_size;
-    int64_t target_row_offset = target_offset + i * out_dim * elem_size;
-    // LOG_DEBUG("IndexPutMatrixBlock, target_row_offset: {}, mat_row_offset:
-    // {}",
-    //           target_row_offset, mat_row_offset);
-    memcpy((char*)target_ptr + target_row_offset,
-           (char*)mat_ptr + mat_row_offset, mat_n_cols * elem_size);
+  if (mat_n_cols == out_dim) {
+    memcpy((char*)target_ptr + target_offset, (char*)mat_ptr,
+           mat_n_rows * mat_n_cols * elem_size);
+  } else {
+    for (int64_t i = 0; i < mat_n_rows; ++i) {
+      int64_t mat_row_offset = i * mat_n_cols * elem_size;
+      int64_t target_row_offset = target_offset + i * out_dim * elem_size;
+      // LOG_DEBUG("IndexPutMatrixBlock, target_row_offset: {}, mat_row_offset:
+      // {}",
+      //           target_row_offset, mat_row_offset);
+      memcpy((char*)target_ptr + target_row_offset,
+             (char*)mat_ptr + mat_row_offset, mat_n_cols * elem_size);
+    }
   }
 }
 

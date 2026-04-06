@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -31,18 +32,26 @@ enum class PartitionState {
 // Partition tracking structure with ownership and OID tracking
 struct PartitionInfo {
   std::string key;
-  int64_t oid;  // Operation ID to track which MatMul this partition belongs to
-  int64_t owner_device_id;       // Device that owns this partition
-  PartitionState state;          // Current execution state of the partition
-  MatrixPartitionPtr partition;  // Shared pointer to partition data
+  int64_t oid;
+  int64_t owner_device_id;
+  std::atomic<int> atomic_state;
+  MatrixPartitionPtr partition;
 
-  PartitionInfo() : oid(-1), owner_device_id(-1), state(PartitionState::IDLE) {}
+  PartitionState GetState() const {
+    return static_cast<PartitionState>(
+        atomic_state.load(std::memory_order_acquire));
+  }
+  void SetState(PartitionState s) {
+    atomic_state.store(static_cast<int>(s), std::memory_order_release);
+  }
+
+  PartitionInfo() : oid(-1), owner_device_id(-1), atomic_state(0) {}
   PartitionInfo(const std::string& k, int64_t o, int64_t owner,
                 MatrixPartitionPtr p)
       : key(k),
         oid(o),
         owner_device_id(owner),
-        state(PartitionState::IDLE),
+        atomic_state(static_cast<int>(PartitionState::IDLE)),
         partition(p) {}
 };
 typedef std::shared_ptr<PartitionInfo> PartitionInfoPtr;

@@ -119,8 +119,8 @@ void PartitionTracker::MarkDevicePartitionsFailed(int64_t device_id) {
   size_t marked_count = 0;
   for (auto& part_info : it->second) {
     // Only mark RUNNING partitions as FAILED (not IDLE or already FINISHED)
-    if (part_info->state == PartitionState::RUNNING) {
-      part_info->state = PartitionState::IDLE;
+    if (part_info->GetState() == PartitionState::RUNNING) {
+      part_info->SetState(PartitionState::IDLE);
       // Clear ownership - partition is now orphaned
       part_info->owner_device_id = -1;
       marked_count++;
@@ -143,7 +143,7 @@ void PartitionTracker::MarkPartitionRunning(const std::string& partition_key) {
     return;
   }
 
-  it->second->state = PartitionState::RUNNING;
+  it->second->SetState(PartitionState::RUNNING);
   LOG_DEBUG << "[PartitionTracker] Partition " << partition_key
             << " marked as RUNNING";
 }
@@ -158,7 +158,7 @@ void PartitionTracker::MarkPartitionFinished(const std::string& partition_key) {
     return;
   }
 
-  it->second->state = PartitionState::FINISHED;
+  it->second->SetState(PartitionState::FINISHED);
   LOG_DEBUG << "[PartitionTracker] Partition " << partition_key
             << " marked as FINISHED";
 }
@@ -173,7 +173,7 @@ void PartitionTracker::MarkPartitionFailed(const std::string& partition_key) {
     return;
   }
 
-  it->second->state = PartitionState::IDLE;
+  it->second->SetState(PartitionState::IDLE);
   LOG_DEBUG << "[PartitionTracker] Partition " << partition_key
             << " marked as FAILED";
 }
@@ -188,7 +188,7 @@ void PartitionTracker::MarkPartitionIdle(const std::string& partition_key) {
     return;
   }
 
-  it->second->state = PartitionState::IDLE;
+  it->second->SetState(PartitionState::IDLE);
   LOG_DEBUG << "[PartitionTracker] Partition " << partition_key
             << " marked as IDLE";
 }
@@ -203,8 +203,8 @@ void PartitionTracker::MarkDevicePartitionsRunning(int64_t device_id) {
 
   size_t marked_count = 0;
   for (auto& part : it->second) {
-    if (part->state == PartitionState::IDLE) {
-      part->state = PartitionState::RUNNING;
+    if (part->GetState() == PartitionState::IDLE) {
+      part->SetState(PartitionState::RUNNING);
       marked_count++;
     }
   }
@@ -243,7 +243,7 @@ std::vector<PartitionInfoPtr> PartitionTracker::GetIdlePartitions() const {
 
   std::vector<PartitionInfoPtr> idle_partitions;
   for (const auto& part_info : partitions_set_) {
-    if (part_info->state == PartitionState::IDLE) {
+    if (part_info->GetState() == PartitionState::IDLE) {
       idle_partitions.push_back(part_info);
     }
   }
@@ -262,7 +262,7 @@ PartitionTracker::DeviceOidStats PartitionTracker::GetDeviceOidStats(
 
   for (const auto& part : it->second) {
     if (part->oid == oid) {
-      switch (part->state) {
+      switch (part->GetState()) {
         case PartitionState::IDLE:
           stats.idle_count++;
           break;
@@ -296,7 +296,7 @@ void PartitionTracker::RedistributeFailedDevicePartitions(
   std::vector<PartitionInfoPtr> partitions_to_redistribute;
   std::unordered_map<int64_t, size_t> oid_counts;
   for (const auto& part : it->second) {
-    if (part->state == PartitionState::IDLE) {
+    if (part->GetState() == PartitionState::IDLE) {
       partitions_to_redistribute.push_back(part);
       oid_counts[part->oid]++;
     }
@@ -335,7 +335,7 @@ void PartitionTracker::RedistributeFailedDevicePartitions(
 
     // Update ownership and reset state to IDLE
     part->owner_device_id = target_device_id;
-    part->state = PartitionState::IDLE;
+    part->SetState(PartitionState::IDLE);
 
     // Add to target device's partition list
     device_partitions_[target_device_id].push_back(part);
@@ -415,7 +415,7 @@ std::string PartitionTracker::DebugString() const {
   // Count by state
   size_t idle = 0, running = 0, finished = 0;
   for (const auto& part : partitions_set_) {
-    switch (part->state) {
+    switch (part->GetState()) {
       case PartitionState::IDLE:
         idle++;
         break;

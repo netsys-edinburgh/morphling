@@ -67,12 +67,11 @@ if __name__ == "__main__":
     os.environ["NUM_DEVICES"] = str(device_args.num_devices)
     num_gpus = torch.cuda.device_count()
 
-    # read the output of the bash script
-    this_file_path = os.path.dirname(os.path.realpath(__file__))
-    output = subprocess.run(
-        ["bash", f"{this_file_path}/env_init.sh"], stdout=subprocess.PIPE
+    subprocess.run(
+        ["pkill", "-f", "morphling_device"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
-    print("env_init", output.stdout)
 
     # time.sleep(15)
     # start model from here

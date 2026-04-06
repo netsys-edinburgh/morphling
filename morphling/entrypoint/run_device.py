@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from argparse import REMAINDER, ArgumentParser
+from typing import Any
 
 # import redis
 from morphling.common import bytes2human, human2bytes
@@ -131,9 +132,10 @@ def main():
         "logical_time": 0,
     }
 
-    # FIXME: subject to change as we do not trust the device to do its own measurement
-    # 1. latency and bandwidth are measured by the server
-    # 2. server send random number matrix multiplication tasks to the device to measure flops, results needs to be matched.
+    # Trust model: these fields are declarative runtime inputs, not hardware
+    # measurements reported by the device. Trust-sensitive deployments should
+    # validate/attest latency, bandwidth, and FLOPs server-side before using
+    # them for scheduling or accounting.
 
     # device reconnect is considered new device
     # print(f"Registering device {args.id} with info {device_info}", flush=True)
@@ -161,11 +163,11 @@ def main():
 
         asyncio.run(main())
     elif args.backend == "amqp":
-        worker = AutoWorker.from_name(args.backend, "localhost", 32)
+        worker: Any = AutoWorker.from_name(args.backend, "localhost", 32)
         worker.handle_req()
 
     elif args.backend == "mqtt":
-        worker = AutoWorker.from_name(args.backend, str(args.id))
+        worker: Any = AutoWorker.from_name(args.backend, str(args.id))
         worker.start()
         while True:
             time.sleep(1)
@@ -185,7 +187,7 @@ def main():
                 )
                 return
 
-        worker = AutoWorker.from_name(args.backend)
+        worker: Any = AutoWorker.from_name(args.backend)
         worker.initialize(args.cfg, args.id)
         worker.start()
         while True:

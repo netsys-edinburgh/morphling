@@ -28,7 +28,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("initialize", &ProxySvr::Initialize)
       .def("start", &ProxySvr::Start)
       .def("async_dispatch_matmul", &ProxySvr::DispatchMatMulAsync)
-      .def("wait_matmul", &ProxySvr::WaitMatMul)
+      .def("wait_matmul",
+           [](ProxySvr& self, int oid) {
+             py::gil_scoped_release release;
+             return self.WaitMatMul(oid);
+           })
       .def("get_connection_count", &ProxySvr::GetConnectionCount);
 
   py::class_<ProxyCli>(m, "ProxyCli")
@@ -49,7 +53,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("start", &MQTTServer::Start, "Start MQTT server")
       .def("async_dispatch_matmul", &MQTTServer::DispatchMatMulAsync,
            "Dispatch matmul to devices")
-      .def("wait_matmul", &MQTTServer::WaitMatMul, "Wait for matmul response");
+      .def(
+          "wait_matmul",
+          [](MQTTServer& self, int oid) {
+            py::gil_scoped_release release;
+            return self.WaitMatMul(oid);
+          },
+          "Wait for matmul response");
   //   .def("publish",
   //        [](MQTTServer& server, std::string& topic, torch::Tensor& payload) {
   //          server.Publish(topic, payload.data_ptr(),
