@@ -95,6 +95,7 @@ RUN --mount=type=cache,target=/ccache \
     -DENABLE_SERVER_TESTS=ON \
     -DENABLE_MEMORY_TESTS=ON \
     -DENABLE_SCHEDULING_TESTS=ON \
+    -DENABLE_PIPELINE_TESTS=ON \
     -DENABLE_GREEN_CTX_TESTS=ON && \
     cmake --build tests/cpp/build -j -- -k || \
     echo "WARNING: some C++ test targets failed (pre-existing zerocopy protobuf issues)"
