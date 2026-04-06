@@ -88,6 +88,31 @@ def parse_args():
         action="store_true",
         help="Enable output verification in hooks (for debugging)",
     )
+    parser.add_argument(
+        "--device-mode",
+        type=str,
+        default="barrier",
+        choices=["barrier", "dynamic"],
+        help="Device mode for dispatch gate: barrier or dynamic",
+    )
+    parser.add_argument(
+        "--barrier-count",
+        type=int,
+        default=0,
+        help="Barrier device count; 0 uses num_device from config",
+    )
+    parser.add_argument(
+        "--barrier-timeout",
+        type=int,
+        default=0,
+        help="Barrier timeout in milliseconds; 0 means infinite",
+    )
+    parser.add_argument(
+        "--max-queue-size",
+        type=int,
+        default=1024,
+        help="Maximum queued requests in dynamic device mode",
+    )
     parser.set_defaults(
         load_model=True, enable_cache=False, enable_hooks=False, no_wait=False
     )

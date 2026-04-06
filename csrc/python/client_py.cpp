@@ -18,6 +18,11 @@ using morphling::backend::ProxyCli;
 using morphling::backend::ProxySvr;
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  py::enum_<DeviceMode>(m, "DeviceMode")
+      .value("BARRIER", DeviceMode::BARRIER)
+      .value("DYNAMIC", DeviceMode::DYNAMIC)
+      .export_values();
+
   py::class_<AMQPBackend>(m, "AMQPBackend")
       .def(py::init<const std::string&, uint32_t>())
       .def("sync_dispatch_matmul", &AMQPBackend::DispatchMatMul,
@@ -33,7 +38,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::gil_scoped_release release;
              return self.WaitMatMul(oid);
            })
-      .def("get_connection_count", &ProxySvr::GetConnectionCount);
+      .def("get_connection_count", &ProxySvr::GetConnectionCount)
+      .def("is_barrier_met", &ProxySvr::IsBarrierMet)
+      .def("get_queue_size", &ProxySvr::GetQueueSize)
+      .def("get_device_mode", &ProxySvr::GetDeviceMode);
 
   py::class_<ProxyCli>(m, "ProxyCli")
       .def(py::init<>())

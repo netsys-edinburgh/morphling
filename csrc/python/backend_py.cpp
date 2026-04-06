@@ -12,6 +12,11 @@ using morphling::backend::ProxyCli;
 using morphling::backend::ProxySvr;
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  py::enum_<DeviceMode>(m, "DeviceMode")
+      .value("BARRIER", DeviceMode::BARRIER)
+      .value("DYNAMIC", DeviceMode::DYNAMIC)
+      .export_values();
+
   py::class_<ProxySvr>(m, "ProxySvr")
       .def(py::init<>())
       .def("initialize", &ProxySvr::Initialize)
@@ -24,7 +29,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              return self.WaitMatMul(oid);
            })
       .def("get_connection_count", &ProxySvr::GetConnectionCount)
-      .def("get_registered_device_count", &ProxySvr::GetRegisteredDeviceCount);
+      .def("get_registered_device_count", &ProxySvr::GetRegisteredDeviceCount)
+      .def("is_barrier_met", &ProxySvr::IsBarrierMet)
+      .def("get_queue_size", &ProxySvr::GetQueueSize)
+      .def("get_device_mode", &ProxySvr::GetDeviceMode);
 
   py::class_<ProxyCli>(m, "ProxyCli")
       .def(py::init<>())

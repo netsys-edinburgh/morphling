@@ -110,6 +110,24 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
       break;
   }
 
+  // Parse scalability mode (optional section — backward compatible)
+  int device_mode_int = 0;
+  PARSE_INT_ENVCFG(parser, "scalability", "device_mode", false, 0,
+                   device_mode_int);
+  device_mode = static_cast<DeviceMode>(device_mode_int);
+
+  PARSE_INT_ENVCFG(parser, "scalability", "barrier_count", false, 0,
+                   barrier_count);
+  PARSE_INT_ENVCFG(parser, "scalability", "barrier_timeout", false, 0,
+                   barrier_timeout_ms);
+  PARSE_INT_ENVCFG(parser, "scalability", "max_queue_size", false, 1024,
+                   max_queue_size);
+
+  // barrier_count=0 means use num_device from [worker] section
+  if (barrier_count == 0) {
+    barrier_count = num_device;
+  }
+
   base::Logger::setLogLevel(log_level);
 
   return 0;

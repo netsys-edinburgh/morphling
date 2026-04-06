@@ -7,6 +7,7 @@
 #include "core/stats.h"
 #include "core/thread_affinity.h"
 #include "device_tracker.h"
+#include "manage.pb.h"
 #include "muduo_base/my_uuid.h"
 #include "network/eventloop_libevent.h"
 #include "network/listener_libevent.h"
@@ -33,6 +34,16 @@ static void PinThreadToNextAvailableCore() {
   int core_id =
       g_thread_core_counter.fetch_add(1, std::memory_order_relaxed) % num_cpus;
   morphling::PinThreadToCore(core_id);
+}
+
+static void FillMessageHeader(morphling::UMessage& umsg, int32_t message_type) {
+  auto* head = umsg.mutable_head();
+  head->set_version(1);
+  head->set_magic_flag(0x12340987);
+  head->set_random_num(0);
+  head->set_flow_no(0);
+  head->set_session_no("");
+  head->set_message_type(message_type);
 }
 
 /*********************************ProxySvrHandle***********************************/
@@ -168,6 +179,10 @@ void ProxySvrHandle::DecodeAndDispatch(const ConnectionUeventPtr& conn,
         }
         break;
 
+      case morphling::manage::DEVICE_DRAIN_REQUEST:
+        HandleDrainRequest(conn, payload, size);
+        break;
+
       default:
         LOG_ERROR << "Unknown message type: " << message_type;
         break;
@@ -177,6 +192,100 @@ void ProxySvrHandle::DecodeAndDispatch(const ConnectionUeventPtr& conn,
               << ", dropping message";
     return;
   }
+}
+
+void ProxySvrHandle::HandleDrainRequest(const ConnectionUeventPtr& conn,
+                                        const void* payload, size_t size) {
+  (void)conn;
+  SerializationBuffer buffer(payload, size, false);
+  uint32_t payload_size = buffer.ReadUInt32(true);
+  uint32_t proto_size = buffer.ReadUInt32(false);
+  uint64_t tensor_size = buffer.ReadUInt64();
+
+  if (payload_size !=
+      sizeof(proto_size) + sizeof(tensor_size) + proto_size + tensor_size) {
+    LOG_ERROR << "[HandleDrainRequest] Payload size mismatch: payload_size="
+              << payload_size << ", proto_size=" << proto_size
+              << ", tensor_size=" << tensor_size;
+    return;
+  }
+
+  if (proto_size == 0 || buffer.GetOffset() + proto_size > size) {
+    LOG_ERROR << "[HandleDrainRequest] Invalid proto size: " << proto_size;
+    return;
+  }
+
+  morphling::UMessage umsg;
+  if (!umsg.ParseFromArray(buffer.GetCurrentPtr(), proto_size)) {
+    LOG_ERROR << "[HandleDrainRequest] Failed to parse UMessage";
+    return;
+  }
+
+  const auto& body = umsg.body();
+  if (!body.HasExtension(morphling::manage::device_drain_request)) {
+    LOG_ERROR << "[HandleDrainRequest] Missing device_drain_request extension";
+    return;
+  }
+
+  int64_t device_id =
+      body.GetExtension(morphling::manage::device_drain_request).device_id();
+  DEVICE_TRACKER.SetDeviceDraining(device_id, true);
+  LOG_INFO << "[HandleDrainRequest] Device " << device_id
+           << " entered draining mode";
+
+  loop_->RunAfter(
+      0.1, std::bind(&ProxySvrHandle::CheckDrainCompletion, this, device_id));
+}
+
+void ProxySvrHandle::CheckDrainCompletion(int64_t device_id) {
+  size_t pending = PARTITION_TRACKER.GetDevicePartitionCount(device_id);
+  if (pending > 0) {
+    LOG_INFO << "[CheckDrainCompletion] Device " << device_id << " still has "
+             << pending << " pending partitions";
+    loop_->RunAfter(
+        0.1, std::bind(&ProxySvrHandle::CheckDrainCompletion, this, device_id));
+    return;
+  }
+
+  auto conn = DEVICE_TRACKER.GetDeviceConnection(device_id);
+  if (!conn || conn->IsClosed()) {
+    LOG_WARN << "[CheckDrainCompletion] Device " << device_id
+             << " has no active connection for drain response";
+    return;
+  }
+
+  morphling::UMessage umsg;
+  FillMessageHeader(umsg, morphling::manage::DEVICE_DRAIN_RESPONSE);
+  auto* response = umsg.mutable_body()->MutableExtension(
+      morphling::manage::device_drain_response);
+  response->set_device_id(device_id);
+
+  const std::string proto_str = umsg.SerializeAsString();
+  const uint32_t proto_size = static_cast<uint32_t>(proto_str.size());
+  const uint64_t tensor_size = 0;
+  const uint32_t payload_size =
+      sizeof(proto_size) + sizeof(tensor_size) + proto_size;
+  const uint64_t total_size = sizeof(payload_size) + payload_size;
+
+  auto sbuf = std::make_shared<SerializationBuffer>();
+  sbuf->Allocate(total_size);
+  sbuf->WriteUInt32(payload_size, true);
+  sbuf->WriteUInt32(proto_size, false);
+  sbuf->WriteUInt64(tensor_size);
+  sbuf->WriteBytes(proto_str.data(), proto_size);
+
+  auto* ref = new SerializationBufferPtr(sbuf);
+  int ret = conn->SendDataZeroCopy(sbuf->GetBuffer(), sbuf->GetSize(),
+                                   SerializationBufferSendCleanup, ref);
+  if (ret < 0) {
+    LOG_ERROR << "[CheckDrainCompletion] Failed to send drain response to "
+              << device_id;
+    conn->ForceClose();
+    return;
+  }
+
+  LOG_INFO << "[CheckDrainCompletion] Device " << device_id
+           << " drain completed and response sent";
 }
 
 void ProxySvrHandle::HandleRegisterResponse(const ConnectionUeventPtr& conn,
@@ -612,6 +721,28 @@ void ProxySvrImpl::RequestCb(const ConnectionUeventPtr& conn) {
 
 void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
                                        torch::Tensor& mat_b) {
+  auto* gate = DEVICE_TRACKER.GetDispatchGate();
+  if (gate != nullptr) {
+    if (gate->GetMode() == DeviceMode::BARRIER) {
+      if (!gate->WaitForReady()) {
+        LOG_ERROR << "[DispatchMatMulAsync] DispatchGate WaitForReady timeout";
+        return;
+      }
+    } else if (gate->GetMode() == DeviceMode::DYNAMIC &&
+               DEVICE_TRACKER.GetConnectedDeviceCount() == 0) {
+      auto mat_a_clone = mat_a.clone();
+      auto mat_b_clone = mat_b.clone();
+      gate->EnqueueWork([this, mat_a_clone, mat_b_clone]() mutable {
+        auto queued_a = mat_a_clone;
+        auto queued_b = mat_b_clone;
+        this->DispatchMatMulAsync(queued_a, queued_b);
+      });
+      LOG_INFO << "[DispatchMatMulAsync] No connected devices in DYNAMIC mode, "
+                  "work enqueued";
+      return;
+    }
+  }
+
   LOG_INFO << "[DispatchMatMulAsync] Starting dispatch - mm_count="
            << mm_count_;
 
@@ -1090,6 +1221,13 @@ ProxySvr::ProxySvr() : svr_(nullptr), loop_thread_(nullptr) {}
 
 void ProxySvr::Initialize(const std::string& cfg_file) {
   context_.Initialize(cfg_file);
+
+  const int64_t barrier_count =
+      context_.barrier_count > 0 ? context_.barrier_count : context_.num_device;
+  DEVICE_TRACKER.InitDispatchGate(context_.device_mode, barrier_count,
+                                  context_.barrier_timeout_ms,
+                                  context_.max_queue_size);
+
   svr_ = make_shared<ProxySvrImpl>(context_);
   loop_thread_ = make_shared<UeventLoopThread>(
       bind(ProxySvrHandle::CreateMyself, ref(context_), _1),
