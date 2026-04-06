@@ -24,10 +24,15 @@ std::vector<int64_t> RoundRobinSchedulingPolicy::AssignPartitionsToDevices(
   auto& tracker = DEVICE_TRACKER;
   std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
 
+  std::unordered_set<int64_t> effective_excluded = excluded_devices;
+  for (int64_t device_id : tracker.GetDrainingDevices()) {
+    effective_excluded.insert(device_id);
+  }
+
   // Filter out excluded devices
   std::vector<int64_t> eligible_devices;
   for (int64_t device_id : connected_devices) {
-    if (excluded_devices.find(device_id) == excluded_devices.end()) {
+    if (effective_excluded.find(device_id) == effective_excluded.end()) {
       eligible_devices.push_back(device_id);
     }
   }
@@ -104,10 +109,15 @@ std::vector<int64_t> GreedySchedulingPolicy::AssignPartitionsToDevices(
   auto& tracker = DEVICE_TRACKER;
   std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
 
+  std::unordered_set<int64_t> effective_excluded = excluded_devices;
+  for (int64_t device_id : tracker.GetDrainingDevices()) {
+    effective_excluded.insert(device_id);
+  }
+
   // Filter out excluded devices
   std::vector<int64_t> eligible_devices;
   for (int64_t device_id : connected_devices) {
-    if (excluded_devices.find(device_id) == excluded_devices.end()) {
+    if (effective_excluded.find(device_id) == effective_excluded.end()) {
       eligible_devices.push_back(device_id);
     }
   }
@@ -197,10 +207,15 @@ std::vector<int64_t> LoadBalancedSchedulingPolicy::AssignPartitionsToDevices(
   auto& tracker = DEVICE_TRACKER;
   std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
 
+  std::unordered_set<int64_t> effective_excluded = excluded_devices;
+  for (int64_t device_id : tracker.GetDrainingDevices()) {
+    effective_excluded.insert(device_id);
+  }
+
   // Filter out excluded devices
   std::vector<int64_t> eligible_devices;
   for (int64_t device_id : connected_devices) {
-    if (excluded_devices.find(device_id) == excluded_devices.end()) {
+    if (effective_excluded.find(device_id) == effective_excluded.end()) {
       eligible_devices.push_back(device_id);
     }
   }

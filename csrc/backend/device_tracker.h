@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "dispatch_gate.h"
 #include "morphling.pb.h"
 #include "muduo_base/log_file.h"
 #include "network/uevent.h"
@@ -31,6 +32,7 @@ struct DeviceLiveness {
   int64_t device_id;
   std::string conn_addr;
   bool is_connected;
+  bool is_draining = false;
   std::chrono::steady_clock::time_point last_seen;
   std::chrono::steady_clock::time_point connected_at;
   std::chrono::steady_clock::time_point
@@ -174,7 +176,15 @@ class DevicePartitionTracker {
   std::string DebugString() const;
   void DumpState() const;
 
-  // Clear all state (for testing)
+  void InitDispatchGate(DeviceMode mode, int64_t barrier_count,
+                        int64_t barrier_timeout_ms, int64_t max_queue_size);
+  DispatchGate* GetDispatchGate();
+
+  void SetDeviceDraining(int64_t device_id, bool draining);
+  bool IsDeviceDraining(int64_t device_id) const;
+  std::vector<int64_t> GetDrainingDevices() const;
+  std::vector<int64_t> GetSchedulableDevices() const;
+
   void Reset();
 
  private:
@@ -204,6 +214,8 @@ class DevicePartitionTracker {
 
   // Performance log file using LogFile class
   mutable std::unique_ptr<base::LogFile> perf_log_file_;
+
+  std::unique_ptr<DispatchGate> dispatch_gate_;
 };
 
 }  // namespace backend
