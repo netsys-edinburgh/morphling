@@ -227,35 +227,6 @@ if __name__ == "__main__":
     # $SYS/broker/subscriptions/count 40
     # $SYS/broker/subscriptions/count 41
 
-    # Wait for devices to connect for proxy backend
-    if model_args.backend == "proxy":
-        print("Waiting for devices to connect to proxy server...")
-        timeout = 120  # 2 minutes timeout
-        start_time = time.time()
-
-        while time.time() - start_time < timeout:
-            try:
-                connection_count = getattr(backend, "get_connection_count")()
-                print(
-                    f"Connected devices: {connection_count}/{device_args.num_devices}"
-                )
-
-                if connection_count >= device_args.num_devices:
-                    print("All devices connected!")
-                    break
-
-                time.sleep(2)
-            except Exception as e:
-                print(f"Error checking connection count: {e}")
-                time.sleep(2)
-        else:
-            print(
-                "Timeout waiting for devices to connect. "
-                "Connected: "
-                f"{getattr(backend, 'get_connection_count')()}/{device_args.num_devices}"
-            )
-            # Continue anyway
-
     time.sleep(5)
 
     # random text for seqlen > 128
