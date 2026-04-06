@@ -79,6 +79,10 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
 
   PARSE_INT_ENVCFG(parser, "internal", "cleanup_wait", false, 60, cleanup_wait);
   PARSE_INT_ENVCFG(parser, "internal", "tcp_timeout", false, 5, tcp_timeout);
+  PARSE_INT_ENVCFG(parser, "internal", "send_high_water_mark", false, 4194304,
+                   send_high_water_mark);
+  PARSE_INT_ENVCFG(parser, "internal", "max_batch_per_device", false, 50,
+                   max_batch_per_device);
   PARSE_INT_ENVCFG(parser, "internal", "enable_cli_cache", false, 0,
                    enable_cli_cache);
 

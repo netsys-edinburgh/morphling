@@ -73,6 +73,11 @@ int64_t DevicePartitionTracker::RegisterDevice(
           device->quarantined = false;
           device->failure_count = 0;
         }
+        const auto& old_addr = device->conn_addr;
+        if (!old_addr.empty() && old_addr != conn_addr) {
+          addr_to_device_id_.erase(old_addr);
+        }
+
         device->is_connected = true;
         device->conn_addr = conn_addr;
         device->last_seen = std::chrono::steady_clock::now();
@@ -602,6 +607,13 @@ void DevicePartitionTracker::SetDeviceConnection(
     LOG_WARN << "[DeviceTracker] Cannot set connection for unknown device "
              << device_id;
     return;
+  }
+
+  auto it = device_conn_.find(device_id);
+  if (it != device_conn_.end() && it->second && it->second != conn) {
+    LOG_WARN << "[DeviceTracker] Overwriting existing connection for device_id "
+             << device_id << ". Closing old connection.";
+    it->second->ForceClose();
   }
 
   device_conn_[device_id] = conn;

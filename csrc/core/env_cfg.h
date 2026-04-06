@@ -35,6 +35,8 @@ struct ProxyEnvCfg {
   int wait_matmul_timeout_s = 300;
   int stuck_threshold_ms = 30000;
   bool enable_auto_recovery = true;
+  int send_high_water_mark = 4194304;  // 4MB
+  int max_batch_per_device = 50;
   std::string pool_mode;  // "gpu", "cpu", or "both"
   std::string loop_strategy;
 

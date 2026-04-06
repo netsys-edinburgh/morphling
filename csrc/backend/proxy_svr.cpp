@@ -9,6 +9,7 @@
 #include "device_tracker.h"
 #include "manage.pb.h"
 #include "muduo_base/my_uuid.h"
+#include "network/connection_libevent.h"
 #include "network/eventloop_libevent.h"
 #include "network/listener_libevent.h"
 #include "partition_tracker.h"
@@ -607,7 +608,12 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
       bind(&ProxySvrImpl::RequestCb, shared_from_this(), _1));
   listener_->SetConnectionClosedCb(
       bind(&ProxySvrImpl::ConnectionClosedCb, shared_from_this(), _1));
-  listener_->SetMessageWriteCb([](const ConnectionUeventPtr& conn) {});
+  listener_->SetMessageWriteCb([this](const ConnectionUeventPtr& conn) {
+    if (has_throttled_partitions_.exchange(false)) {
+      auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_->GetLoopHandle());
+      loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
+    }
+  });
   listener_->SetThreadNum(ctx_.thread);
   listener_->StartPrimaryLoop();
 
@@ -1039,11 +1045,12 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
     return;
   }
 
-  // Count FAILED partitions and OIDs (only those that were RUNNING)
+  // Count unfinished partitions (IDLE or RUNNING) that need handling
   size_t num_failed_partitions = 0;
   std::unordered_map<int64_t, size_t> oid_counts;
   for (const auto& part : failed_partitions) {
-    if (part->GetState() == PartitionState::IDLE) {
+    auto state = part->GetState();
+    if (state == PartitionState::IDLE || state == PartitionState::RUNNING) {
       num_failed_partitions++;
       oid_counts[part->oid]++;
     }
@@ -1051,7 +1058,7 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
 
   if (num_failed_partitions == 0) {
     LOG_INFO << "[HandleDeviceFailure] Device " << failed_device_id
-             << " has no FAILED partitions to redistribute";
+             << " has no unfinished partitions to redistribute";
     return;
   }
 
@@ -1131,59 +1138,67 @@ void ProxySvrHandle::SendIdlePartitions() {
     return;
   }
 
-  LOG_INFO << "[SendIdlePartitions] Scheduling complete, moving partitions to "
-              "assigned devices";
+  LOG_INFO << "[SendIdlePartitions] Scheduling complete, sending partitions";
 
-  // IMPORTANT: After scheduling, partitions' owner_device_id has been updated
-  // We need to move them from device -1 to their assigned devices in tracker
-  // Do this BEFORE marking as RUNNING to avoid race conditions
+  retrigger_pending_ = false;
+  size_t sent_count = 0;
+  size_t skipped_count = 0;
+  std::unordered_map<int64_t, size_t> per_device_sent;
+  std::unordered_map<int64_t, size_t> per_device_bytes;
+  size_t hwm = static_cast<size_t>(ctx_.send_high_water_mark);
+
   for (const auto& part_info : idle_partitions) {
-    int64_t old_device =
-        part_info
-            ->owner_device_id;  // This might be wrong due to scheduling update
-    // Find old device from partition_to_device_ map
+    int64_t dev_id = part_info->owner_device_id;
 
-    LOG_DEBUG << "[SendIdlePartitions] Moving partition " << part_info->key
-              << " (oid=" << part_info->oid << ") to device "
-              << part_info->owner_device_id;
-
-    // Remove from old location and add to new location
-    PARTITION_TRACKER.RemovePartitionByKey(part_info->key);
-    PARTITION_TRACKER.AddPartition(part_info->owner_device_id, part_info->key,
-                                   part_info->oid, part_info->partition);
-
-    // Update partition's dev_id to match the assigned device
-    part_info->partition->dev_id = part_info->owner_device_id;
-
-    // Mark partition as RUNNING after it's in the correct device list
-    PARTITION_TRACKER.MarkPartitionRunning(part_info->key);
-  }
-
-  LOG_INFO << "[SendIdlePartitions] Sending " << idle_partitions.size()
-           << " partitions to devices";
-
-  // Send each partition
-  for (const auto& part_info : idle_partitions) {
-    LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
-              << " to device " << part_info->owner_device_id;
-
-    auto target_conn =
-        DEVICE_TRACKER.GetDeviceConnection(part_info->owner_device_id);
+    auto target_conn = DEVICE_TRACKER.GetDeviceConnection(dev_id);
     if (!target_conn) {
-      LOG_ERROR << "[SendIdlePartitions] No connection for device "
-                << part_info->owner_device_id;
-      // Mark as IDLE again so it can be rescheduled
-      PARTITION_TRACKER.MarkPartitionIdle(part_info->key);
+      skipped_count++;
       continue;
     }
+
+    if (per_device_sent[dev_id] >=
+        static_cast<size_t>(ctx_.max_batch_per_device)) {
+      skipped_count++;
+      continue;
+    }
+
+    size_t part_bytes = static_cast<size_t>(part_info->partition->Size());
+    if (per_device_bytes[dev_id] + part_bytes > hwm) {
+      skipped_count++;
+      continue;
+    }
+
+    PARTITION_TRACKER.RemovePartitionByKey(part_info->key);
+    PARTITION_TRACKER.AddPartition(dev_id, part_info->key, part_info->oid,
+                                   part_info->partition);
+    part_info->partition->dev_id = dev_id;
+    PARTITION_TRACKER.MarkPartitionRunning(part_info->key);
+
     auto* loop = target_conn->GetLoop();
     auto* handle = reinterpret_cast<ProxySvrHandle*>(loop->GetLoopHandle());
     loop->RunInLoop(bind(&ProxySvrHandle::SendInLoop, handle, target_conn,
                          part_info->partition));
+
+    per_device_sent[dev_id]++;
+    per_device_bytes[dev_id] += part_bytes;
+    sent_count++;
   }
 
-  LOG_INFO << "[SendIdlePartitions] Completed sending "
-           << idle_partitions.size() << " partitions to devices";
+  for (const auto& [dev_id, count] : per_device_sent) {
+    LOG_INFO << "[SendIdlePartitions] Sent " << count << " partitions ("
+             << per_device_bytes[dev_id] << " bytes) to device " << dev_id;
+  }
+
+  if (skipped_count > 0) {
+    LOG_INFO << "[SendIdlePartitions] Throttled " << skipped_count
+             << " partitions, waiting for buffer drain";
+    auto* svr = reinterpret_cast<ProxySvrImpl*>(ctx_.instance);
+    svr->has_throttled_partitions_.store(true);
+    if (!retrigger_pending_) {
+      retrigger_pending_ = true;
+      loop_->RunAfter(0.01, bind(&ProxySvrHandle::SendIdlePartitions, this));
+    }
+  }
 }
 
 void ProxySvrImpl::CheckFailedPartitions() {
