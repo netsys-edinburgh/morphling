@@ -128,48 +128,54 @@ void ProxySvrHandle::RequestCb(const ConnectionUeventPtr& conn) {
 
 void ProxySvrHandle::DecodeAndDispatch(const ConnectionUeventPtr& conn,
                                        const void* payload, size_t size) {
-  // Step 1: Decode proto message header to get message type
-  int32_t message_type = GetMessageType(payload, size);
+  try {
+    // Step 1: Decode proto message header to get message type
+    int32_t message_type = GetMessageType(payload, size);
 
-  if (message_type < 0) {
-    LOG_ERROR << "Failed to decode message type";
-    return;
-  }
+    if (message_type < 0) {
+      LOG_ERROR << "Failed to decode message type";
+      return;
+    }
 
-  // Step 2: Dispatch to appropriate handler based on message type
-  string client_addr = conn->GetPeerAddress().ToString();
+    // Step 2: Dispatch to appropriate handler based on message type
+    string client_addr = conn->GetPeerAddress().ToString();
 
-  switch (message_type) {
-    case morphling::global_api::DEVICE_PROFILE_DATA:
-      HandleRegisterResponse(conn, payload, size);
-      break;
+    switch (message_type) {
+      case morphling::global_api::DEVICE_PROFILE_DATA:
+        HandleRegisterResponse(conn, payload, size);
+        break;
 
-    case morphling::global_api::COMPUTE_GEMM_DATA:
-      // Check if client is connected via tracker
-      {
-        auto& tracker = DEVICE_TRACKER;
-        int64_t device_id = tracker.GetDeviceIdByAddr(client_addr);
-        if (device_id == -1 || !tracker.IsDeviceConnected(device_id)) {
-          LOG_ERROR << "Client " << client_addr
-                    << " not registered or not connected, disconnecting";
-          conn->ForceClose();
-          return;
+      case morphling::global_api::COMPUTE_GEMM_DATA:
+        // Check if client is connected via tracker
+        {
+          auto& tracker = DEVICE_TRACKER;
+          int64_t device_id = tracker.GetDeviceIdByAddr(client_addr);
+          if (device_id == -1 || !tracker.IsDeviceConnected(device_id)) {
+            LOG_ERROR << "Client " << client_addr
+                      << " not registered or not connected, disconnecting";
+            conn->ForceClose();
+            return;
+          }
         }
-      }
-      HandleMatMul(conn, payload, size);
-      conn_inflight_[client_addr] -= 1;
+        HandleMatMul(conn, payload, size);
+        conn_inflight_[client_addr] -= 1;
 
-      while (conn_inflight_[client_addr] < ctx_.max_inflight &&
-             !task_queue_.empty()) {
-        auto task = task_queue_.front();
-        task_queue_.pop_front();
-        task();
-      }
-      break;
+        while (conn_inflight_[client_addr] < ctx_.max_inflight &&
+               !task_queue_.empty()) {
+          auto task = task_queue_.front();
+          task_queue_.pop_front();
+          task();
+        }
+        break;
 
-    default:
-      LOG_ERROR << "Unknown message type: " << message_type;
-      break;
+      default:
+        LOG_ERROR << "Unknown message type: " << message_type;
+        break;
+    }
+  } catch (const std::exception& e) {
+    LOG_ERROR << "[DecodeAndDispatch] Failed to decode message: " << e.what()
+              << ", dropping message";
+    return;
   }
 }
 
@@ -436,14 +442,11 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
              << pending_count << " pending partitions";
   }
 
-  // Step 2: Mark all running partitions as failed
-  PARTITION_TRACKER.MarkDevicePartitionsFailed(device_id);
-
-  // Step 3: Remove connection from maps
-  // conn_map_.erase(conn_addr);
   if (device_id != -1) {
-    DEVICE_TRACKER.RemoveDeviceConnection(device_id);
-    DEVICE_TRACKER.UnregisterDevice(device_id);
+    DEVICE_TRACKER.DisconnectDevice(device_id);
+    PARTITION_TRACKER.MarkDevicePartitionsFailed(device_id);
+    reinterpret_cast<ProxySvrImpl*>(ctx_.instance)
+        ->HandleDeviceFailure(device_id);
   }
 }
 
@@ -519,14 +522,13 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   LOG_INFO << "[ProxySvrImpl::Initialize] Server initialization completed. "
               "Waiting for connections...";
 
-  // Start periodic partition health check (every 0.1 seconds)
-  // failed_partition_check_timer_ = loop->RunEvery(
-  //     0.1, std::bind(&ProxySvrImpl::CheckFailedPartitions, this));
+  failed_partition_check_timer_ = loop->RunEvery(
+      1.0, std::bind(&ProxySvrImpl::CheckFailedPartitions, this));
   // idle_partition_redistribute_timer_ =
   //     loop->RunEvery(0.5, std::bind(&ProxySvrImpl::SendIdlePartitions,
   //     this));
   LOG_INFO << "[ProxySvrImpl::Initialize] Started periodic partition health "
-              "check (interval=0.1s)";
+              "check (interval=1.0s)";
 }
 
 void ProxySvrImpl::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -546,13 +548,6 @@ void ProxySvrImpl::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_handle);
   handle->ConnectionClosedCb(conn);
   loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
-
-  // Unregister device from tracker
-  string client_addr = conn->GetPeerAddress().ToString();
-  int64_t device_id = DEVICE_TRACKER.GetDeviceIdByAddr(client_addr);
-  if (device_id != -1) {
-    DEVICE_TRACKER.UnregisterDevice(device_id);
-  }
 
   // loop->RunInLoop(bind(&ProxySvrHandle::ConnectionClosedCb, handle, conn));
 
@@ -689,13 +684,16 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
 
 torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
   auto start = std::chrono::high_resolution_clock::now();
+  auto recovery_start = start;
+  auto deadline = start + std::chrono::seconds(ctx_.wait_matmul_timeout_s);
   LOG_INFO << "[WaitMatMul] Starting wait for oid=" << oid
            << ", rsp_cb_counts_[oid]=" << rsp_cb_counts_[oid];
 
   {
     std::unique_lock<std::mutex> lk(wait_mutex_);
     int diag_count = 0;
-    while (rsp_cb_counts_[oid] > 0) {
+    while (rsp_cb_counts_[oid] > 0 &&
+           std::chrono::high_resolution_clock::now() < deadline) {
       auto status = wait_cv_.wait_for(lk, std::chrono::seconds(5));
       if (status == std::cv_status::timeout && rsp_cb_counts_[oid] > 0) {
         diag_count++;
@@ -796,7 +794,47 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
           }
         }
       }
+
+      if (ctx_.enable_auto_recovery) {
+        auto now = std::chrono::high_resolution_clock::now();
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              now - recovery_start)
+                              .count();
+        if (elapsed_ms > ctx_.stuck_threshold_ms) {
+          LOG_WARN << "[WaitMatMul] Auto-recovering stuck partitions for oid="
+                   << oid << " after " << elapsed_ms << "ms";
+
+          auto disconnected = DEVICE_TRACKER.GetDisconnectedDevices();
+          for (auto dev_id : disconnected) {
+            HandleDeviceFailure(dev_id);
+          }
+
+          auto connected = DEVICE_TRACKER.GetConnectedDevices();
+          for (auto dev_id : connected) {
+            auto conn = DEVICE_TRACKER.GetDeviceConnection(dev_id);
+            if (!conn || conn->IsClosed()) {
+              LOG_WARN << "[WaitMatMul] Auto-recovery detected unhealthy "
+                       << "connected device " << dev_id
+                       << ", triggering failure handling";
+              DEVICE_TRACKER.DisconnectDevice(dev_id);
+              PARTITION_TRACKER.MarkDevicePartitionsFailed(dev_id);
+              HandleDeviceFailure(dev_id);
+            }
+          }
+
+          recovery_start = now;
+          break;
+        }
+      }
     }
+  }
+
+  if (rsp_cb_counts_[oid] > 0) {
+    LOG_ERROR << "[WaitMatMul] TIMEOUT waiting for oid=" << oid
+              << ", timeout_s=" << ctx_.wait_matmul_timeout_s
+              << ", remaining=" << rsp_cb_counts_[oid]
+              << ". Force-reset counter and return partial result.";
+    rsp_cb_counts_[oid] = 0;
   }
 
   auto end = std::chrono::high_resolution_clock::now();
@@ -896,22 +934,30 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
   }
 
   // Redistribute partitions across all connected devices
-  // PARTITION_TRACKER.RedistributeFailedDevicePartitions(failed_device_id);
+  PARTITION_TRACKER.RedistributeFailedDevicePartitions(failed_device_id);
 
-  // Get connected devices to send redistributed partitions to them
-  std::vector<int64_t> connected_devices = DEVICE_TRACKER.GetConnectedDevices();
+  size_t connected_device_count = DEVICE_TRACKER.GetConnectedDeviceCount();
+  LOG_INFO << "[HandleDeviceFailure] Redistributed partitions from device "
+           << failed_device_id << " to " << connected_device_count
+           << " connected devices";
 
-  // CRITICAL: Decrement response counters for partitions from failed device
-  // These partitions were in-flight when the device failed, so they will never
-  // produce responses. We must decrement their response counters to prevent
-  // WaitMatMul from hanging forever.
-  for (const auto& [oid, count] : oid_counts) {
-    LOG_INFO << "[HandleDeviceFailure] Decrementing response counter for OID "
-             << oid << " by " << count << " (in-flight partitions lost)";
-    for (size_t i = 0; i < count; ++i) {
-      IncRspCbCount(oid, 1);  // Decrement the counter
+  if (connected_device_count == 0) {
+    LOG_WARN << "[HandleDeviceFailure] No connected devices remain, "
+             << "marking partitions as lost";
+    for (const auto& [oid, count] : oid_counts) {
+      LOG_INFO << "[HandleDeviceFailure] Decrementing response counter for OID "
+               << oid << " by " << count << " (in-flight partitions lost)";
+      for (size_t i = 0; i < count; ++i) {
+        IncRspCbCount(oid, 1);
+      }
     }
+    LOG_INFO << "[HandleDeviceFailure] Completed failure handling for device "
+             << failed_device_id;
+    return;
   }
+
+  auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_->GetLoopHandle());
+  loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
 
   LOG_INFO << "[HandleDeviceFailure] Completed failure handling for device "
            << failed_device_id;
@@ -1012,18 +1058,12 @@ void ProxySvrHandle::SendIdlePartitions() {
 void ProxySvrImpl::CheckFailedPartitions() {
   auto& tracker = DEVICE_TRACKER;
 
-  // Get all devices
-  std::vector<int64_t> all_devices = tracker.GetAllDevices();
+  std::vector<int64_t> all_devices = tracker.GetDisconnectedDevices();
 
   LOG_DEBUG << "[CheckFailedPartitions] Checking " << all_devices.size()
             << " devices for failed partitions";
 
   for (int64_t device_id : all_devices) {
-    // Skip connected devices
-    if (tracker.IsDeviceConnected(device_id)) {
-      continue;
-    }
-
     // Check if disconnected device has pending partitions
     if (PARTITION_TRACKER.HasPendingPartitions(device_id)) {
       size_t pending_count =

@@ -27,7 +27,10 @@ struct ProxyEnvCfg {
   int64_t block_size;
   int64_t num_device;
   int max_inflight;
-  std::string pool_mode;
+  int wait_matmul_timeout_s = 300;
+  int stuck_threshold_ms = 30000;
+  bool enable_auto_recovery = true;
+  std::string pool_mode;  // "gpu", "cpu", or "both"
   std::string loop_strategy;
 
   // log

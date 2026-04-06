@@ -63,6 +63,14 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
 
   PARSE_INT_ENVCFG(parser, "worker", "thread", false, 2, thread);
   PARSE_INT_ENVCFG(parser, "worker", "max_inflight", false, 5, max_inflight);
+  PARSE_INT_ENVCFG(parser, "proxy", "wait_matmul_timeout_s", false, 300,
+                   wait_matmul_timeout_s);
+  PARSE_INT_ENVCFG(parser, "proxy", "stuck_threshold_ms", false, 30000,
+                   stuck_threshold_ms);
+  int enable_auto_recovery_int = 1;
+  PARSE_INT_ENVCFG(parser, "proxy", "enable_auto_recovery", false, 1,
+                   enable_auto_recovery_int);
+  enable_auto_recovery = (enable_auto_recovery_int != 0);
   PARSE_INT_ENVCFG(parser, "worker", "block_size", false, 32, block_size);
   PARSE_INT_ENVCFG(parser, "worker", "num_device", false, 32, num_device);
   PARSE_STR_ENVCFG(parser, "worker", "pool_mode", false, "gpu", pool_mode);

@@ -32,6 +32,10 @@ void* CachingAllocator::Allocate(const size_t bytes) {
     ptr = it->second.back();
     it->second.pop_back();
   }
+  if (ptr == nullptr) {
+    LOG_ERROR << "Allocate failed for " << bytes << " bytes";
+    return nullptr;
+  }
   used_bytes_ += bytes;
   allocation_map_[ptr] = bytes;
   // LOG_DEBUG("Allocate: {:p}, size: {}, used: {}", ptr, bytes, used_bytes_);
@@ -117,12 +121,18 @@ void* CachingAllocator::AllocateAndCache(const size_t bytes) {
   // LOG_DEBUG("AllocateAndCache: size: {}, used: {}", bytes, used_bytes_);
   if (allocated_bytes_ + bytes > max_bytes_) {
     FreeCached();
-    LOG_FATAL_IF(allocated_bytes_ + bytes > max_bytes_)
-        << "Out of memory; attempted to allocate " << bytes / GB
-        << "GB, allocated " << allocated_bytes_ / GB << "GB, but only "
-        << (max_bytes_ - allocated_bytes_) / GB << "GB available";
+    if (allocated_bytes_ + bytes > max_bytes_) {
+      LOG_ERROR << "Out of memory; attempted to allocate " << bytes / GB
+                << "GB, allocated " << allocated_bytes_ / GB << "GB, but only "
+                << (max_bytes_ - allocated_bytes_) / GB << "GB available";
+      return nullptr;
+    }
   }
   void* ptr = AllocateMemory(bytes);
+  if (ptr == nullptr) {
+    LOG_ERROR << "AllocateMemory failed for " << bytes << " bytes";
+    return nullptr;
+  }
   return ptr;
 }
 

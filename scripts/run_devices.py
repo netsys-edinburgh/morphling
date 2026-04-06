@@ -9,11 +9,14 @@ Usage:
 """
 
 import asyncio
+import atexit
 import os
+import signal
 import subprocess
+import sys
 import time
-from dataclasses import dataclass, field
-from typing import Optional
+from pathlib import Path
+from typing import Any, cast
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser
@@ -27,21 +30,9 @@ from morphling.hooks import apply_hooks
 
 torch.autograd.set_detect_anomaly(True)  # type: ignore[attr-defined]
 
-# # if SIGINT is received, kill all the devices
-# def signal_handler(sig, frame):
-#     for p in device_processes:
-#         p.kill()
-#     exit(0)
-
-
-# import signal
-
-# signal.signal(signal.SIGINT, signal_handler)
-
 if __name__ == "__main__":
     # Detect enable-hooks flag before using HfArgumentParser because some
     # versions of HfArgumentParser can raise if unknown args remain.
-    import sys
 
     _enable_hooks_flag_names = ("--enable-hooks", "--enable_hooks", "--hooks")
     local_enable_hooks = False
@@ -57,7 +48,9 @@ if __name__ == "__main__":
     # Temporarily replace sys.argv for HfArgumentParser
     sys.argv = filtered_argv
 
-    parser = HfArgumentParser((DeviceConfigArguments, ModelConfigArguments))
+    parser = HfArgumentParser(
+        cast(Any, (DeviceConfigArguments, ModelConfigArguments))
+    )
     device_args, model_args = parser.parse_args_into_dataclasses()
 
     # Restore original argv
@@ -71,6 +64,12 @@ if __name__ == "__main__":
         ["pkill", "-f", "morphling_device"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+    )
+
+    # read the output of the bash script
+    script_dir = Path(__file__).resolve().parent
+    output = subprocess.run(
+        ["bash", str(script_dir / "env_init.sh")], stdout=subprocess.PIPE
     )
 
     # time.sleep(15)
@@ -126,12 +125,19 @@ if __name__ == "__main__":
     #     time.sleep(1)
     #     print("Waiting for devices to connect")
 
+    backend = None
     if model_args.backend == "rabbitmq":
         loop = asyncio.get_event_loop()
         backend = AutoBackend.from_name(
             model_args.backend, loop, block_size=model_args.block_size
         )
-        loop.run_until_complete(backend.connect())
+        try:
+            loop.run_until_complete(
+                asyncio.wait_for(backend.connect(), timeout=30.0)
+            )
+        except asyncio.TimeoutError:
+            print("ERROR: Backend connection timed out after 30s")
+            sys.exit(1)
 
     elif model_args.backend == "amqp":
         backend = AutoBackend.from_name(
@@ -142,74 +148,80 @@ if __name__ == "__main__":
         backend = AutoBackend.from_name(
             model_args.backend, model_args.block_size
         )
-        backend.start()
+        getattr(backend, "start")()
 
     elif model_args.backend == "proxy":
         backend = AutoBackend.from_name(model_args.backend)
-        backend.initialize(model_args.cfg)
-        backend.start()
+        getattr(backend, "initialize")(model_args.cfg)
+        getattr(backend, "start")()
+
+    if backend is None:
+        raise ValueError(f"Unsupported backend: {model_args.backend}")
 
     # backend = AutoBackend.from_name("amqp", "localhost", model_args.block_size)
     morphling.hooks.autograd._backend = backend
 
     time.sleep(5)
 
+    cfg_path = str(
+        (script_dir.parent / "config" / "proxy" / "cli.ini").resolve()
+    )
     device_processes = []
+
+    def cleanup_devices():
+        for p in device_processes:
+            if p.poll() is None:
+                try:
+                    os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+                    p.wait(timeout=5)
+                except (subprocess.TimeoutExpired, ProcessLookupError):
+                    # kill -9 (SIGKILL) is a last resort and cannot be
+                    # caught for graceful shutdown.
+                    try:
+                        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    atexit.register(cleanup_devices)
+
     print("Running devices", device_args.num_devices)
     for i in range(device_args.num_devices):
-        # command = [
-        #     "morphling_device",
-        #     "--id",
-        #     str(i),
-        #     "--flops",
-        #     str(device_args.device_flops[i]),
-        #     "--memory",
-        #     str(device_args.device_mem[i]),
-        #     "--ul_bw",
-        #     str(device_args.ul_bw[i]),
-        #     "--dl_bw",
-        #     str(device_args.dl_bw[i]),
-        #     "--ul_lat",
-        #     str(device_args.ul_lat[i]),
-        #     "--dl_lat",
-        #     str(device_args.dl_lat[i]),
-        #     "--emulation",
-        #     "--backend",
-        #     model_args.backend,
-        #     "&",
-        # ]
-
-        # env = os.environ.copy()
-        # env["MORPHLING_PIN_SIZE"] = str(device_args.device_mem[i])
-        # env["SPDLOG_LEVEL"] = os.environ.get("SPDLOG_LEVEL", "info")
-        # env["TORCH_SHOW_CPP_STACKTRACES"] = "1"
-
-        command = [
-            "CUDA_VISIBLE_DEVICES=" + str(i % num_gpus),
-            "bash",
-            f"{this_file_path}/run_device.sh",
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = str(i % num_gpus) if num_gpus > 0 else ""
+        cmd = [
+            "morphling_device",
+            "--id",
             str(i),
+            "--flops",
             str(device_args.device_flops[i]),
+            "--memory",
             str(device_args.device_mem[i]),
+            "--ul_bw",
             str(device_args.ul_bw[i]),
+            "--dl_bw",
             str(device_args.dl_bw[i]),
+            "--ul_lat",
             str(device_args.ul_lat[i]),
+            "--dl_lat",
             str(device_args.dl_lat[i]),
+            "--backend",
             model_args.backend,
-            getattr(
-                model_args, "proxy_host", ""
-            ),  # Pass proxy_host as the 10th parameter (optional)
+            "--cfg",
+            cfg_path,
         ]
-        # print("Running device", command)
-        os.system(" ".join(command))
+        if getattr(model_args, "proxy_host", ""):
+            cmd += ["--proxy_host", model_args.proxy_host]
 
-        # print("Running device", command)
+        p = subprocess.Popen(cmd, env=env, start_new_session=True)
+        device_processes.append(p)
 
-        # subprocess.Popen(command, env=env)
+    def signal_handler(sig, frame):
+        print(f"\nReceived signal {sig}. Cleaning up...")
+        cleanup_devices()
+        sys.exit(0)
 
-        # # create new process rather than subprocess
-        # os.system(" ".join(command))
-        # # device_processes.append(p)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     #     / # mosquitto_sub -t '$SYS/broker/subscriptions/count' -v
     # $SYS/broker/subscriptions/count 40
@@ -223,7 +235,7 @@ if __name__ == "__main__":
 
         while time.time() - start_time < timeout:
             try:
-                connection_count = backend.get_connection_count()
+                connection_count = getattr(backend, "get_connection_count")()
                 print(
                     f"Connected devices: {connection_count}/{device_args.num_devices}"
                 )
@@ -238,7 +250,9 @@ if __name__ == "__main__":
                 time.sleep(2)
         else:
             print(
-                f"Timeout waiting for devices to connect. Connected: {backend.get_connection_count()}/{device_args.num_devices}"
+                "Timeout waiting for devices to connect. "
+                "Connected: "
+                f"{getattr(backend, 'get_connection_count')()}/{device_args.num_devices}"
             )
             # Continue anyway
 
@@ -277,7 +291,7 @@ if __name__ == "__main__":
     else:
         print("✗ Local computation mode: apply_hooks('linear') DISABLED")
 
-    model = model.to("cpu")
+    model = cast(Any, model).to("cpu")
     inputs = inputs.to("cpu")
     start = time.time()
     outputs = model(
@@ -309,6 +323,8 @@ if __name__ == "__main__":
     loss.backward()
     end = time.time()
     print("Backward time", end - start)
+
+    cleanup_devices()
 
     # print("ref_hidden_states", ref_hidden_states)
 

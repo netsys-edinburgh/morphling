@@ -7,6 +7,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "set_tensor_shm",
       [](torch::Tensor& tensor, std::string& name, size_t size) {
         void* ptr = OpenSharedMemory(name.c_str(), size);
+        if (ptr == nullptr) {
+          throw std::runtime_error("OpenSharedMemory failed for " + name);
+        }
         LOG_DEBUG << "set_tensor_shm: name: " << name << ", size: " << size
                   << ", ptr: " << ptr;
         tensor.set_data(torch::from_blob(ptr, tensor.sizes(), tensor.strides(),
