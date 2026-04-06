@@ -1,6 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <condition_variable>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -166,6 +168,18 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
                                            // redistribution
   uevent::TimerId failed_partition_check_timer_;  // Timer for periodic
                                                   // partition health checks
+
+  std::mutex wait_mutex_;
+  std::condition_variable wait_cv_;
+
+ public:
+  struct CompletionEvent {
+    std::string partition_key;
+    int64_t device_id;
+    uint64_t bytes_received;
+  };
+  std::mutex completion_mutex_;
+  std::deque<CompletionEvent> completion_queue_;
 };
 
 typedef std::shared_ptr<ProxySvrImpl> ProxySvrImplPtr;
