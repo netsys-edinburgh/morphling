@@ -1,11 +1,15 @@
 #pragma once
 
 #include <atomic>
+#include <deque>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 
 #include "core/env_cfg.h"
 #include "core/lru.h"
 #include "core/pytorch_defs.h"
+#include "core/staging_pool.h"
 #include "morphling.pb.h"
 #include "network/connector_libevent.h"
 #include "network/uevent.h"
@@ -113,10 +117,15 @@ class ProxyCliHandle : public uevent::LoopHandle {
 
   void ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
                         const MatrixPartition& partition,
-                        void* deferred_cuda_ptr = nullptr,
+                        void* deferred_pinned_ptr = nullptr,
+                        size_t deferred_pinned_bucket = 0,
                         void* deferred_host_ptr = nullptr);
   void HandlePartition(const uevent::ConnectionUeventPtr& conn,
-                       const MatrixPartition& partition);
+                       const MatrixPartition& partition,
+                       float* preallocated_out_ptr = nullptr,
+                       int64_t preallocated_out_bytes = 0,
+                       bool preallocated_is_host_alloc = false,
+                       size_t preallocated_out_pool_bucket = 0);
 
  private:
   bool ShouldUseGpu() const;
@@ -125,13 +134,13 @@ class ProxyCliHandle : public uevent::LoopHandle {
       const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
       float* out_ptr, int64_t out_bytes, const float* row_ptr, int64_t row_size,
       const float* col_ptr, int64_t col_size, int64_t h_dim,
-      uint64_t vt_compute_start, bool is_host_alloc,
+      uint64_t vt_compute_start, bool is_host_alloc, size_t out_pool_bucket,
       SlidingWindowDurationTracker<>::TimePoint task_enqueue_time);
   void SubmitToCpuPool(
       const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
       float* out_ptr, int64_t out_bytes, const float* row_ptr, int64_t row_size,
       const float* col_ptr, int64_t col_size, int64_t h_dim,
-      uint64_t vt_compute_start, bool is_host_alloc,
+      uint64_t vt_compute_start, bool is_host_alloc, size_t out_pool_bucket,
       SlidingWindowDurationTracker<>::TimePoint task_enqueue_time);
   static std::shared_ptr<GemmArgs> BuildGemmArgs(const float* col_ptr,
                                                  int64_t col_size,
@@ -141,7 +150,8 @@ class ProxyCliHandle : public uevent::LoopHandle {
   void OnComputeComplete(
       const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
       float* out_ptr, int64_t out_bytes, int64_t col_size,
-      uint64_t vt_compute_start, bool is_host_alloc, bool is_gpu_task,
+      uint64_t vt_compute_start, bool is_host_alloc, size_t out_pool_bucket,
+      bool is_gpu_task,
       SlidingWindowDurationTracker<>::TimePoint task_enqueue_time);
 
   ProxyEnvCfg& ctx_;
@@ -161,6 +171,7 @@ struct CachedTensor {
   int64_t rows = 0;
   int64_t cols = 0;
   int64_t bytes = 0;
+  size_t pool_bucket = 0;
 };
 
 class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
@@ -191,16 +202,28 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
  private:
   MatrixPartition DecodeRequest(const void* payload, size_t size);
   void FillPartition(MatrixPartition& partition);
+  void FillPartitionLocked(MatrixPartition& partition);
   void CacheTensor(const TensorKey& key, void* ptr, int64_t size,
                    int64_t h_dim);
+  void CacheTensorLocked(const TensorKey& key, void* ptr, int64_t size,
+                         int64_t h_dim);
   void SavePartition(MatrixPartition& partition);
+  void SavePartitionLocked(const MatrixPartition& partition);
+  bool AllocateOutputBuffer(const MatrixPartition& partition, float** out_ptr,
+                            int64_t* out_bytes, bool* is_host_alloc,
+                            size_t* out_pool_bucket);
   void HandlePartition(const uevent::ConnectionUeventPtr& conn,
-                       const MatrixPartition& partition);
-  void CheckCachedPartition(const uevent::ConnectionUeventPtr& conn);
+                       const MatrixPartition& partition,
+                       float* preallocated_out_ptr = nullptr,
+                       int64_t preallocated_out_bytes = 0,
+                       bool preallocated_is_host_alloc = false,
+                       size_t preallocated_out_pool_bucket = 0);
+  std::vector<MatrixPartition> CheckCachedPartitionLocked();
 
  private:
   ProxyEnvCfg& ctx_;
   int64_t device_id_;
+  uevent::UeventLoop* loop_ = nullptr;
   std::shared_ptr<uevent::ConnectorLibevent> connector_;
 
   // sw::redis::Redis* redis_;
@@ -210,6 +233,8 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
   std::vector<MatrixPartition> cached_partitions_;
   std::unordered_set<PtrData> cached_msgs_;
   FixSizeLRUCache<TensorKey, CachedTensor> cached_tensors_;
+  StagingPool staging_pool_;
+  std::mutex staging_cache_mutex_;
 };
 
 typedef std::shared_ptr<ProxyCliImpl> ProxyCliImplPtr;

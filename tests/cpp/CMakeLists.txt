@@ -33,6 +33,12 @@ endif()
 if(TARGET gtest_main)
   target_compile_definitions(gtest_main PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
 endif()
+if(TARGET benchmark)
+  target_compile_definitions(benchmark PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
+endif()
+if(TARGET benchmark_main)
+  target_compile_definitions(benchmark_main PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
+endif()
 
 # ==========================================================================
 # CUDA / cuBLAS tests (unit/cuda/)
@@ -91,6 +97,9 @@ if(ENABLE_XTGEMM_TESTS)
     )
     list(APPEND CMAKE_PREFIX_PATH ${TORCH_PREFIX_PATH})
     find_package(Torch REQUIRED)
+    if(NOT TARGET CUDA::nvToolsExt)
+      add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
+    endif()
 
     # Base logging sources
     file(GLOB BASE_LOGGING_SRC ${PROJECT_ROOT}/external/muduo_base/*.cc)
@@ -205,6 +214,31 @@ if(ENABLE_XTGEMM_TESTS)
     )
   else()
     message(WARNING "CUDAToolkit or CUDA driver API not found; XtGemm tests skipped.")
+  endif()
+endif()
+
+option(ENABLE_PIPELINE_TESTS "Build worker pipeline benchmarks" OFF)
+if(ENABLE_PIPELINE_TESTS)
+  find_package(CUDAToolkit QUIET)
+  find_package(Threads REQUIRED)
+
+  if(CUDAToolkit_FOUND AND TARGET CUDA::cuda_driver)
+    set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+    execute_process(
+      COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
+      OUTPUT_VARIABLE TORCH_PREFIX_PATH
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    list(APPEND CMAKE_PREFIX_PATH ${TORCH_PREFIX_PATH})
+    find_package(Torch REQUIRED)
+    if(NOT TARGET CUDA::nvToolsExt)
+      add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
+    endif()
+
+    add_subdirectory(bench/pipeline)
+  else()
+    message(WARNING "CUDAToolkit or CUDA driver API not found; pipeline benchmarks skipped.")
   endif()
 endif()
 
