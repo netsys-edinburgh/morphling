@@ -65,7 +65,8 @@ WORKDIR /app
 
 # copy requirements.txt first to leverage Docker cache
 COPY requirements.txt /app/
-RUN pip install --no-cache -r /app/requirements.txt
+RUN pip install setuptools wheel && \
+    pip install -r /app/requirements.txt
 
 # Copy the rest of the project files
 COPY . /app/
