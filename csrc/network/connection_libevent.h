@@ -25,6 +25,7 @@ class BuffereventWrapper {
   ~BuffereventWrapper();
   inline struct bufferevent* bev() const { return bev_; }
   inline ssize_t ReadableLength() { return evbuffer_get_length(inbuf_); }
+  inline size_t WritableLength() { return evbuffer_get_length(outbuf_); }
   inline int SendData(const void* data, size_t data_len) {
     return evbuffer_add(outbuf_, data, data_len);
   }
@@ -67,6 +68,7 @@ class ConnectionLibevent : public ConnectionUevent {
   virtual int Init();
   virtual void SetFd();  // connector 确认连接成功后调用
   virtual ssize_t ReadableLength();
+  size_t OutputBufferLength();
   virtual int SendData(const void* data, size_t data_len);
   virtual int SendDataZeroCopy(const void* data, size_t data_len,
                                void (*cleanup_cb)(const void*, size_t, void*),
