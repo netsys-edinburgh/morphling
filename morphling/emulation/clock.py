@@ -60,6 +60,32 @@ class DilatedDeviceClock:
         self._step_phases.append(rec)
         return rec
 
+    def record_compute_fwd(self, wall_time_s: float) -> PhaseTimingRecord:
+        """Record forward compute phase with alpha dilation."""
+        self._check_step_started()
+        alpha = self._dilation.alpha(self._rank)
+        rec = PhaseTimingRecord(
+            phase="compute_fwd",
+            wall_time_s=wall_time_s,
+            virtual_time_s=wall_time_s * alpha,
+            dilation_factor=alpha,
+        )
+        self._step_phases.append(rec)
+        return rec
+
+    def record_compute_bwd(self, wall_time_s: float) -> PhaseTimingRecord:
+        """Record backward compute phase with alpha dilation."""
+        self._check_step_started()
+        alpha = self._dilation.alpha(self._rank)
+        rec = PhaseTimingRecord(
+            phase="compute_bwd",
+            wall_time_s=wall_time_s,
+            virtual_time_s=wall_time_s * alpha,
+            dilation_factor=alpha,
+        )
+        self._step_phases.append(rec)
+        return rec
+
     def record_comm(self, wall_time_s: float) -> PhaseTimingRecord:
         """Record a communication phase with beta dilation."""
         self._check_step_started()
