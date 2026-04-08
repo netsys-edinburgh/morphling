@@ -7,10 +7,10 @@ ninja
 numpy
 pandas
 pre-commit
-protobuf==3.13.0
+protobuf>=4.21.6
 psutil
 pytest-timeout
-redis
+grpcio>=1.60.0
+grpcio-tools>=1.60.0
 safetensors>=0.7.0
-serverless_llm_store>=0.7.0
 transformers
