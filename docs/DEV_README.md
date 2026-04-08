@@ -135,5 +135,5 @@ chmod +x scripts/*.sh
 
 ```bash
 lsof -i :28516
-# Or update port mappings in docker-compose.yml
+# Or update port mappings in dev.sh
 ```
