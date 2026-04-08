@@ -221,6 +221,48 @@ target_link_libraries(test_worker_base PRIVATE
 )
 add_test(NAME test_worker_base COMMAND test_worker_base)
 
+# ============================================================================
+# DispatchGate / DeviceTracker tests (unit/backend + integration)
+# ============================================================================
+set(PROJECT_ROOT_DG ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+file(GLOB DG_BASE_LOGGING_SRC ${PROJECT_ROOT_DG}/external/muduo_base/*.cc)
+
+add_executable(test_dispatch_gate
+  unit/backend/test_dispatch_gate.cpp
+  ${PROJECT_ROOT_DG}/csrc/backend/dispatch_gate.cpp
+  ${PROJECT_ROOT_DG}/csrc/core/logger.cpp
+  ${DG_BASE_LOGGING_SRC}
+)
+target_include_directories(test_dispatch_gate PRIVATE
+  ${PROJECT_ROOT_DG}/csrc
+  ${PROJECT_ROOT_DG}/external
+)
+target_link_libraries(test_dispatch_gate PRIVATE
+  GTest::gtest_main
+  GTest::gtest
+  Threads::Threads
+  uuid
+)
+add_test(NAME test_dispatch_gate COMMAND test_dispatch_gate)
+
+add_executable(test_barrier_integration
+  integration/test_barrier_integration.cpp
+  ${PROJECT_ROOT_DG}/csrc/backend/dispatch_gate.cpp
+  ${DG_BASE_LOGGING_SRC}
+)
+target_include_directories(test_barrier_integration PRIVATE
+  ${PROJECT_ROOT_DG}/csrc
+  ${PROJECT_ROOT_DG}/external
+)
+target_link_libraries(test_barrier_integration PRIVATE
+  GTest::gtest
+  GTest::gtest_main
+  Threads::Threads
+  uuid
+)
+add_test(NAME test_barrier_integration COMMAND test_barrier_integration)
+
 # ==========================================================================
 # GreenTraceParser tests (unit/worker/) — no CUDA required
 # ============================================================================
