@@ -13,13 +13,11 @@ Example:
 
 import argparse
 import asyncio
-import atexit
-import gc
 import os
 import signal
 import sys
 import time
-from typing import Any, Optional, cast
+from typing import Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -88,31 +86,6 @@ def parse_args():
         action="store_true",
         help="Enable output verification in hooks (for debugging)",
     )
-    parser.add_argument(
-        "--device-mode",
-        type=str,
-        default="barrier",
-        choices=["barrier", "dynamic"],
-        help="Device mode for dispatch gate: barrier or dynamic",
-    )
-    parser.add_argument(
-        "--barrier-count",
-        type=int,
-        default=0,
-        help="Barrier device count; 0 uses num_device from config",
-    )
-    parser.add_argument(
-        "--barrier-timeout",
-        type=int,
-        default=0,
-        help="Barrier timeout in milliseconds; 0 means infinite",
-    )
-    parser.add_argument(
-        "--max-queue-size",
-        type=int,
-        default=1024,
-        help="Maximum queued requests in dynamic device mode",
-    )
     parser.set_defaults(
         load_model=True, enable_cache=False, enable_hooks=False, no_wait=False
     )
@@ -122,7 +95,7 @@ def parse_args():
 async def start_backend_async(backend_name: str, block_size: int):
     loop = asyncio.get_event_loop()
     backend = AutoBackend.from_name(backend_name, loop, block_size=block_size)
-    await asyncio.wait_for(backend.connect(), timeout=30.0)
+    await backend.connect()
     return backend
 
 
@@ -152,30 +125,26 @@ def start_backend_sync(
 
                 # Check if initialize accepts cache parameter
                 if enable_cache and hasattr(backend, "set_cache_enabled"):
-                    getattr(backend, "set_cache_enabled")(True)
+                    backend.set_cache_enabled(True)  # type: ignore[attr-defined]
                     print(f"✓ Client-side caching ENABLED")
                 else:
                     print(f"Client-side caching disabled")
 
-                getattr(backend, "initialize")(config_path)
+                backend.initialize(config_path)  # type: ignore[attr-defined]
             else:
                 try:
-                    getattr(backend, "initialize")()
+                    backend.initialize()  # type: ignore[attr-defined]
                 except TypeError:
                     # initialize may accept args in some versions; ignore
-                    getattr(backend, "initialize")(None)
+                    backend.initialize(None)  # type: ignore[attr-defined]
         if hasattr(backend, "start"):
-            getattr(backend, "start")()
+            backend.start()  # type: ignore[attr-defined]
     else:
         # Use asyncio for rabbitmq/amqp style backends
         loop = asyncio.get_event_loop()
-        try:
-            backend = loop.run_until_complete(
-                start_backend_async(backend_name, block_size)
-            )
-        except asyncio.TimeoutError:
-            print("ERROR: Backend connection timed out after 30s")
-            sys.exit(1)
+        backend = loop.run_until_complete(
+            start_backend_async(backend_name, block_size)
+        )
     return backend
 
 
@@ -259,11 +228,6 @@ def main():
     )
     print("Backend started. Server is now listening for device connections.")
 
-    def _server_cleanup():
-        gc.collect()
-
-    atexit.register(_server_cleanup)
-
     # Set backend for morphling hooks
     morphling.hooks.autograd._backend = backend
     morphling.hooks.autograd._enable_verification = args.enable_verification
@@ -322,8 +286,8 @@ def main():
             print("  → All computations will run locally using PyTorch")
 
         inputs = inputs.to("cpu")
-        model = cast(Any, model).to("cpu")
-        model = cast(Any, model).to(torch.float32)
+        model = model.to("cpu")
+        model = model.to(torch.float32)
 
         # Debug: Print input info
         print(f"Input shape: {inputs['input_ids'].shape}")
@@ -383,11 +347,11 @@ def main():
         print("Stopping backend...")
         try:
             if hasattr(backend, "stop"):
-                getattr(backend, "stop")()
+                backend.stop()  # type: ignore[attr-defined]
             if hasattr(backend, "disconnect"):
                 # async disconnect if available
                 loop = asyncio.get_event_loop()
-                loop.run_until_complete(getattr(backend, "disconnect")())
+                loop.run_until_complete(backend.disconnect())  # type: ignore[attr-defined]
         except Exception as e:
             print("Error while stopping backend:", e)
         print("Server shutdown complete.")
