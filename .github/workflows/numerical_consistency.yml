@@ -2,7 +2,7 @@ name: Numerical Consistency Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
     branches: ['**']
 
