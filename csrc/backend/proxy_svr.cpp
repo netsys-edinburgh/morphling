@@ -606,6 +606,28 @@ void ProxySvrImpl::RequestCb(const ConnectionUeventPtr& conn) {
 
 void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
                                        torch::Tensor& mat_b) {
+  auto* gate = DEVICE_TRACKER.GetDispatchGate();
+  if (gate != nullptr) {
+    if (gate->GetMode() == DeviceMode::BARRIER) {
+      if (!gate->WaitForReady()) {
+        LOG_ERROR << "[DispatchMatMulAsync] DispatchGate WaitForReady timeout";
+        return;
+      }
+    } else if (gate->GetMode() == DeviceMode::DYNAMIC &&
+               DEVICE_TRACKER.GetConnectedDeviceCount() == 0) {
+      auto mat_a_clone = mat_a.clone();
+      auto mat_b_clone = mat_b.clone();
+      gate->EnqueueWork([this, mat_a_clone, mat_b_clone]() mutable {
+        auto queued_a = mat_a_clone;
+        auto queued_b = mat_b_clone;
+        this->DispatchMatMulAsync(queued_a, queued_b);
+      });
+      LOG_INFO << "[DispatchMatMulAsync] No connected devices in DYNAMIC mode, "
+                  "work enqueued";
+      return;
+    }
+  }
+
   LOG_INFO << "[DispatchMatMulAsync] Starting dispatch - mm_count="
            << mm_count_;
 
@@ -1019,6 +1041,13 @@ ProxySvr::ProxySvr() : svr_(nullptr), loop_thread_(nullptr) {}
 
 void ProxySvr::Initialize(const std::string& cfg_file) {
   context_.Initialize(cfg_file);
+
+  const int64_t barrier_count =
+      context_.barrier_count > 0 ? context_.barrier_count : context_.num_device;
+  DEVICE_TRACKER.InitDispatchGate(context_.device_mode, barrier_count,
+                                  context_.barrier_timeout_ms,
+                                  context_.max_queue_size);
+
   svr_ = make_shared<ProxySvrImpl>(context_);
   loop_thread_ = make_shared<UeventLoopThread>(
       bind(ProxySvrHandle::CreateMyself, ref(context_), _1),
