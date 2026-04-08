@@ -2,9 +2,6 @@
 
 #include <event2/bufferevent.h>
 
-#include <algorithm>
-#include <functional>
-
 #include "connection_libevent.h"
 #include "eventloop_libevent.h"
 #include "muduo_base/logging.h"
@@ -15,19 +12,11 @@ ConnectorLibevent::ConnectorLibevent(UeventLoop* loop,
                                      const UsockAddress& peer_addr,
                                      const std::string& name)
     : ConnectorUevent(loop, peer_addr, name),
-      loop_(reinterpret_cast<EventLoopLibevent*>(loop)),
-      reconnect_attempts_(0),
-      current_delay_ms_(reconnect_config_.initial_delay_ms),
-      reconnect_timer_pending_(false) {}
+      loop_(reinterpret_cast<EventLoopLibevent*>(loop)) {}
 
 // 析构connector时一定要确保conn是关闭的，否则
 // 其中的bev_wrapper持有conn, conn得不到释放
 ConnectorLibevent::~ConnectorLibevent() {
-  reconnect_config_.enabled = false;
-  if (reconnect_timer_pending_) {
-    loop_->CancelTimer(reconnect_timer_id_);
-    reconnect_timer_pending_ = false;
-  }
   if (conn_ && conn_->IsClosed() == false) {
     conn_->ForceClose();
   }
@@ -52,10 +41,8 @@ int ConnectorLibevent::Connect() {
   LOG_DEBUG << "connect to peer address:" << peer_addr_.ToString();
   conn_ = conn;
   conn_->Init();
-  conn_->SetConnectionSuccessCb(std::bind(
-      &ConnectorLibevent::OnConnectionSuccess, this, std::placeholders::_1));
-  conn_->SetConnectionClosedCb(std::bind(&ConnectorLibevent::OnConnectionClosed,
-                                         this, std::placeholders::_1));
+  conn_->SetConnectionSuccessCb(connection_success_cb_);
+  conn_->SetConnectionClosedCb(connection_closed_cb_);
   conn_->SetMessageReadCb(message_read_cb_);
   conn_->SetMessageWriteCb(message_write_cb_);
   conn_->ConnectionEnable();
@@ -76,74 +63,6 @@ int ConnectorLibevent::Connect() {
   conn_->SetFd();
   conn_->SetState(ConnectionUevent::kConnecting);
   return 0;
-}
-
-void ConnectorLibevent::SetReconnectConfig(const ReconnectConfig& config) {
-  reconnect_config_ = config;
-  reconnect_config_.max_retries = std::max(0, reconnect_config_.max_retries);
-  reconnect_config_.initial_delay_ms =
-      std::max(0, reconnect_config_.initial_delay_ms);
-  reconnect_config_.max_delay_ms = std::max(reconnect_config_.initial_delay_ms,
-                                            reconnect_config_.max_delay_ms);
-  reconnect_config_.backoff_multiplier =
-      std::max(1.0f, reconnect_config_.backoff_multiplier);
-  ResetReconnectState();
-}
-
-void ConnectorLibevent::OnConnectionSuccess(const ConnectionUeventPtr& conn) {
-  ResetReconnectState();
-  connection_success_cb_(conn);
-}
-
-void ConnectorLibevent::OnConnectionClosed(const ConnectionUeventPtr& conn) {
-  connection_closed_cb_(conn);
-  if (reconnect_config_.enabled) {
-    ScheduleReconnect();
-  }
-}
-
-void ConnectorLibevent::ScheduleReconnect() {
-  if (reconnect_timer_pending_) {
-    return;
-  }
-  if (reconnect_attempts_ >= reconnect_config_.max_retries) {
-    LOG_ERROR << "reconnect max retries reached, peer address: "
-              << peer_addr_.ToString() << ", retries: " << reconnect_attempts_;
-    return;
-  }
-
-  int delay_ms = current_delay_ms_;
-  reconnect_timer_pending_ = true;
-  reconnect_timer_id_ =
-      loop_->RunAfter(static_cast<double>(delay_ms) / 1000.0, [this]() {
-        reconnect_timer_pending_ = false;
-        if (!reconnect_config_.enabled) {
-          return;
-        }
-        if (conn_ && !conn_->IsClosed()) {
-          return;
-        }
-
-        ++reconnect_attempts_;
-        LOG_INFO << "reconnect attempt " << reconnect_attempts_
-                 << " to peer address: " << peer_addr_.ToString();
-        ReConnect();
-
-        int next_delay = static_cast<int>(current_delay_ms_ *
-                                          reconnect_config_.backoff_multiplier);
-        next_delay = std::max(next_delay, reconnect_config_.initial_delay_ms);
-        current_delay_ms_ =
-            std::min(next_delay, reconnect_config_.max_delay_ms);
-      });
-}
-
-void ConnectorLibevent::ResetReconnectState() {
-  reconnect_attempts_ = 0;
-  current_delay_ms_ = reconnect_config_.initial_delay_ms;
-  if (reconnect_timer_pending_) {
-    loop_->CancelTimer(reconnect_timer_id_);
-    reconnect_timer_pending_ = false;
-  }
 }
 
 }  // namespace uevent
