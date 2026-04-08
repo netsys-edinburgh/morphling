@@ -12,17 +12,9 @@ inference workflows with optional green context (CUDA) support.
 
 try:
     from .model_emulator import EmulationEngine, InitEmptyModel
-except ImportError as e:
-    import warnings
-
-    warnings.warn(
-        "Failed to import EmulationEngine (C++ bindings not available): "
-        + f"{e}. Some functionality will be disabled.",
-        ImportWarning,
-        stacklevel=2,
-    )
-    EmulationEngine = None
-    InitEmptyModel = None
+except Exception:
+    EmulationEngine = None  # type: ignore
+    InitEmptyModel = None  # type: ignore
 
 
 __all__ = ["EmulationEngine", "InitEmptyModel"]
