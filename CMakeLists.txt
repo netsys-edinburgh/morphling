@@ -102,7 +102,6 @@ set(PROTO_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 set(PROTO_FILES
   "${PROTO_SRC_DIR}/morphling.proto"
   "${PROTO_SRC_DIR}/global_api.proto"
-  "${PROTO_SRC_DIR}/manage.proto"
 )
 
 protobuf_generate(
