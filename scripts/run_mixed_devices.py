@@ -18,7 +18,6 @@ Usage:
 """
 
 import argparse
-import asyncio
 import os
 import socket
 import struct
@@ -28,11 +27,14 @@ import threading
 import time
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import morphling
-from morphling.backend import AutoBackend
 from morphling.hooks import apply_hooks
+from scripts._runtime_common import (
+    load_model_and_tokenizer,
+    prepare_inputs,
+    start_backend,
+)
 
 torch.autograd.set_detect_anomaly(True)  # type: ignore[attr-defined]
 
@@ -307,41 +309,18 @@ def main():
 
     # Load model
     print("Loading model...")
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name, torch_dtype=torch.float32
+    model, tokenizer = load_model_and_tokenizer(
+        args.model_name, dtype=torch.float32
     )
-    model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     print("Model loaded")
 
     # Initialize backend
     print("Initializing backend...")
-    if args.backend == "rabbitmq":
-        loop = asyncio.get_event_loop()
-        backend = AutoBackend.from_name(
-            args.backend, loop, block_size=args.block_size
-        )
-        loop.run_until_complete(backend.connect())
-    elif args.backend == "amqp":
-        backend = AutoBackend.from_name(
-            args.backend, "localhost", args.block_size
-        )
-    elif args.backend == "mqtt":
-        backend = AutoBackend.from_name(args.backend, args.block_size)
-        backend.start()  # type: ignore[attr-defined]
-    elif args.backend == "proxy":
-        backend = AutoBackend.from_name(args.backend)
-        cfg_path = args.cfg or os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "config",
-            "proxy",
-            "svr.ini",
-        )
-        backend.initialize(cfg_path)  # type: ignore[attr-defined]
-        backend.start()  # type: ignore[attr-defined]
-    else:
-        print(f"Unknown backend: {args.backend}")
-        sys.exit(1)
+    backend = start_backend(
+        backend_name=args.backend,
+        block_size=args.block_size,
+        cfg_path=args.cfg,
+    )
 
     morphling.hooks.autograd._backend = backend
     print("Backend initialized")
@@ -437,15 +416,10 @@ def main():
 
     # Prepare input
     print("\n=== Running Inference ===")
-    input_text = [
-        "Hello, my dog is cute. He is a good " * 128
-    ] * args.batch_size
-    inputs = tokenizer(
-        input_text,
-        return_tensors="pt",
-        padding=True,
-        truncation=True,
-        max_length=args.seq_length,
+    inputs = prepare_inputs(
+        tokenizer,
+        batch_size=args.batch_size,
+        seq_length=args.seq_length,
     )
 
     print(f"Input shape: {inputs['input_ids'].shape}")
