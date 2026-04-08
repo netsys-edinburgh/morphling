@@ -41,6 +41,24 @@ class ModelConfigArguments:
             "help": "Proxy server host:port (e.g., 155.98.37.203:39000), overrides config file"
         },
     )
+    device_mode: str = field(
+        default="barrier",
+        metadata={"help": "Device mode for dispatch gate: barrier or dynamic"},
+    )
+    barrier_count: int = field(
+        default=0,
+        metadata={
+            "help": "Barrier device count; 0 uses num_device from config"
+        },
+    )
+    barrier_timeout: int = field(
+        default=0,
+        metadata={"help": "Barrier timeout in milliseconds; 0 means infinite"},
+    )
+    max_queue_size: int = field(
+        default=1024,
+        metadata={"help": "Maximum queued requests in dynamic device mode"},
+    )
     log_level: str = field(default="info", metadata={"help": "Log level"})
 
 
