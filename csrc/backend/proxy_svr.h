@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -210,6 +211,27 @@ class ProxySvr {
   size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }
   size_t GetRegisteredDeviceCount() const {
     return svr_->GetRegisteredDeviceCount();
+  }
+  bool IsBarrierMet() const {
+    auto* gate = DEVICE_TRACKER.GetDispatchGate();
+    if (gate == nullptr) {
+      return false;
+    }
+    return gate->IsBarrierMet();
+  }
+  size_t GetQueueSize() const {
+    auto* gate = DEVICE_TRACKER.GetDispatchGate();
+    if (gate == nullptr) {
+      return 0;
+    }
+    return gate->GetQueueSize();
+  }
+  DeviceMode GetDeviceMode() const {
+    auto* gate = DEVICE_TRACKER.GetDispatchGate();
+    if (gate == nullptr) {
+      return context_.device_mode;
+    }
+    return gate->GetMode();
   }
 
  private:

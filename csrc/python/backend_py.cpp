@@ -12,15 +12,27 @@ using morphling::backend::ProxyCli;
 using morphling::backend::ProxySvr;
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  py::enum_<DeviceMode>(m, "DeviceMode")
+      .value("BARRIER", DeviceMode::BARRIER)
+      .value("DYNAMIC", DeviceMode::DYNAMIC)
+      .export_values();
+
   py::class_<ProxySvr>(m, "ProxySvr")
       .def(py::init<>())
       .def("initialize", &ProxySvr::Initialize)
       .def("start", &ProxySvr::Start)
       .def("set_cache_enabled", &ProxySvr::SetCacheEnabled)
       .def("async_dispatch_matmul", &ProxySvr::DispatchMatMulAsync)
-      .def("wait_matmul", &ProxySvr::WaitMatMul)
+      .def("wait_matmul",
+           [](ProxySvr& self, int oid) {
+             py::gil_scoped_release release;
+             return self.WaitMatMul(oid);
+           })
       .def("get_connection_count", &ProxySvr::GetConnectionCount)
-      .def("get_registered_device_count", &ProxySvr::GetRegisteredDeviceCount);
+      .def("get_registered_device_count", &ProxySvr::GetRegisteredDeviceCount)
+      .def("is_barrier_met", &ProxySvr::IsBarrierMet)
+      .def("get_queue_size", &ProxySvr::GetQueueSize)
+      .def("get_device_mode", &ProxySvr::GetDeviceMode);
 
   py::class_<ProxyCli>(m, "ProxyCli")
       .def(py::init<>())
@@ -41,5 +53,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("start", &MQTTServer::Start, "Start MQTT server")
       .def("async_dispatch_matmul", &MQTTServer::DispatchMatMulAsync,
            "Dispatch matmul to devices")
-      .def("wait_matmul", &MQTTServer::WaitMatMul, "Wait for matmul response");
+      .def(
+          "wait_matmul",
+          [](MQTTServer& self, int oid) {
+            py::gil_scoped_release release;
+            return self.WaitMatMul(oid);
+          },
+          "Wait for matmul response");
 }
