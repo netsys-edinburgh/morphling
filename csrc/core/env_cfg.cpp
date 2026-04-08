@@ -63,30 +63,14 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
 
   PARSE_INT_ENVCFG(parser, "worker", "thread", false, 2, thread);
   PARSE_INT_ENVCFG(parser, "worker", "max_inflight", false, 5, max_inflight);
-  PARSE_INT_ENVCFG(parser, "proxy", "wait_matmul_timeout_s", false, 300,
-                   wait_matmul_timeout_s);
-  PARSE_INT_ENVCFG(parser, "proxy", "stuck_threshold_ms", false, 30000,
-                   stuck_threshold_ms);
-  int enable_auto_recovery_int = 1;
-  PARSE_INT_ENVCFG(parser, "proxy", "enable_auto_recovery", false, 1,
-                   enable_auto_recovery_int);
-  enable_auto_recovery = (enable_auto_recovery_int != 0);
   PARSE_INT_ENVCFG(parser, "worker", "block_size", false, 32, block_size);
   PARSE_INT_ENVCFG(parser, "worker", "num_device", false, 32, num_device);
   PARSE_STR_ENVCFG(parser, "worker", "pool_mode", false, "gpu", pool_mode);
-  PARSE_STR_ENVCFG(parser, "worker", "loop_strategy", false, "round_robin",
-                   loop_strategy);
 
   PARSE_INT_ENVCFG(parser, "internal", "cleanup_wait", false, 60, cleanup_wait);
   PARSE_INT_ENVCFG(parser, "internal", "tcp_timeout", false, 5, tcp_timeout);
-  PARSE_INT_ENVCFG(parser, "internal", "send_high_water_mark", false, 4194304,
-                   send_high_water_mark);
-  PARSE_INT_ENVCFG(parser, "internal", "max_batch_per_device", false, 50,
-                   max_batch_per_device);
   PARSE_INT_ENVCFG(parser, "internal", "enable_cli_cache", false, 0,
                    enable_cli_cache);
-  PARSE_INT_ENVCFG(parser, "internal", "partitions_per_device", false, 4,
-                   partitions_per_device);
 
   // Parse scheduling policy type (default to ROUND_ROBIN)
   int sched_policy_int = 0;
@@ -114,24 +98,6 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
     default:
       throw std::invalid_argument("Invalid scheduling policy type");
       break;
-  }
-
-  // Parse scalability mode (optional section — backward compatible)
-  int device_mode_int = 0;
-  PARSE_INT_ENVCFG(parser, "scalability", "device_mode", false, 0,
-                   device_mode_int);
-  device_mode = static_cast<DeviceMode>(device_mode_int);
-
-  PARSE_INT_ENVCFG(parser, "scalability", "barrier_count", false, 0,
-                   barrier_count);
-  PARSE_INT_ENVCFG(parser, "scalability", "barrier_timeout", false, 0,
-                   barrier_timeout_ms);
-  PARSE_INT_ENVCFG(parser, "scalability", "max_queue_size", false, 1024,
-                   max_queue_size);
-
-  // barrier_count=0 means use num_device from [worker] section
-  if (barrier_count == 0) {
-    barrier_count = num_device;
   }
 
   base::Logger::setLogLevel(log_level);
