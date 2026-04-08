@@ -53,6 +53,47 @@ int64_t DevicePartitionTracker::RegisterDevice(
     const std::string& conn_addr, const DeviceProfileData& profile) {
   std::lock_guard<std::mutex> lock(mutex_);
 
+  if (profile.uuid != 0) {
+    auto uuid_it = uuid_to_device_id_.find(profile.uuid);
+    if (uuid_it != uuid_to_device_id_.end()) {
+      int64_t device_id = uuid_it->second;
+      auto dev_it = devices_map_.find(device_id);
+      if (dev_it != devices_map_.end()) {
+        auto& device = dev_it->second;
+        if (device->quarantined) {
+          auto now = std::chrono::steady_clock::now();
+          auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                             now - device->quarantined_at)
+                             .count();
+          if (elapsed < circuit_breaker_config_.quarantine_seconds) {
+            LOG_WARN << "[DeviceTracker] Device " << device_id
+                     << " is quarantined, rejecting registration";
+            return -1;
+          }
+          device->quarantined = false;
+          device->failure_count = 0;
+        }
+        const auto& old_addr = device->conn_addr;
+        if (!old_addr.empty() && old_addr != conn_addr) {
+          addr_to_device_id_.erase(old_addr);
+        }
+
+        device->is_connected = true;
+        device->conn_addr = conn_addr;
+        device->last_seen = std::chrono::steady_clock::now();
+        device->connected_at = std::chrono::steady_clock::now();
+        device->profile = profile;
+        device->stable_uuid = profile.uuid;
+        uuid_to_device_id_[profile.uuid] = device_id;
+        addr_to_device_id_[conn_addr] = device_id;
+        device_id_to_addr_[device_id] = conn_addr;
+        LOG_INFO << "[DeviceTracker] Reconnection by UUID from " << conn_addr
+                 << ", reusing device_id=" << device_id;
+        return device_id;
+      }
+    }
+  }
+
   // Check if device already exists (reconnection case)
   auto it = addr_to_device_id_.find(conn_addr);
   if (it != addr_to_device_id_.end()) {
@@ -64,11 +105,32 @@ int64_t DevicePartitionTracker::RegisterDevice(
     auto dev_it = devices_map_.find(device_id);
     if (dev_it != devices_map_.end()) {
       auto& device = dev_it->second;
+      if (device->quarantined) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                           now - device->quarantined_at)
+                           .count();
+        if (elapsed < circuit_breaker_config_.quarantine_seconds) {
+          LOG_WARN << "[DeviceTracker] Device " << device_id
+                   << " is quarantined, rejecting registration";
+          return -1;
+        }
+        device->quarantined = false;
+        device->failure_count = 0;
+      }
       device->is_connected = true;
       device->last_seen = std::chrono::steady_clock::now();
       device->connected_at = std::chrono::steady_clock::now();
       device->conn_addr = conn_addr;
       device->profile = profile;
+      if (profile.uuid != 0) {
+        device->stable_uuid = profile.uuid;
+        uuid_to_device_id_[profile.uuid] = device_id;
+      }
+    }
+
+    if (dispatch_gate_) {
+      dispatch_gate_->NotifyDeviceJoined(device_id);
     }
 
     return device_id;
@@ -88,17 +150,66 @@ int64_t DevicePartitionTracker::RegisterDevice(
   liveness->connected_at = std::chrono::steady_clock::now();
   liveness->stats_start_time = std::chrono::steady_clock::now();
   liveness->profile = profile;
+  liveness->stable_uuid = profile.uuid;
 
   // Update mappings
   addr_to_device_id_[conn_addr] = device_id;
   device_id_to_addr_[device_id] = conn_addr;
+  if (profile.uuid != 0) {
+    uuid_to_device_id_[profile.uuid] = device_id;
+  }
   devices_map_[device_id] = liveness;
   devices_set_.insert(liveness);
+
+  if (dispatch_gate_) {
+    dispatch_gate_->NotifyDeviceJoined(device_id);
+  }
 
   return device_id;
 }
 
 void DevicePartitionTracker::UnregisterDevice(int64_t device_id) {
+  DisconnectDevice(device_id);
+}
+
+void DevicePartitionTracker::DisconnectDevice(int64_t device_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  auto it = devices_map_.find(device_id);
+  if (it == devices_map_.end()) {
+    LOG_WARN << "[DeviceTracker] Cannot disconnect unknown device "
+             << device_id;
+    return;
+  }
+
+  it->second->is_connected = false;
+  if (circuit_breaker_config_.enabled) {
+    auto now = std::chrono::steady_clock::now();
+    auto& device = it->second;
+    if (device->failure_count == 0) {
+      device->first_failure_time = now;
+    }
+    device->failure_count++;
+    auto window = std::chrono::duration_cast<std::chrono::seconds>(
+                      now - device->first_failure_time)
+                      .count();
+    if (window > circuit_breaker_config_.window_seconds) {
+      device->failure_count = 1;
+      device->first_failure_time = now;
+    }
+    if (device->failure_count >= circuit_breaker_config_.failure_threshold) {
+      device->quarantined = true;
+      device->quarantined_at = now;
+      LOG_WARN << "[DeviceTracker] Device " << device_id
+               << " quarantined after " << device->failure_count << " failures";
+    }
+  }
+  device_conn_.erase(device_id);
+  LOG_INFO << "[DeviceTracker] Device " << device_id
+           << " marked disconnected (soft)";
+}
+
+void DevicePartitionTracker::PurgeDevice(int64_t device_id) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   auto it = devices_map_.find(device_id);
@@ -112,11 +223,41 @@ void DevicePartitionTracker::UnregisterDevice(int64_t device_id) {
   LOG_INFO << "[DeviceTracker] Unregistering device " << device_id << " ("
            << conn_addr << ")";
 
-  // Remove from all mappings
   devices_set_.erase(it->second);
   addr_to_device_id_.erase(conn_addr);
   device_id_to_addr_.erase(device_id);
+  if (it->second->stable_uuid != 0) {
+    uuid_to_device_id_.erase(it->second->stable_uuid);
+  }
   devices_map_.erase(device_id);
+
+  if (dispatch_gate_) {
+    dispatch_gate_->NotifyDeviceLeft(device_id);
+  }
+}
+
+void DevicePartitionTracker::SetCircuitBreakerConfig(
+    const CircuitBreakerConfig& config) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  circuit_breaker_config_ = config;
+  if (circuit_breaker_config_.failure_threshold < 1) {
+    circuit_breaker_config_.failure_threshold = 1;
+  }
+  if (circuit_breaker_config_.window_seconds < 1) {
+    circuit_breaker_config_.window_seconds = 1;
+  }
+  if (circuit_breaker_config_.quarantine_seconds < 1) {
+    circuit_breaker_config_.quarantine_seconds = 1;
+  }
+}
+
+bool DevicePartitionTracker::IsDeviceQuarantined(int64_t device_id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = devices_map_.find(device_id);
+  if (it == devices_map_.end()) {
+    return false;
+  }
+  return it->second->quarantined;
 }
 
 // void DevicePartitionTracker::MarkDeviceConnected(int64_t device_id,
@@ -203,6 +344,18 @@ std::vector<int64_t> DevicePartitionTracker::GetConnectedDevices() const {
     }
   }
   return connected;
+}
+
+std::vector<int64_t> DevicePartitionTracker::GetDisconnectedDevices() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  std::vector<int64_t> disconnected;
+  for (const auto& [device_id, liveness] : devices_map_) {
+    if (!liveness->is_connected) {
+      disconnected.push_back(device_id);
+    }
+  }
+  return disconnected;
 }
 
 std::vector<int64_t> DevicePartitionTracker::GetAllDevices() const {
@@ -456,6 +609,13 @@ void DevicePartitionTracker::SetDeviceConnection(
     return;
   }
 
+  auto it = device_conn_.find(device_id);
+  if (it != device_conn_.end() && it->second && it->second != conn) {
+    LOG_WARN << "[DeviceTracker] Overwriting existing connection for device_id "
+             << device_id << ". Closing old connection.";
+    it->second->ForceClose();
+  }
+
   device_conn_[device_id] = conn;
   LOG_DEBUG << "[DeviceTracker] Set connection for device_id " << device_id;
 }
@@ -656,6 +816,59 @@ void DevicePartitionTracker::LogVirtualTimeEvent(
   }
 }
 
+void DevicePartitionTracker::InitDispatchGate(DeviceMode mode,
+                                              int64_t barrier_count,
+                                              int64_t barrier_timeout_ms,
+                                              int64_t max_queue_size) {
+  dispatch_gate_ = std::make_unique<DispatchGate>(
+      mode, barrier_count, barrier_timeout_ms, max_queue_size);
+  LOG_INFO << "[DeviceTracker] DispatchGate initialized: mode="
+           << static_cast<int>(mode) << " barrier_count=" << barrier_count;
+}
+
+DispatchGate* DevicePartitionTracker::GetDispatchGate() {
+  return dispatch_gate_.get();
+}
+
+void DevicePartitionTracker::SetDeviceDraining(int64_t device_id,
+                                               bool draining) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = devices_map_.find(device_id);
+  if (it != devices_map_.end()) {
+    it->second->is_draining = draining;
+    LOG_INFO << "[DeviceTracker] Device " << device_id
+             << " draining=" << draining;
+  }
+}
+
+bool DevicePartitionTracker::IsDeviceDraining(int64_t device_id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = devices_map_.find(device_id);
+  return it != devices_map_.end() && it->second->is_draining;
+}
+
+std::vector<int64_t> DevicePartitionTracker::GetDrainingDevices() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<int64_t> draining;
+  for (const auto& [device_id, liveness] : devices_map_) {
+    if (liveness->is_draining) {
+      draining.push_back(device_id);
+    }
+  }
+  return draining;
+}
+
+std::vector<int64_t> DevicePartitionTracker::GetSchedulableDevices() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<int64_t> schedulable;
+  for (const auto& [device_id, liveness] : devices_map_) {
+    if (liveness->is_connected && !liveness->is_draining) {
+      schedulable.push_back(device_id);
+    }
+  }
+  return schedulable;
+}
+
 void DevicePartitionTracker::Reset() {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -663,6 +876,7 @@ void DevicePartitionTracker::Reset() {
   next_device_id_ = 0;
   addr_to_device_id_.clear();
   device_id_to_addr_.clear();
+  uuid_to_device_id_.clear();
   devices_map_.clear();
   devices_set_.clear();
   device_conn_.clear();
