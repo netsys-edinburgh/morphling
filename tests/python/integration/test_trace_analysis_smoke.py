@@ -120,8 +120,6 @@ def test_plot_script_runs(tmp_path: Path) -> None:
     output_dir = tmp_path / "figures"
     with_ctrl = REPO_ROOT / "data" / "ldpc_trace_with_ctrl.csv"
     without_ctrl = REPO_ROOT / "data" / "ldpc_trace_without_ctrl.csv"
-    if not with_ctrl.exists() or not without_ctrl.exists():
-        pytest.skip("LDPC trace CSV files not present in data/")
 
     help_result = _run_python([str(script), "--help"])
     has_num_samples = "--num-samples" in help_result.stdout
@@ -201,8 +199,6 @@ def test_adapter_round_trip(tmp_path: Path) -> None:
     )
 
     source_csv = REPO_ROOT / "data" / "ldpc_trace_with_ctrl.csv"
-    if not source_csv.exists():
-        pytest.skip("LDPC trace CSV not present in data/")
     v2_csv = tmp_path / "trace_v2.csv"
 
     LdpcTraceAdapter = _load_adapter_cls()

@@ -169,6 +169,7 @@ class LinearFunction(torch.autograd.Function):
         # logger.debug(f"weight shape: {weight.shape}")
         # output = torch.as_tensor(np.matmul(input, weight))
 
+        # FIXME: this only applies to mqtt backend
         start_us: Optional[float] = None
         sm_count: Optional[int] = None
         gemm_idx: Optional[int] = None

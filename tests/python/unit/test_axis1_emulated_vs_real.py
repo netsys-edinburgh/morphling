@@ -53,14 +53,8 @@ def golden_refs() -> dict[str, object]:
         pytest.skip(
             "Golden references not found — run generate_golden_references.py first"
         )
-    try:
-        logits = torch.load(
-            str(logits_file), map_location="cpu", weights_only=True
-        )
-    except Exception as exc:
-        pytest.skip(f"Cannot load golden logits: {exc}")
     return {
-        "logits": logits,
+        "logits": torch.load(str(logits_file), map_location="cpu"),
         "losses": json.loads(loss_file.read_text()),
         "grad_norms": json.loads(grad_file.read_text()),
     }
