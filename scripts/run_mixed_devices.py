@@ -302,6 +302,7 @@ def main():
         ["pkill", "-f", "morphling_device"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        check=False,
     )
 
     # Load model

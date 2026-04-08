@@ -11,5 +11,6 @@ protobuf==3.13.0
 psutil
 pytest-timeout
 redis
-safetensors
+safetensors>=0.7.0
+serverless_llm_store>=0.7.0
 transformers
