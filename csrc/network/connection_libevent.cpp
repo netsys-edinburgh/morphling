@@ -1,12 +1,5 @@
 #include "connection_libevent.h"
 
-#include <event2/bufferevent.h>
-#include <event2/util.h>
-
-#include <cerrno>
-#include <cstring>
-#include <iomanip>
-
 #include "eventloop_libevent.h"
 #include "muduo_base/logging.h"
 
@@ -39,24 +32,12 @@ void BuffereventWrapper::EventCbWrapper(struct bufferevent* bev, short event,
                                         void* arg) {
   BuffereventWrapper* pobj = reinterpret_cast<BuffereventWrapper*>(arg);
   if (event & BEV_EVENT_CONNECTED) {
-    LOG_DEBUG << "[EventCbWrapper] connect success event:" << event;
+    LOG_DEBUG << "connect success event:" << event;
     pobj->conn_->SetState(ConnectionUevent::kConnected);
-    pobj->conn_->SetTcpNoDelay(true);
+    pobj->conn_->SetTcpNoDelay(true);  // 默认开启tcpnodelay
     pobj->conn_->connection_success_cb_(pobj->conn_);
   } else {
-    size_t outbuf_len = evbuffer_get_length(bufferevent_get_output(bev));
-    size_t inbuf_len = evbuffer_get_length(bufferevent_get_input(bev));
-    int sock_err = EVUTIL_SOCKET_ERROR();
-    LOG_ERROR << "[EventCbWrapper] connection error event=0x" << std::hex
-              << event << std::dec << " (EOF=" << !!(event & BEV_EVENT_EOF)
-              << " ERR=" << !!(event & BEV_EVENT_ERROR)
-              << " TIMEOUT=" << !!(event & BEV_EVENT_TIMEOUT)
-              << " READING=" << !!(event & BEV_EVENT_READING)
-              << " WRITING=" << !!(event & BEV_EVENT_WRITING) << ")"
-              << " sock_errno=" << sock_err << " ("
-              << evutil_socket_error_to_string(sock_err) << ")"
-              << " outbuf=" << outbuf_len << " inbuf=" << inbuf_len
-              << " peer=" << pobj->conn_->GetPeerAddress().ToString();
+    LOG_DEBUG << "connect fail event:" << event;
     pobj->conn_->ForceClose();
   }
 }
@@ -92,11 +73,6 @@ int ConnectionLibevent::Init() {
 void ConnectionLibevent::SetFd() {
   fd_ = bufferevent_getfd(GetInnerBev());
   assert(fd_ != -1);
-}
-
-size_t ConnectionLibevent::OutputBufferLength() {
-  if (bev_wrapper_ == NULL) return 0;
-  return bev_wrapper_->WritableLength();
 }
 
 ssize_t ConnectionLibevent::ReadableLength() {

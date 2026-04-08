@@ -1,8 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <condition_variable>
-#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -80,16 +78,12 @@ class ProxySvrHandle : public uevent::LoopHandle {
   // Message handlers following MessageHandler interface
   MessageHandlerSignature HandleMatMul;
   MessageHandlerSignature HandleDevicePerf;
-  MessageHandlerSignature HandleDrainRequest;
-
-  void CheckDrainCompletion(int64_t device_id);
 
  private:
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
   std::unordered_map<std::string, uint32_t> conn_inflight_;
   std::deque<std::function<void()>> task_queue_;
-  bool retrigger_pending_ = false;
 
   // Handshake tracking: maps connection address to handshake state
   // true = handshake complete, false = waiting for device_id
@@ -172,20 +166,6 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
                                            // redistribution
   uevent::TimerId failed_partition_check_timer_;  // Timer for periodic
                                                   // partition health checks
-
-  std::mutex wait_mutex_;
-  std::condition_variable wait_cv_;
-
- public:
-  std::atomic<bool> has_throttled_partitions_{false};
-
-  struct CompletionEvent {
-    std::string partition_key;
-    int64_t device_id;
-    uint64_t bytes_received;
-  };
-  std::mutex completion_mutex_;
-  std::deque<CompletionEvent> completion_queue_;
 };
 
 typedef std::shared_ptr<ProxySvrImpl> ProxySvrImplPtr;
@@ -230,27 +210,6 @@ class ProxySvr {
   size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }
   size_t GetRegisteredDeviceCount() const {
     return svr_->GetRegisteredDeviceCount();
-  }
-  bool IsBarrierMet() const {
-    auto* gate = DEVICE_TRACKER.GetDispatchGate();
-    if (gate == nullptr) {
-      return false;
-    }
-    return gate->IsBarrierMet();
-  }
-  size_t GetQueueSize() const {
-    auto* gate = DEVICE_TRACKER.GetDispatchGate();
-    if (gate == nullptr) {
-      return 0;
-    }
-    return gate->GetQueueSize();
-  }
-  DeviceMode GetDeviceMode() const {
-    auto* gate = DEVICE_TRACKER.GetDispatchGate();
-    if (gate == nullptr) {
-      return context_.device_mode;
-    }
-    return gate->GetMode();
   }
 
  private:

@@ -6,13 +6,10 @@
 #include <cuda_runtime_api.h>
 
 #include <condition_variable>
-#include <cstdlib>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <thread>
-#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -41,21 +38,6 @@ struct SmScheduleEntry {
 #define CUDA_TRANS_OP(trans) \
   (trans == 'N' || trans == 'n') ? CUBLAS_OP_N : CUBLAS_OP_T
 
-enum class WorkerPipelineMode {
-  kLegacy,
-  kDualStream,
-  kPipelined,
-};
-
-inline WorkerPipelineMode ParsePipelineMode() {
-  const char* val = std::getenv("MORPHLING_WORKER_PIPELINE");
-  if (!val) return WorkerPipelineMode::kLegacy;
-  std::string mode(val);
-  if (mode == "dual") return WorkerPipelineMode::kDualStream;
-  if (mode == "pipelined") return WorkerPipelineMode::kPipelined;
-  return WorkerPipelineMode::kLegacy;
-}
-
 // RAII wrapper for a green context + stream + cublasXt handle at a
 // specific SM count.  Movable, not copyable.
 struct ContextSlot {
@@ -63,10 +45,7 @@ struct ContextSlot {
   CUdevResourceDesc resource_desc = nullptr;
   CUgreenCtx green_ctx = nullptr;
   CUcontext cuda_ctx = nullptr;
-  cudaStream_t compute_stream = nullptr;
-  cudaStream_t copy_stream = nullptr;
   cudaStream_t stream = nullptr;
-  cublasHandle_t cublas_handle = nullptr;
   cublasXtHandle_t xt_handle = nullptr;
 
   ContextSlot() = default;
@@ -94,19 +73,9 @@ class XtGemmWorker : public WorkerBase,
 
   DELETE_COPY_AND_ASSIGN(XtGemmWorker);
 
-  static WorkerPipelineMode GetPipelineMode() {
-    static WorkerPipelineMode mode = ParsePipelineMode();
-    return mode;
-  }
-
   // cublasXt-style API: host pointers in, host pointers out.
   // cublasXt handles all H2D/D2H internally.
   void RunXtGemm(std::shared_ptr<GemmArgs> args);
-
-  void RunGemm(std::shared_ptr<GemmArgs> args);
-
-  void RegisterPipelinedTask(const std::string& task_id,
-                             std::shared_ptr<GemmArgs> args);
 
   // Switch to the green context with exactly `num_sms` SMs.
   // Returns false if no such context exists.
@@ -114,9 +83,6 @@ class XtGemmWorker : public WorkerBase,
 
   cudaStream_t GetStream() const {
     return active_slot_ ? active_slot_->stream : nullptr;
-  }
-  cudaStream_t GetCopyStream() const {
-    return active_slot_ ? active_slot_->copy_stream : nullptr;
   }
   int GetGpuId() const { return gpu_id_; }
   int GetPartitionIdx() const { return partition_idx_; }
@@ -141,46 +107,10 @@ class XtGemmWorker : public WorkerBase,
   }
 
  private:
-  struct PipelineSlot {
-    float* d_a = nullptr;
-    float* d_b = nullptr;
-    float* d_c = nullptr;
-    size_t a_cap = 0;
-    size_t b_cap = 0;
-    size_t c_cap = 0;
-    cudaEvent_t h2d_done = nullptr;
-    cudaEvent_t gemm_done = nullptr;
-    cudaEvent_t d2h_done = nullptr;
-    std::shared_ptr<GemmArgs> args;
-    TaskCallback callback;
-    std::string task_id;
-    TaskHandle state;
-    bool occupied = false;
-  };
-
   void Run() override;  // Thread entry: set device, init contexts, run loop
-  void RunPipelined();
   void InitAllContexts();
   ContextSlot CreateContextSlot(CUdevResource* groups, int num_groups,
                                 int sm_count);
-  void EnsureDeviceBuffers(size_t size_a, size_t size_b, size_t size_c);
-  void ReleaseDeviceBuffers();
-  void EnsurePipelineBuffers(PipelineSlot& slot, size_t size_a, size_t size_b,
-                             size_t size_c);
-  void ReleasePipelineBuffers(PipelineSlot& slot);
-  void InitPipelineEvents();
-  void DestroyPipelineState();
-  void BeginH2D(PipelineSlot& slot);
-  void LaunchGemm(PipelineSlot& slot);
-  void BeginD2H(PipelineSlot& slot);
-  void CompletePipelineSlot(PipelineSlot& slot);
-  void ExecuteTaskEntry(const std::string& task_id, Task&& task,
-                        const TaskHandle& state);
-  void CompleteTaskState(const std::string& task_id, const TaskHandle& state,
-                         const std::string& error = "");
-  std::optional<std::tuple<std::string, Task, TaskHandle>> DequeueTask(
-      bool block);
-  std::shared_ptr<GemmArgs> TakePipelinedTaskArgs(const std::string& task_id);
 
   int gpu_id_;
   int num_partitions_;
@@ -198,18 +128,6 @@ class XtGemmWorker : public WorkerBase,
 
   // Per-worker CUDA memory pool
   std::unique_ptr<CachingAllocator> allocator_;
-
-  float* d_a_ = nullptr;
-  float* d_b_ = nullptr;
-  float* d_c_ = nullptr;
-  size_t d_a_cap_ = 0;
-  size_t d_b_cap_ = 0;
-  size_t d_c_cap_ = 0;
-
-  PipelineSlot pipeline_slots_[2];
-  int active_pipeline_slot_idx_ = 0;
-  std::unordered_map<std::string, std::shared_ptr<GemmArgs>>
-      pipelined_task_args_;
 
   // SM switching schedule (loaded from file)
   std::vector<SmScheduleEntry> sm_schedule_;
