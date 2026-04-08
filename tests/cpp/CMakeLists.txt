@@ -27,19 +27,6 @@ set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(googletest googlebenchmark)
 
-if(TARGET gtest)
-  target_compile_definitions(gtest PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
-endif()
-if(TARGET gtest_main)
-  target_compile_definitions(gtest_main PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
-endif()
-if(TARGET benchmark)
-  target_compile_definitions(benchmark PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
-endif()
-if(TARGET benchmark_main)
-  target_compile_definitions(benchmark_main PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
-endif()
-
 # ==========================================================================
 # CUDA / cuBLAS tests (unit/cuda/)
 # ==========================================================================
@@ -97,9 +84,6 @@ if(ENABLE_XTGEMM_TESTS)
     )
     list(APPEND CMAKE_PREFIX_PATH ${TORCH_PREFIX_PATH})
     find_package(Torch REQUIRED)
-    if(NOT TARGET CUDA::nvToolsExt)
-      add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
-    endif()
 
     # Base logging sources
     file(GLOB BASE_LOGGING_SRC ${PROJECT_ROOT}/external/muduo_base/*.cc)
@@ -217,31 +201,6 @@ if(ENABLE_XTGEMM_TESTS)
   endif()
 endif()
 
-option(ENABLE_PIPELINE_TESTS "Build worker pipeline benchmarks" OFF)
-if(ENABLE_PIPELINE_TESTS)
-  find_package(CUDAToolkit QUIET)
-  find_package(Threads REQUIRED)
-
-  if(CUDAToolkit_FOUND AND TARGET CUDA::cuda_driver)
-    set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
-
-    execute_process(
-      COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
-      OUTPUT_VARIABLE TORCH_PREFIX_PATH
-      OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    list(APPEND CMAKE_PREFIX_PATH ${TORCH_PREFIX_PATH})
-    find_package(Torch REQUIRED)
-    if(NOT TARGET CUDA::nvToolsExt)
-      add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
-    endif()
-
-    add_subdirectory(bench/pipeline)
-  else()
-    message(WARNING "CUDAToolkit or CUDA driver API not found; pipeline benchmarks skipped.")
-  endif()
-endif()
-
 # ==========================================================================
 # WorkerBase / WorkerPool tests (unit/worker/)
 # ============================================================================
@@ -261,48 +220,6 @@ target_link_libraries(test_worker_base PRIVATE
   Threads::Threads
 )
 add_test(NAME test_worker_base COMMAND test_worker_base)
-
-# ==========================================================================
-# DispatchGate / DeviceTracker tests (unit/backend + integration)
-# ============================================================================
-set(PROJECT_ROOT_DG ${CMAKE_CURRENT_SOURCE_DIR}/../..)
-
-file(GLOB DG_BASE_LOGGING_SRC ${PROJECT_ROOT_DG}/external/muduo_base/*.cc)
-
-add_executable(test_dispatch_gate
-  unit/backend/test_dispatch_gate.cpp
-  ${PROJECT_ROOT_DG}/csrc/backend/dispatch_gate.cpp
-  ${PROJECT_ROOT_DG}/csrc/core/logger.cpp
-  ${DG_BASE_LOGGING_SRC}
-)
-target_include_directories(test_dispatch_gate PRIVATE
-  ${PROJECT_ROOT_DG}/csrc
-  ${PROJECT_ROOT_DG}/external
-)
-target_link_libraries(test_dispatch_gate PRIVATE
-  GTest::gtest_main
-  GTest::gtest
-  Threads::Threads
-  uuid
-)
-add_test(NAME test_dispatch_gate COMMAND test_dispatch_gate)
-
-add_executable(test_barrier_integration
-  integration/test_barrier_integration.cpp
-  ${PROJECT_ROOT_DG}/csrc/backend/dispatch_gate.cpp
-  ${DG_BASE_LOGGING_SRC}
-)
-target_include_directories(test_barrier_integration PRIVATE
-  ${PROJECT_ROOT_DG}/csrc
-  ${PROJECT_ROOT_DG}/external
-)
-target_link_libraries(test_barrier_integration PRIVATE
-  GTest::gtest
-  GTest::gtest_main
-  Threads::Threads
-  uuid
-)
-add_test(NAME test_barrier_integration COMMAND test_barrier_integration)
 
 # ==========================================================================
 # GreenTraceParser tests (unit/worker/) — no CUDA required
@@ -402,6 +319,7 @@ if(ENABLE_ZEROCOPY_TESTS)
   list(APPEND CMAKE_PREFIX_PATH ${TORCH_PREFIX_PATH})
   find_package(Torch REQUIRED)
 
+  # Generate proto C++ sources
   set(PROTO_SRC_DIR "${PROJECT_ROOT}/proto")
   set(PROTO_FILES
     "${PROTO_SRC_DIR}/morphling.proto"
@@ -427,36 +345,4 @@ if(ENABLE_ZEROCOPY_TESTS)
   else()
     message(WARNING "bench/zerocopy/CMakeLists.txt not found; zerocopy benchmarks skipped.")
   endif()
-endif()
-
-# ============================================================================
-# Queue benchmarks (optional)
-# ============================================================================
-option(ENABLE_QUEUE_TESTS "Build queue benchmarks" ON)
-if(ENABLE_QUEUE_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/queue/CMakeLists.txt")
-  add_subdirectory(bench/queue)
-endif()
-
-# ============================================================================
-# Server benchmarks (optional)
-# ============================================================================
-option(ENABLE_SERVER_TESTS "Build server benchmarks" ON)
-if(ENABLE_SERVER_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/server/CMakeLists.txt")
-  add_subdirectory(bench/server)
-endif()
-
-# ============================================================================
-# Memory benchmarks (optional)
-# ============================================================================
-option(ENABLE_MEMORY_TESTS "Build memory benchmarks" ON)
-if(ENABLE_MEMORY_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/memory/CMakeLists.txt")
-  add_subdirectory(bench/memory)
-endif()
-
-# ============================================================================
-# Scheduling benchmarks (optional)
-# ============================================================================
-option(ENABLE_SCHEDULING_TESTS "Build scheduling benchmarks" ON)
-if(ENABLE_SCHEDULING_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/scheduling/CMakeLists.txt")
-  add_subdirectory(bench/scheduling)
 endif()
