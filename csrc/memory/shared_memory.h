@@ -32,8 +32,5 @@ struct ShmDeleter {
 template <typename T>
 std::shared_ptr<T> AttachSharedMemoryPtr(const char* name, size_t size) {
   auto [ptr, shm_fd] = AttachSharedMemory(name, size);
-  if (ptr == nullptr || shm_fd == -1) {
-    return nullptr;
-  }
   return std::shared_ptr<T>(static_cast<T*>(ptr), ShmDeleter{size, shm_fd});
 }

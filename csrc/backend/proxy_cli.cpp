@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdint>
 #include <cstring>
 #include <thread>
 
@@ -78,14 +77,14 @@ void ProxyCliHandle::ThreadInit(uevent::UeventLoop* loop) {
 // stays alive until libevent finishes sending all segments.
 struct ResponseSendContext {
   ScatterGatherBufferPtr sg_buffer;
-  void* pinned_ptr = nullptr;
-  size_t pinned_bucket = 0;
+  // Deferred CUDA managed memory release (result buffer)
+  void* cuda_ptr = nullptr;
   // Deferred host memory release (CPU pool result buffer)
   void* host_ptr = nullptr;
 
   ~ResponseSendContext() {
-    if (pinned_ptr && pinned_bucket > 0) {
-      CudaPinnedMemoryPool::Instance().Release(pinned_ptr, pinned_bucket);
+    if (cuda_ptr) {
+      cudaFree(cuda_ptr);
     }
     if (host_ptr) {
       free(host_ptr);
@@ -106,8 +105,7 @@ static void SerializationBufferSendCleanup(const void* /*data*/, size_t /*len*/,
 
 void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
                                       const MatrixPartition& partition,
-                                      void* deferred_pinned_ptr,
-                                      size_t deferred_pinned_bucket,
+                                      void* deferred_cuda_ptr,
                                       void* deferred_host_ptr) {
   assert(conn);
 
@@ -116,9 +114,8 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
     LOG_WARN << DEV_TAG(device_id_, partition.gemm_id)
              << "connection already closed:" << client_addr;
     // Release deferred memory since we won't send
-    if (deferred_pinned_ptr && deferred_pinned_bucket > 0) {
-      CudaPinnedMemoryPool::Instance().Release(deferred_pinned_ptr,
-                                               deferred_pinned_bucket);
+    if (deferred_cuda_ptr) {
+      cudaFree(deferred_cuda_ptr);
     }
     if (deferred_host_ptr) {
       free(deferred_host_ptr);
@@ -136,10 +133,11 @@ void ProxyCliHandle::ResponseToCaller(const uevent::ConnectionUeventPtr& conn,
   auto sg_buffer = partition.SerializeZeroCopy();
   auto size = sg_buffer->GetTotalSize();
 
+  // Create send context to keep scatter-gather buffer and cuda managed memory
+  // alive until libevent finishes sending all segments
   auto ctx = std::make_shared<ResponseSendContext>();
   ctx->sg_buffer = sg_buffer;
-  ctx->pinned_ptr = deferred_pinned_ptr;
-  ctx->pinned_bucket = deferred_pinned_bucket;
+  ctx->cuda_ptr = deferred_cuda_ptr;
   ctx->host_ptr = deferred_host_ptr;
 
   // Zero-copy send each segment
@@ -210,11 +208,7 @@ bool ProxyCliHandle::ShouldUseGpu() const {
 }
 
 void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
-                                     const MatrixPartition& partition,
-                                     float* preallocated_out_ptr,
-                                     int64_t preallocated_out_bytes,
-                                     bool preallocated_is_host_alloc,
-                                     size_t preallocated_out_pool_bucket) {
+                                     const MatrixPartition& partition) {
   auto part_key = partition.GetPartitionKey();
 
   // Record COMPUTE start time (virtual time)
@@ -241,51 +235,31 @@ void ProxyCliHandle::HandlePartition(const uevent::ConnectionUeventPtr& conn,
   size_t out_elems =
       static_cast<size_t>(row_size) * static_cast<size_t>(col_size);
   int64_t out_bytes = static_cast<int64_t>(out_elems * sizeof(float));
-  float* out_ptr = preallocated_out_ptr;
-  bool is_host_alloc = preallocated_is_host_alloc;
-  size_t out_pool_bucket = preallocated_out_pool_bucket;
-
-  if (out_ptr && preallocated_out_bytes != out_bytes) {
-    LOG_WARN << DEV_TAG(device_id_, partition.gemm_id)
-             << "preallocated output bytes mismatch, expected=" << out_bytes
-             << " actual=" << preallocated_out_bytes;
-  }
 
   auto task_enqueue_time = SlidingWindowDurationTracker<>::Now();
 
   if (ShouldUseGpu()) {
-    if (!out_ptr) {
-      out_ptr = static_cast<float*>(malloc(out_bytes));
-      if (!out_ptr) {
-        LOG_ERROR << "malloc failed for output buffer (" << out_bytes
-                  << " bytes)";
-        return;
-      }
-      is_host_alloc = true;
-      out_pool_bucket = 0;
+    float* out_ptr = nullptr;
+    if (!LogCudaError(cudaMallocManaged(&out_ptr, out_bytes),
+                      "cudaMallocManaged(output)")) {
+      return;
     }
-
     SubmitToGpuPool(conn, partition, out_ptr, out_bytes, row_ptr, row_size,
                     col_ptr, col_size, partition.h_dim, vt_compute_start,
-                    is_host_alloc, out_pool_bucket, task_enqueue_time);
+                    /*is_host_alloc=*/false, task_enqueue_time);
     return;
   }
 
   if (cpu_pool_) {
+    float* out_ptr = static_cast<float*>(malloc(out_bytes));
     if (!out_ptr) {
-      out_ptr = static_cast<float*>(malloc(out_bytes));
-      if (!out_ptr) {
-        LOG_ERROR << "malloc failed for output buffer (" << out_bytes
-                  << " bytes)";
-        return;
-      }
-      is_host_alloc = true;
-      out_pool_bucket = 0;
+      LOG_ERROR << "malloc failed for output buffer (" << out_bytes
+                << " bytes)";
+      return;
     }
-
     SubmitToCpuPool(conn, partition, out_ptr, out_bytes, row_ptr, row_size,
                     col_ptr, col_size, partition.h_dim, vt_compute_start,
-                    is_host_alloc, out_pool_bucket, task_enqueue_time);
+                    /*is_host_alloc=*/true, task_enqueue_time);
     return;
   }
 
@@ -317,7 +291,7 @@ void ProxyCliHandle::SubmitToGpuPool(
     const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
     float* out_ptr, int64_t out_bytes, const float* row_ptr, int64_t row_size,
     const float* col_ptr, int64_t col_size, int64_t h_dim,
-    uint64_t vt_compute_start, bool is_host_alloc, size_t out_pool_bucket,
+    uint64_t vt_compute_start, bool is_host_alloc,
     SlidingWindowDurationTracker<>::TimePoint task_enqueue_time) {
   auto args =
       BuildGemmArgs(col_ptr, col_size, row_ptr, row_size, h_dim, out_ptr);
@@ -329,13 +303,12 @@ void ProxyCliHandle::SubmitToGpuPool(
   MatrixPartition part_copy = partition;
 
   TaskCallback callback = [this, conn, part_copy, out_ptr, out_bytes, col_size,
-                           vt_compute_start, is_host_alloc, out_pool_bucket,
+                           vt_compute_start, is_host_alloc,
                            task_enqueue_time](const std::string&) {
     loop_->RunInLoop([this, conn, part_copy, out_ptr, out_bytes, col_size,
-                      vt_compute_start, is_host_alloc, out_pool_bucket,
-                      task_enqueue_time]() {
+                      vt_compute_start, is_host_alloc, task_enqueue_time]() {
       OnComputeComplete(conn, part_copy, out_ptr, out_bytes, col_size,
-                        vt_compute_start, is_host_alloc, out_pool_bucket,
+                        vt_compute_start, is_host_alloc,
                         /*is_gpu_task=*/true, task_enqueue_time);
     });
   };
@@ -349,7 +322,7 @@ void ProxyCliHandle::SubmitToCpuPool(
     const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
     float* out_ptr, int64_t out_bytes, const float* row_ptr, int64_t row_size,
     const float* col_ptr, int64_t col_size, int64_t h_dim,
-    uint64_t vt_compute_start, bool is_host_alloc, size_t out_pool_bucket,
+    uint64_t vt_compute_start, bool is_host_alloc,
     SlidingWindowDurationTracker<>::TimePoint task_enqueue_time) {
   auto args =
       BuildGemmArgs(col_ptr, col_size, row_ptr, row_size, h_dim, out_ptr);
@@ -361,13 +334,12 @@ void ProxyCliHandle::SubmitToCpuPool(
   MatrixPartition part_copy = partition;
 
   TaskCallback callback = [this, conn, part_copy, out_ptr, out_bytes, col_size,
-                           vt_compute_start, is_host_alloc, out_pool_bucket,
+                           vt_compute_start, is_host_alloc,
                            task_enqueue_time](const std::string&) {
     loop_->RunInLoop([this, conn, part_copy, out_ptr, out_bytes, col_size,
-                      vt_compute_start, is_host_alloc, out_pool_bucket,
-                      task_enqueue_time]() {
+                      vt_compute_start, is_host_alloc, task_enqueue_time]() {
       OnComputeComplete(conn, part_copy, out_ptr, out_bytes, col_size,
-                        vt_compute_start, is_host_alloc, out_pool_bucket,
+                        vt_compute_start, is_host_alloc,
                         /*is_gpu_task=*/false, task_enqueue_time);
     });
   };
@@ -380,8 +352,7 @@ void ProxyCliHandle::SubmitToCpuPool(
 void ProxyCliHandle::OnComputeComplete(
     const uevent::ConnectionUeventPtr& conn, const MatrixPartition& partition,
     float* out_ptr, int64_t out_bytes, int64_t col_size,
-    uint64_t vt_compute_start, bool is_host_alloc, size_t out_pool_bucket,
-    bool is_gpu_task,
+    uint64_t vt_compute_start, bool is_host_alloc, bool is_gpu_task,
     SlidingWindowDurationTracker<>::TimePoint task_enqueue_time) {
   // Record task turnaround duration for dispatch estimation
   int64_t duration_us =
@@ -411,9 +382,10 @@ void ProxyCliHandle::OnComputeComplete(
 
   // Zero-copy send: result buffer release is deferred to send completion
   if (is_host_alloc) {
-    ResponseToCaller(conn, response, nullptr, 0, out_ptr);
+    ResponseToCaller(conn, response, /*deferred_cuda_ptr=*/nullptr,
+                     /*deferred_host_ptr=*/out_ptr);
   } else {
-    ResponseToCaller(conn, response, out_ptr, out_pool_bucket, nullptr);
+    ResponseToCaller(conn, response, /*deferred_cuda_ptr=*/out_ptr);
   }
 }
 
@@ -431,22 +403,20 @@ void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 
 ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx, int64_t device_id)
     : ctx_(ctx),
-      device_id_(device_id),
       connector_(nullptr),
-      staging_pool_(2),
       cached_tensors_(GB / 16, [](const TensorKey&, const CachedTensor& t) {
         if (t.data) {
           LOG_DEBUG << "Evicting cached tensor, freeing memory: " << t.data;
-          if (t.pool_bucket > 0) {
-            CudaPinnedMemoryPool::Instance().Release(t.data, t.pool_bucket);
-          } else {
-            free(t.data);
-          }
+#ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
+          cudaFree(t.data);
+#else
+          free(t.data);
+#endif
         }
-      }) {}
+      }) {
+}
 
 void ProxyCliImpl::Initialize(UeventLoop* loop) {
-  loop_ = loop;
   UsockAddress addr(ctx_.listen_ip, ctx_.listen_port);
   connector_ = make_shared<ConnectorLibevent>(loop, addr, "proxy_connector");
   connector_->SetConnectionSuccessCb(
@@ -540,33 +510,27 @@ void ProxyCliImpl::RequestCb(const ConnectionUeventPtr& conn) {
 
 void ProxyCliImpl::DecodeAndDispatch(const ConnectionUeventPtr& conn,
                                      const void* payload, size_t size) {
-  try {
-    // Step 1: Decode proto message header to get message type
-    int32_t message_type = GetMessageType(payload, size);
+  // Step 1: Decode proto message header to get message type
+  int32_t message_type = GetMessageType(payload, size);
 
-    if (message_type < 0) {
-      LOG_ERROR << "Failed to decode message type";
-      return;
-    }
-
-    // Step 2: Dispatch to appropriate handler based on message type
-    switch (message_type) {
-      case morphling::global_api::DEVICE_REGISTER_REQUEST:
-        HandleRegisterRequest(conn, payload, size);
-        break;
-
-      case morphling::global_api::COMPUTE_GEMM_DATA:
-        HandleMatMulRequest(conn, payload, size);
-        break;
-
-      default:
-        LOG_ERROR << "Unknown message type: " << message_type;
-        break;
-    }
-  } catch (const std::exception& e) {
-    LOG_ERROR << "[DecodeAndDispatch] Failed to decode message: " << e.what()
-              << ", dropping message";
+  if (message_type < 0) {
+    LOG_FATAL << "Failed to decode message type";
     return;
+  }
+
+  // Step 2: Dispatch to appropriate handler based on message type
+  switch (message_type) {
+    case morphling::global_api::DEVICE_REGISTER_REQUEST:
+      HandleRegisterRequest(conn, payload, size);
+      break;
+
+    case morphling::global_api::COMPUTE_GEMM_DATA:
+      HandleMatMulRequest(conn, payload, size);
+      break;
+
+    default:
+      LOG_FATAL << "Unknown message type: " << message_type;
+      break;
   }
 }
 
@@ -586,7 +550,7 @@ void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
   LOG_DEBUG << "Sending device profile data to server";
 
   DeviceProfileData profile;
-  profile.uuid = static_cast<uint64_t>(device_id_);
+  profile.uuid = GenUUID64();
   profile.flops = 100000000000ull;              // 100 GFLOPS - placeholder
   profile.memory = 16ull * 1024 * 1024 * 1024;  // 16GB - placeholder
   profile.ul_bw = 10ull * 1024 * 1024 * 1024;   // 10 Gbps
@@ -674,133 +638,75 @@ void ProxyCliImpl::HandleMatMul(const ConnectionUeventPtr& conn,
   LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id) << part_key
             << " partition: " << partition.DebugString();
 
+  // create tensor from partition
   auto [r_ptr, r_size] = partition.mat[0];
   auto [c_ptr, c_size] = partition.mat[1];
-  if (partition.h_dim <= 0) {
-    LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
-              << "invalid h_dim=" << partition.h_dim;
-    return;
-  }
+  int64_t row_size = r_size / partition.h_dim / sizeof(float);
+  int64_t col_size = c_size / partition.h_dim / sizeof(float);
 
-  int64_t row_size = 0;
-  int64_t col_size = 0;
-  if (r_size > 0) row_size = r_size / partition.h_dim / sizeof(float);
-  if (c_size > 0) col_size = c_size / partition.h_dim / sizeof(float);
-
-  if (r_size > 0) assert(row_size * partition.h_dim * sizeof(float) == r_size);
-  if (c_size > 0) assert(col_size * partition.h_dim * sizeof(float) == c_size);
+  assert(row_size * partition.h_dim * sizeof(float) == r_size);
+  assert(col_size * partition.h_dim * sizeof(float) == c_size);
 
   auto tensor_key_row = partition.GetRowKey();
   auto tensor_key_col = partition.GetColKey();
 
-  auto staging_partition = std::make_shared<MatrixPartition>(partition);
-  auto row_copy = std::make_shared<std::vector<uint8_t>>();
-  auto col_copy = std::make_shared<std::vector<uint8_t>>();
+  {
+    // std::lock_guard<std::mutex> lock(cache_mutex_);
+    if (r_size > 0) {
+      CacheTensor(tensor_key_row, r_ptr, r_size, partition.h_dim);
+    }
 
-  if (r_size > 0) {
-    row_copy->resize(static_cast<size_t>(r_size));
-    std::memcpy(row_copy->data(), r_ptr, static_cast<size_t>(r_size));
-    staging_partition->mat[0] = {row_copy->data(), static_cast<size_t>(r_size)};
+    if (c_size > 0) {
+      CacheTensor(tensor_key_col, c_ptr, c_size, partition.h_dim);
+    }
+
+    auto r_cached = cached_tensors_.Exist(tensor_key_row);
+    auto c_cached = cached_tensors_.Exist(tensor_key_col);
+
+    LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id) << part_key
+              << " Row cached: " << r_cached << ", row size: " << row_size
+              << ", Col cached: " << c_cached << ", col size: " << col_size;
+
+    FillPartition(partition);
+    CheckCachedPartition(conn);
+
+    if (r_size == 0 && !r_cached) {
+      LOG_WARN << DEV_TAG(device_id_, partition.gemm_id) << part_key
+               << " Row not cached, saving for next msg";
+      SavePartition(partition);
+      return;
+    }
+
+    if (c_size == 0 && !c_cached) {
+      LOG_WARN << DEV_TAG(device_id_, partition.gemm_id) << part_key
+               << " Col not cached, saving for next msg";
+      SavePartition(partition);
+      return;
+    }
   }
-  if (c_size > 0) {
-    col_copy->resize(static_cast<size_t>(c_size));
-    std::memcpy(col_copy->data(), c_ptr, static_cast<size_t>(c_size));
-    staging_partition->mat[1] = {col_copy->data(), static_cast<size_t>(c_size)};
-  }
 
-  struct PreparedPartition {
-    MatrixPartition partition;
-    float* out_ptr = nullptr;
-    int64_t out_bytes = 0;
-    bool is_host_alloc = false;
-    size_t out_pool_bucket = 0;
-  };
-
-  auto prepared = std::make_shared<std::vector<PreparedPartition>>();
-
-  staging_pool_.Submit(
-      [this, staging_partition, prepared, tensor_key_row, tensor_key_col,
-       r_size, c_size, row_size, col_size, row_copy, col_copy]() {
-        std::lock_guard<std::mutex> lock(staging_cache_mutex_);
-
-        if (r_size > 0) {
-          CacheTensorLocked(tensor_key_row,
-                            std::get<0>(staging_partition->mat[0]), r_size,
-                            staging_partition->h_dim);
-        }
-        if (c_size > 0) {
-          CacheTensorLocked(tensor_key_col,
-                            std::get<0>(staging_partition->mat[1]), c_size,
-                            staging_partition->h_dim);
-        }
-
-        bool r_cached = cached_tensors_.Exist(tensor_key_row);
-        bool c_cached = cached_tensors_.Exist(tensor_key_col);
-
-        LOG_DEBUG << DEV_TAG(device_id_, staging_partition->gemm_id)
-                  << staging_partition->GetPartitionKey()
-                  << " Row cached: " << r_cached << ", row size: " << row_size
-                  << ", Col cached: " << c_cached << ", col size: " << col_size;
-
-        FillPartitionLocked(*staging_partition);
-
-        if (r_size == 0 && !r_cached) {
-          LOG_WARN << DEV_TAG(device_id_, staging_partition->gemm_id)
-                   << staging_partition->GetPartitionKey()
-                   << " Row not cached, saving for next msg";
-          SavePartitionLocked(*staging_partition);
-        } else if (c_size == 0 && !c_cached) {
-          LOG_WARN << DEV_TAG(device_id_, staging_partition->gemm_id)
-                   << staging_partition->GetPartitionKey()
-                   << " Col not cached, saving for next msg";
-          SavePartitionLocked(*staging_partition);
-        } else {
-          PreparedPartition item;
-          item.partition = *staging_partition;
-          if (AllocateOutputBuffer(item.partition, &item.out_ptr,
-                                   &item.out_bytes, &item.is_host_alloc,
-                                   &item.out_pool_bucket)) {
-            prepared->push_back(std::move(item));
-          }
-        }
-
-        auto ready_from_cache = CheckCachedPartitionLocked();
-        for (auto& ready_part : ready_from_cache) {
-          PreparedPartition item;
-          item.partition = std::move(ready_part);
-          if (AllocateOutputBuffer(item.partition, &item.out_ptr,
-                                   &item.out_bytes, &item.is_host_alloc,
-                                   &item.out_pool_bucket)) {
-            prepared->push_back(std::move(item));
-          }
-        }
-      },
-      [this, conn, prepared]() {
-        if (!loop_) {
-          return;
-        }
-        loop_->RunInLoop([this, conn, prepared]() {
-          for (const auto& item : *prepared) {
-            HandlePartition(conn, item.partition, item.out_ptr, item.out_bytes,
-                            item.is_host_alloc, item.out_pool_bucket);
-          }
-        });
-      });
+  LOG_DEBUG << DEV_TAG(device_id_, partition.gemm_id) << part_key
+            << " Handle partition immediately";
+  HandlePartition(conn, partition);
 }
 
-std::vector<MatrixPartition> ProxyCliImpl::CheckCachedPartitionLocked() {
-  std::vector<MatrixPartition> ready_parts;
+void ProxyCliImpl::CheckCachedPartition(
+    const uevent::ConnectionUeventPtr& conn) {
   std::vector<std::string> keys;
   for (auto& c_part : cached_partitions_) {
-    FillPartitionLocked(c_part);
+    FillPartition(c_part);
     auto r_size = std::get<1>(c_part.mat[0]);
     auto c_size = std::get<1>(c_part.mat[1]);
     if (r_size > 0 && c_size > 0) {
       auto key = c_part.GetPartitionKey();
       LOG_DEBUG << DEV_TAG(c_part.dev_id, c_part.gemm_id) << key
                 << " Handle partition from cache";
-      ready_parts.push_back(c_part);
+      HandlePartition(conn, c_part);
       keys.push_back(key);
+    } else {
+      // LOG_WARN << c_part.GetPartitionKey()
+      //          << " Partition is not ready, r_size: " << r_size
+      //          << ", c_size: " << c_size;
     }
   }
 
@@ -812,27 +718,20 @@ std::vector<MatrixPartition> ProxyCliImpl::CheckCachedPartitionLocked() {
       ++it;
     }
   }
-
-  return ready_parts;
 }
 
 void ProxyCliImpl::HandlePartition(const ConnectionUeventPtr& conn,
-                                   const MatrixPartition& partition,
-                                   float* preallocated_out_ptr,
-                                   int64_t preallocated_out_bytes,
-                                   bool preallocated_is_host_alloc,
-                                   size_t preallocated_out_pool_bucket) {
+                                   const MatrixPartition& partition) {
   auto* loop = conn->GetLoop();
   loop->AssertInLoopThread();
 
   auto* loop_handle = loop->GetLoopHandle();
   auto* handle = reinterpret_cast<ProxyCliHandle*>(loop_handle);
-
+  // handle->HandlePartition(conn, partition);
+  // Copy partition by value for safety with async dispatch
   MatrixPartition part_copy = partition;
   loop->RunInLoop(bind(&ProxyCliHandle::HandlePartition, handle, conn,
-                       std::move(part_copy), preallocated_out_ptr,
-                       preallocated_out_bytes, preallocated_is_host_alloc,
-                       preallocated_out_pool_bucket));
+                       std::move(part_copy)));
 }
 
 MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size) {
@@ -850,12 +749,6 @@ MatrixPartition ProxyCliImpl::DecodeRequest(const void* payload, size_t size) {
 
 void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
                                int64_t h_dim) {
-  std::lock_guard<std::mutex> lock(staging_cache_mutex_);
-  CacheTensorLocked(key, ptr, size, h_dim);
-}
-
-void ProxyCliImpl::CacheTensorLocked(const TensorKey& key, void* ptr,
-                                     int64_t size, int64_t h_dim) {
   LOG_INFO << DEV_TAG_DEV(device_id_) << "CacheTensor called: ptr=" << ptr
            << ", size=" << size << ", h_dim=" << h_dim;
 
@@ -880,25 +773,21 @@ void ProxyCliImpl::CacheTensorLocked(const TensorKey& key, void* ptr,
     return;
   }
 
+  LOG_DEBUG << "Allocating managed memory: size=" << size << " bytes";
   void* cpy_ptr = nullptr;
-  size_t pool_bucket = 0;
-  if (XtGemmWorker::GetPipelineMode() == WorkerPipelineMode::kLegacy) {
-    cpy_ptr = malloc(size);
-    if (!cpy_ptr) {
-      LOG_ERROR << "CacheTensor: malloc failed for size=" << size;
-      return;
-    }
-  } else {
-    try {
-      auto acquired = CudaPinnedMemoryPool::Instance().Acquire(size);
-      cpy_ptr = acquired.first;
-      pool_bucket = acquired.second;
-    } catch (const std::exception& e) {
-      LOG_ERROR << "CacheTensor: CudaPinnedMemoryPool Acquire failed: "
-                << e.what();
-      return;
-    }
+#ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
+  if (!LogCudaError(cudaMallocManaged(&cpy_ptr, size),
+                    "CacheTensor cudaMallocManaged")) {
+    return;
   }
+  LOG_DEBUG << "cudaMallocManaged succeeded: cpy_ptr=" << cpy_ptr;
+#else
+  cpy_ptr = malloc(size);
+  if (cpy_ptr == nullptr) {
+    LOG_ERROR << "CacheTensor: malloc failed for size=" << size;
+    return;
+  }
+#endif
 
   int64_t ld_size = size / h_dim / sizeof(float);
   LOG_DEBUG << "Calculated ld_size=" << ld_size << " (size=" << size
@@ -907,22 +796,20 @@ void ProxyCliImpl::CacheTensorLocked(const TensorKey& key, void* ptr,
 
   LOG_DEBUG << "Copying data: from " << ptr << " to " << cpy_ptr
             << ", size=" << size << " bytes";
+#ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
+  cudaMemcpy(cpy_ptr, ptr, size, cudaMemcpyDefault);
+#else
   std::memcpy(cpy_ptr, ptr, size);
+#endif
 
   LOG_DEBUG << DEV_TAG_DEV(device_id_) << "memcpy completed successfully";
 
-  cached_tensors_.Put(
-      key, CachedTensor{cpy_ptr, ld_size, h_dim, size, pool_bucket}, size);
+  cached_tensors_.Put(key, CachedTensor{cpy_ptr, ld_size, h_dim, size}, size);
 
   LOG_INFO << "CacheTensor completed successfully";
 }
 
 void ProxyCliImpl::FillPartition(MatrixPartition& partition) {
-  std::lock_guard<std::mutex> lock(staging_cache_mutex_);
-  FillPartitionLocked(partition);
-}
-
-void ProxyCliImpl::FillPartitionLocked(MatrixPartition& partition) {
   auto r_size = std::get<1>(partition.mat[0]);
   auto c_size = std::get<1>(partition.mat[1]);
   auto tensor_key_row = partition.GetRowKey();
@@ -962,79 +849,10 @@ void ProxyCliImpl::FillPartitionLocked(MatrixPartition& partition) {
 }
 
 void ProxyCliImpl::SavePartition(MatrixPartition& partition) {
-  std::lock_guard<std::mutex> lock(staging_cache_mutex_);
-  SavePartitionLocked(partition);
-}
-
-void ProxyCliImpl::SavePartitionLocked(const MatrixPartition& partition) {
-  MatrixPartition copy = partition;
-  for (auto& mat : copy.mat) {
+  for (auto& mat : partition.mat) {
     mat = {nullptr, 0};
   }
-  cached_partitions_.push_back(std::move(copy));
-}
-
-bool ProxyCliImpl::AllocateOutputBuffer(const MatrixPartition& partition,
-                                        float** out_ptr, int64_t* out_bytes,
-                                        bool* is_host_alloc,
-                                        size_t* out_pool_bucket) {
-  if (!out_ptr || !out_bytes || !is_host_alloc || !out_pool_bucket) {
-    return false;
-  }
-
-  auto [r_ptr, r_size] = partition.mat[0];
-  auto [c_ptr, c_size] = partition.mat[1];
-  (void)r_ptr;
-  (void)c_ptr;
-
-  if (partition.h_dim <= 0) {
-    LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
-              << "invalid h_dim=" << partition.h_dim
-              << " while allocating output";
-    return false;
-  }
-
-  int64_t row_size = r_size / partition.h_dim / sizeof(float);
-  int64_t col_size = c_size / partition.h_dim / sizeof(float);
-  size_t out_elems =
-      static_cast<size_t>(row_size) * static_cast<size_t>(col_size);
-  *out_bytes = static_cast<int64_t>(out_elems * sizeof(float));
-
-  if (XtGemmWorker::GetPipelineMode() == WorkerPipelineMode::kLegacy) {
-    *out_ptr = static_cast<float*>(malloc(static_cast<size_t>(*out_bytes)));
-    if (!*out_ptr) {
-      LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
-                << "malloc failed for output buffer (" << *out_bytes
-                << " bytes)";
-      return false;
-    }
-    *out_pool_bucket = 0;
-    *is_host_alloc = true;
-    return true;
-  }
-
-  try {
-    auto acquired = CudaPinnedMemoryPool::Instance().Acquire(*out_bytes);
-    *out_ptr = static_cast<float*>(acquired.first);
-    *out_pool_bucket = acquired.second;
-    *is_host_alloc = false;
-    return true;
-  } catch (const std::exception& e) {
-    LOG_WARN << DEV_TAG(device_id_, partition.gemm_id)
-             << "Pinned output allocation failed, fallback to malloc: "
-             << e.what();
-  }
-
-  *out_ptr = static_cast<float*>(malloc(static_cast<size_t>(*out_bytes)));
-  if (!*out_ptr) {
-    LOG_ERROR << DEV_TAG(device_id_, partition.gemm_id)
-              << "malloc failed for output buffer (" << *out_bytes << " bytes)";
-    return false;
-  }
-
-  *out_pool_bucket = 0;
-  *is_host_alloc = true;
-  return true;
+  cached_partitions_.push_back(partition);
 }
 
 /*********************************ProxyCli***************************************/

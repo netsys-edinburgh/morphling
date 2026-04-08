@@ -48,11 +48,6 @@ void TaskExecution(const GemmArgsPtr& args) {
   // Removed gRPC client calls - now using direct local execution
   size_t task_size = sizeof(GemmArgs);
   void* task_buffer = kCachingAllocator->Allocate(task_size);
-  if (task_buffer == nullptr) {
-    LOG_ERROR << "TaskExecution: allocator returned nullptr for size="
-              << task_size;
-    return;
-  }
   auto* buffer_args = reinterpret_cast<GemmArgs*>(task_buffer);
   *buffer_args = *args;
   void* a = pointer_to_void(args->a[0]);
