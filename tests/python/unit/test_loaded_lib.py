@@ -4,10 +4,7 @@ import sys
 import pytest
 import torch
 
-try:
-    from morphling.runtime import InitEmptyModel
-except ImportError:
-    InitEmptyModel = None
+from morphling.runtime import InitEmptyModel
 
 try:
     from transformers import (
