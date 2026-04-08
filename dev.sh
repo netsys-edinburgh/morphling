@@ -24,6 +24,7 @@ show_help() {
     echo "Usage: $0 [COMMAND] [ARGS...]"
     echo ""
     echo "Commands:"
+    echo "  quickstart     - 启动 Redis、网络和模拟器容器"
     echo "  build          - 重新构建 Docker 镜像 (GPU 模式)"
     echo "  build-cpu      - 重新构建 Docker 镜像 (CPU 模式)"
     echo "  start          - 启动开发容器 (GPU 模式)"
@@ -86,6 +87,106 @@ start_container_common() {
         -p 39000:39000 \
         "$IMAGE_NAME" \
         tail -f /dev/null
+}
+
+quickstart() {
+    local redis_container_name="morphling-redis"
+    local emulator_container_name="morphling-emulator"
+    local network_name="morphling-network"
+    local use_gpu=false
+
+    if command -v nvidia-docker &> /dev/null || docker info | grep -q nvidia; then
+        echo "NVIDIA Docker support detected"
+        use_gpu=true
+    else
+        echo "WARNING: NVIDIA Docker support not detected. Running in CPU-only mode."
+    fi
+
+    echo "Building DeviceEmulator Docker image..."
+    docker build -t "$IMAGE_NAME" .
+
+    if ! docker network inspect "$network_name" &> /dev/null; then
+        docker network create "$network_name" >/dev/null
+    fi
+
+    while :; do
+        local redis_containers morphling_containers emulator_containers deviceemu_containers morphling_redis_containers
+        redis_containers=$(docker ps -aq -f name=redis)
+        morphling_containers=$(docker ps -aq -f name=morphling)
+        emulator_containers=$(docker ps -aq -f name="$emulator_container_name")
+        deviceemu_containers=$(docker ps -aq -f name=deviceemulator-device-emulator)
+        morphling_redis_containers=$(docker ps -aq -f name=morphling-redis)
+
+        if [ -n "$redis_containers" ]; then
+            echo "Stopping and removing existing redis containers..."
+            docker rm -f $redis_containers
+        fi
+        if [ -n "$morphling_containers" ]; then
+            echo "Stopping and removing existing morphling containers..."
+            docker rm -f $morphling_containers
+        fi
+        if [ -n "$emulator_containers" ]; then
+            echo "Stopping and removing existing morphling-emulator containers..."
+            docker rm -f $emulator_containers
+        fi
+        if [ -n "$deviceemu_containers" ]; then
+            echo "Stopping and removing existing deviceemulator-device-emulator containers..."
+            docker rm -f $deviceemu_containers
+        fi
+        if [ -n "$morphling_redis_containers" ]; then
+            echo "Stopping and removing existing morphling-redis containers..."
+            docker rm -f $morphling_redis_containers
+        fi
+
+        if [ -z "$redis_containers" ] && [ -z "$morphling_containers" ] && [ -z "$deviceemu_containers" ] && [ -z "$morphling_redis_containers" ]; then
+            break
+        fi
+
+        sleep 1
+    done
+
+    echo "Starting services..."
+    docker run -d \
+        --name "$redis_container_name" \
+        --network "$network_name" \
+        -p 6379:6379 \
+        redis
+
+    if [ "$use_gpu" = true ]; then
+        docker run -d \
+            --name "$emulator_container_name" \
+            --network "$network_name" \
+            --gpus all \
+            -p 39000:39000 \
+            "$IMAGE_NAME" \
+            tail -f /dev/null
+    else
+        echo "Starting in CPU-only mode..."
+        docker run -d \
+            --name "$emulator_container_name" \
+            --network "$network_name" \
+            -p 39000:39000 \
+            "$IMAGE_NAME" \
+            tail -f /dev/null
+    fi
+
+    echo "Waiting for services to start..."
+    sleep 10
+
+    echo "Service status:"
+    docker ps --filter "name=morphling" --filter "name=redis" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+    echo ""
+    echo "=== Setup Complete ==="
+    echo ""
+    echo "Available commands:"
+    echo "  docker exec -it $emulator_container_name bash                    # 进入容器"
+    echo "  docker exec -it $emulator_container_name morphling_emulator --help  # 查看帮助"
+    echo "  docker logs $emulator_container_name                         # 查看日志"
+    echo "  docker stop $emulator_container_name $redis_container_name    # 停止服务"
+    echo ""
+    echo "Redis is running on: localhost:6379"
+    echo "DeviceEmulator is running in container: $emulator_container_name"
 }
 
 # 函数：启动容器
@@ -170,6 +271,9 @@ run_tests() {
 check_docker
 
 case "${1:-help}" in
+    "quickstart")
+        quickstart
+        ;;
     "build")
         build_image
         ;;
