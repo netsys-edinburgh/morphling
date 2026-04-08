@@ -24,15 +24,10 @@ std::vector<int64_t> RoundRobinSchedulingPolicy::AssignPartitionsToDevices(
   auto& tracker = DEVICE_TRACKER;
   std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
 
-  std::unordered_set<int64_t> effective_excluded = excluded_devices;
-  for (int64_t device_id : tracker.GetDrainingDevices()) {
-    effective_excluded.insert(device_id);
-  }
-
   // Filter out excluded devices
   std::vector<int64_t> eligible_devices;
   for (int64_t device_id : connected_devices) {
-    if (effective_excluded.find(device_id) == effective_excluded.end()) {
+    if (excluded_devices.find(device_id) == excluded_devices.end()) {
       eligible_devices.push_back(device_id);
     }
   }
@@ -109,15 +104,10 @@ std::vector<int64_t> GreedySchedulingPolicy::AssignPartitionsToDevices(
   auto& tracker = DEVICE_TRACKER;
   std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
 
-  std::unordered_set<int64_t> effective_excluded = excluded_devices;
-  for (int64_t device_id : tracker.GetDrainingDevices()) {
-    effective_excluded.insert(device_id);
-  }
-
   // Filter out excluded devices
   std::vector<int64_t> eligible_devices;
   for (int64_t device_id : connected_devices) {
-    if (effective_excluded.find(device_id) == effective_excluded.end()) {
+    if (excluded_devices.find(device_id) == excluded_devices.end()) {
       eligible_devices.push_back(device_id);
     }
   }
@@ -127,13 +117,13 @@ std::vector<int64_t> GreedySchedulingPolicy::AssignPartitionsToDevices(
     return assignments;
   }
 
+  // Initialize tensor cache for eligible devices
   PARTITION_TRACKER.ClearAllDeviceTensors();
 
   int actual_num_devices = static_cast<int>(eligible_devices.size());
   std::vector<float> device_time(actual_num_devices, 0);
 
-  std::vector<std::unordered_set<TensorKey>> local_tensors(actual_num_devices);
-
+  // Greedy algorithm to select the device with minimal time
   for (const auto& partition : partitions) {
     float min_time = std::numeric_limits<float>::max();
     int min_device_idx = 0;
@@ -141,21 +131,24 @@ std::vector<int64_t> GreedySchedulingPolicy::AssignPartitionsToDevices(
     auto tensor_key_row = partition->GetRowKey();
     auto tensor_key_col = partition->GetColKey();
 
-    auto r_size = std::get<1>(partition->mat[0]);
-    auto c_size = std::get<1>(partition->mat[1]);
-    int64_t num_rows = r_size / partition->h_dim / sizeof(float);
-    int64_t num_cols = c_size / partition->h_dim / sizeof(float);
-    float ul_time =
-        static_cast<float>(num_rows * num_cols) * sizeof(float) / MB;
-    float flops = 2.0f * num_rows * num_cols * partition->h_dim / TB;
-
     for (int i = 0; i < actual_num_devices; i++) {
-      bool r_cached = local_tensors[i].count(tensor_key_row) > 0;
-      bool c_cached = local_tensors[i].count(tensor_key_col) > 0;
+      int64_t device_id = eligible_devices[i];
+      const auto& tensors = PARTITION_TRACKER.GetDeviceTensors(device_id);
 
-      float dl_time = static_cast<float>((r_cached ? 0 : r_size) +
-                                         (c_cached ? 0 : c_size)) /
-                      MB;
+      bool r_cached = tensors.find(tensor_key_row) != tensors.end();
+      bool c_cached = tensors.find(tensor_key_col) != tensors.end();
+
+      auto r_size = std::get<1>(partition->mat[0]);
+      auto c_size = std::get<1>(partition->mat[1]);
+      auto cached_r_size = (r_cached) ? 0 : r_size;
+      auto cached_c_size = (c_cached) ? 0 : c_size;
+
+      int64_t num_rows = r_size / partition->h_dim / sizeof(float);
+      int64_t num_cols = c_size / partition->h_dim / sizeof(float);
+
+      float ul_time = (float)(num_rows * num_cols) * sizeof(float) / MB;
+      float dl_time = (float)(cached_r_size + cached_c_size) / MB;
+      float flops = (float)2.0 * num_rows * num_cols * partition->h_dim / TB;
 
       float time = std::max(std::max(ul_time, dl_time), flops) + device_time[i];
       if (time < min_time) {
@@ -165,16 +158,10 @@ std::vector<int64_t> GreedySchedulingPolicy::AssignPartitionsToDevices(
     }
 
     device_time[min_device_idx] = min_time;
-    assignments.push_back(eligible_devices[min_device_idx]);
-    local_tensors[min_device_idx].insert(tensor_key_row);
-    local_tensors[min_device_idx].insert(tensor_key_col);
-  }
-
-  for (int i = 0; i < actual_num_devices; i++) {
-    int64_t device_id = eligible_devices[i];
-    for (const auto& key : local_tensors[i]) {
-      PARTITION_TRACKER.AddTensorToDevice(device_id, key);
-    }
+    int64_t assigned_device_id = eligible_devices[min_device_idx];
+    assignments.push_back(assigned_device_id);
+    PARTITION_TRACKER.AddTensorToDevice(assigned_device_id, tensor_key_row);
+    PARTITION_TRACKER.AddTensorToDevice(assigned_device_id, tensor_key_col);
   }
 
   LOG_INFO << "[GreedyScheduling] Assigned " << partitions.size()
@@ -207,15 +194,10 @@ std::vector<int64_t> LoadBalancedSchedulingPolicy::AssignPartitionsToDevices(
   auto& tracker = DEVICE_TRACKER;
   std::vector<int64_t> connected_devices = tracker.GetConnectedDevices();
 
-  std::unordered_set<int64_t> effective_excluded = excluded_devices;
-  for (int64_t device_id : tracker.GetDrainingDevices()) {
-    effective_excluded.insert(device_id);
-  }
-
   // Filter out excluded devices
   std::vector<int64_t> eligible_devices;
   for (int64_t device_id : connected_devices) {
-    if (effective_excluded.find(device_id) == effective_excluded.end()) {
+    if (excluded_devices.find(device_id) == excluded_devices.end()) {
       eligible_devices.push_back(device_id);
     }
   }
