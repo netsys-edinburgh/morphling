@@ -8,10 +8,11 @@ import dataclasses
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Union, cast
+from typing import Union
 
 import psutil
 import torch
+from transformers import HfArgumentParser
 
 from morphling.common.types_and_defs import (
     compute_pin_offsets,
@@ -204,25 +205,25 @@ class DeviceConfig:
     rank: int
     # ip: str
     # port: int
-    flops: Union[int, float, str] = field(
+    flops: int = field(
         default="1e12",
         metadata={
             "help": "The number of FLOPs of the device, support customary units"
         },
     )
-    memory: Union[int, float, str] = field(
+    memory: int = field(
         default="1e12",
         metadata={
             "help": "The memory size in bytes of the device, support customary units"
         },
     )
-    ul_bw: Union[int, float, str] = field(
+    ul_bw: float = field(
         default="1e12",
         metadata={
             "help": "The uplink bandwidth in bytes of the device, support customary units"
         },
     )
-    dl_bw: Union[int, float, str] = field(
+    dl_bw: float = field(
         default="1e12",
         metadata={
             "help": "The downlink bandwidth in bytes of the device, support customary units"
@@ -250,7 +251,7 @@ class EnhancedJSONEncoder(json.JSONEncoder):
     """JSON encoder that handles dataclasses."""
 
     def default(self, o):
-        if dataclasses.is_dataclass(o) and not isinstance(o, type):
+        if dataclasses.is_dataclass(o):
             return dataclasses.asdict(o)
         return super().default(o)
 
@@ -304,29 +305,15 @@ class EmulatorConfig:
         self.gpu_memory *= GB
         self.cpu_memory *= GB
 
-        if self.ckpt_path and not os.path.isdir(self.ckpt_path):
-            raise FileNotFoundError(
-                f"Checkpoint path does not exist: {self.ckpt_path}"
-            )
-
         os.environ["MORPHLING_CKPT_PATH"] = self.ckpt_path
         os.environ["MORPHLING_GPU_SIZE"] = str(self.gpu_memory)
 
-        meta_path = os.path.join(self.ckpt_path, "param_meta_map.json")
+        param_meta_map_file = os.path.join(
+            self.ckpt_path, "param_meta_map.json"
+        )
 
-        try:
-            with open(meta_path) as f:
-                param_meta_map = json.load(f)
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"Model metadata file not found: {meta_path}. "
-                "Run 'morphling_cmd save --model <name> --output <path>' "
-                "first."
-            ) from None
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                f"Invalid JSON in metadata file {meta_path}: {e}"
-            ) from None
+        with open(param_meta_map_file, "r") as f:
+            param_meta_map = json.load(f)
 
         shm_mem_size, shm_mem_offsets = compute_shm_offsets(param_meta_map)
         pin_mem_size, pin_mem_offsets = compute_pin_offsets(param_meta_map)
@@ -339,15 +326,16 @@ class EmulatorConfig:
         )
 
     @classmethod
-    def load_from_file(cls: type["EmulatorConfig"], config_path):
-        with open(config_path) as f:
-            config_json = json.load(f)
-        return cls.load_from_json(config_json)
+    def load_from_file(self, config_path):
+        parser = HfArgumentParser(self)
+        self = parser.parse_json_file(json_file=config_path)[0]
+        return self
 
     @classmethod
-    def load_from_json(cls: type["EmulatorConfig"], config_json):
-        config_dict = cast(dict[str, Any], config_json)
-        return cls(**config_dict)
+    def load_from_json(self, config_json):
+        parser = HfArgumentParser(self)
+        self = parser.parse_dict(config_json)[0]
+        return self
 
 
 # a universal logger for all modules
@@ -356,8 +344,8 @@ class EmulatorConfig:
 # logger.info("hello world")
 import os
 
-LOG_LEVEL_NAME = os.environ.get("LOG_LEVEL", "INFO")
-LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME.upper())
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+LOG_LEVEL = getattr(logging, LOG_LEVEL.upper())
 
 from logging import Formatter, StreamHandler, getLogger
 
