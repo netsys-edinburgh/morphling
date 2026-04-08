@@ -1,14 +1,8 @@
 import random
 
 import numpy as np
-import pytest
 import torch
-
-try:
-    from torch.optim import AdamW
-    from transformers import GPT2LMHeadModel, GPT2Tokenizer, set_seed
-except ImportError as _exc:
-    pytest.skip(str(_exc), allow_module_level=True)
+from transformers import AdamW, GPT2LMHeadModel, GPT2Tokenizer, set_seed
 
 # Set the seed for reproducibility
 seed = 42
