@@ -28,6 +28,7 @@ morphling_device_config = "morphling.entrypoint.generate_device_config:main"
 morphling_device = "morphling.entrypoint.run_device:main"
 morphling_cmd = "morphling.entrypoint.cmdline:main"
 morphling_simulate = "morphling.entrypoint.simulate:main"
+morphling_emulate = "morphling.entrypoint.emulate:main"
 
 [tool.setuptools]
 include-package-data = true
@@ -82,4 +83,8 @@ ignore = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-markers = ["smoke: Fast CI tests (<2min)", "deep: Slow GPU tests (<30min)"]
+markers = [
+    "smoke: Fast CI tests (<2min)",
+    "deep: Slow GPU tests (<30min)",
+    "rabbitmq: RabbitMQ-dependent tests",
+]
