@@ -8,22 +8,25 @@ Usage:
     --backend proxy --enable-hooks
 """
 
-import asyncio
 import os
 import subprocess
 import time
-from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, cast
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser
+from transformers import HfArgumentParser
 
 import morphling
 
 # from morphling import set_backend
-from morphling.backend import AutoBackend
 from morphling.entrypoint import DeviceConfigArguments, ModelConfigArguments
 from morphling.hooks import apply_hooks
+from scripts._runtime_common import (
+    load_model_and_tokenizer,
+    prepare_inputs,
+    start_backend,
+    wait_for_connections,
+)
 
 torch.autograd.set_detect_anomaly(True)  # type: ignore[attr-defined]
 
@@ -57,7 +60,9 @@ if __name__ == "__main__":
     # Temporarily replace sys.argv for HfArgumentParser
     sys.argv = filtered_argv
 
-    parser = HfArgumentParser((DeviceConfigArguments, ModelConfigArguments))
+    parser = HfArgumentParser(
+        cast(Any, (DeviceConfigArguments, ModelConfigArguments))
+    )
     device_args, model_args = parser.parse_args_into_dataclasses()
 
     # Restore original argv
@@ -77,11 +82,9 @@ if __name__ == "__main__":
 
     # time.sleep(15)
     # start model from here
-    model = AutoModelForCausalLM.from_pretrained(
-        model_args.model_name, torch_dtype=torch.float32
+    model, tokenizer = load_model_and_tokenizer(
+        model_args.model_name, dtype=torch.float32
     )
-    model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name)
 
     print("Model loaded", model)
 
@@ -128,28 +131,11 @@ if __name__ == "__main__":
     #     time.sleep(1)
     #     print("Waiting for devices to connect")
 
-    if model_args.backend == "rabbitmq":
-        loop = asyncio.get_event_loop()
-        backend = AutoBackend.from_name(
-            model_args.backend, loop, block_size=model_args.block_size
-        )
-        loop.run_until_complete(backend.connect())
-
-    elif model_args.backend == "amqp":
-        backend = AutoBackend.from_name(
-            model_args.backend, "localhost", model_args.block_size
-        )
-
-    elif model_args.backend == "mqtt":
-        backend = AutoBackend.from_name(
-            model_args.backend, model_args.block_size
-        )
-        backend.start()
-
-    elif model_args.backend == "proxy":
-        backend = AutoBackend.from_name(model_args.backend)
-        backend.initialize(model_args.cfg)
-        backend.start()
+    backend = start_backend(
+        backend_name=model_args.backend,
+        block_size=model_args.block_size,
+        cfg_path=model_args.cfg,
+    )
 
     # backend = AutoBackend.from_name("amqp", "localhost", model_args.block_size)
     morphling.hooks.autograd._backend = backend
@@ -220,42 +206,21 @@ if __name__ == "__main__":
     # Wait for devices to connect for proxy backend
     if model_args.backend == "proxy":
         print("Waiting for devices to connect to proxy server...")
-        timeout = 120  # 2 minutes timeout
-        start_time = time.time()
-
-        while time.time() - start_time < timeout:
-            try:
-                connection_count = backend.get_connection_count()
-                print(
-                    f"Connected devices: {connection_count}/{device_args.num_devices}"
-                )
-
-                if connection_count >= device_args.num_devices:
-                    print("All devices connected!")
-                    break
-
-                time.sleep(2)
-            except Exception as e:
-                print(f"Error checking connection count: {e}")
-                time.sleep(2)
-        else:
+        connection_count = wait_for_connections(
+            backend, min_devices=device_args.num_devices, timeout=120
+        )
+        if connection_count < device_args.num_devices:
             print(
-                f"Timeout waiting for devices to connect. Connected: {backend.get_connection_count()}/{device_args.num_devices}"
+                f"Timeout waiting for devices to connect. Connected: {connection_count}/{device_args.num_devices}"
             )
-            # Continue anyway
 
     time.sleep(5)
 
     # random text for seqlen > 128
-    input_text = [
-        "".join("Hello, my dog is cute. He is a good ") * 128
-    ] * model_args.batch_size
-    inputs = tokenizer(
-        input_text,
-        return_tensors="pt",
-        padding=True,
-        truncation=True,
-        max_length=model_args.seq_length,
+    inputs = prepare_inputs(
+        tokenizer,
+        batch_size=model_args.batch_size,
+        seq_length=model_args.seq_length,
     )
 
     print("inputs", inputs, flush=True)

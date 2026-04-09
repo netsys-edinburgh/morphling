@@ -24,6 +24,7 @@ show_help() {
     echo "Usage: $0 [COMMAND] [ARGS...]"
     echo ""
     echo "Commands:"
+    echo "  quickstart     - Build image and start emulator container with GPU"
     echo "  build          - 重新构建 Docker 镜像 (GPU 模式)"
     echo "  build-cpu      - 重新构建 Docker 镜像 (CPU 模式)"
     echo "  start          - 启动开发容器 (GPU 模式)"
@@ -86,6 +87,55 @@ start_container_common() {
         -p 39000:39000 \
         "$IMAGE_NAME" \
         tail -f /dev/null
+}
+
+quickstart() {
+    local use_gpu=false
+
+    if command -v nvidia-docker &> /dev/null || docker info | grep -q nvidia; then
+        echo "NVIDIA Docker support detected"
+        use_gpu=true
+    else
+        echo "WARNING: NVIDIA Docker support not detected. Running in CPU-only mode."
+    fi
+
+    echo "Building DeviceEmulator Docker image..."
+    docker build -t "$IMAGE_NAME" .
+
+    docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+
+    if [ "$use_gpu" = true ]; then
+        docker run -d \
+            --name "$CONTAINER_NAME" \
+            --gpus all \
+            -p 39000:39000 \
+            "$IMAGE_NAME" \
+            tail -f /dev/null
+    else
+        echo "Starting in CPU-only mode..."
+        docker run -d \
+            --name "$CONTAINER_NAME" \
+            -p 39000:39000 \
+            "$IMAGE_NAME" \
+            tail -f /dev/null
+    fi
+
+    echo "Waiting for container to start..."
+    sleep 5
+
+    echo "Service status:"
+    docker ps --filter "name=$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+    echo ""
+    echo "=== Setup Complete ==="
+    echo ""
+    echo "Available commands:"
+    echo "  docker exec -it $CONTAINER_NAME bash"
+    echo "  docker exec -it $CONTAINER_NAME morphling_emulator --help"
+    echo "  docker logs $CONTAINER_NAME"
+    echo "  docker stop $CONTAINER_NAME"
+    echo ""
+    echo "DeviceEmulator is running in container: $CONTAINER_NAME"
 }
 
 # 函数：启动容器
@@ -170,6 +220,9 @@ run_tests() {
 check_docker
 
 case "${1:-help}" in
+    "quickstart")
+        quickstart
+        ;;
     "build")
         build_image
         ;;

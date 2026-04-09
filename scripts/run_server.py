@@ -15,17 +15,18 @@ import argparse
 import asyncio
 import os
 import signal
-import sys
 import time
-from typing import Optional
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import morphling
-from morphling.backend import AutoBackend
-from morphling.entrypoint import DeviceConfigArguments, ModelConfigArguments
 from morphling.hooks import apply_hooks
+from scripts._runtime_common import (
+    load_model_and_tokenizer,
+    prepare_inputs,
+    start_backend,
+    wait_for_connections,
+)
 
 
 def parse_args():
@@ -92,115 +93,10 @@ def parse_args():
     return parser.parse_args()
 
 
-async def start_backend_async(backend_name: str, block_size: int):
-    loop = asyncio.get_event_loop()
-    backend = AutoBackend.from_name(backend_name, loop, block_size=block_size)
-    await backend.connect()
-    return backend
-
-
-def start_backend_sync(
-    backend_name: str,
-    block_size: int,
-    enable_cache: bool = False,
-    cfg_path: Optional[str] = None,
-):
-    # Some backends (like mqtt/proxy) may use synchronous initialization
-    backend = None
-    if backend_name in ("mqtt", "proxy"):
-        backend = AutoBackend.from_name(backend_name)
-        # proxy/mqtt backends expose start() instead of async connect
-        if hasattr(backend, "initialize"):
-            if backend_name == "proxy":
-                # ProxySvr.initialize() expects a config file path and optional cache flag
-                import os
-
-                default_config_path = os.path.join(
-                    os.path.dirname(os.path.dirname(__file__)),
-                    "config",
-                    "proxy",
-                    "svr.ini",
-                )
-                config_path = cfg_path or default_config_path
-
-                # Check if initialize accepts cache parameter
-                if enable_cache and hasattr(backend, "set_cache_enabled"):
-                    backend.set_cache_enabled(True)  # type: ignore[attr-defined]
-                    print(f"✓ Client-side caching ENABLED")
-                else:
-                    print(f"Client-side caching disabled")
-
-                backend.initialize(config_path)  # type: ignore[attr-defined]
-            else:
-                try:
-                    backend.initialize()  # type: ignore[attr-defined]
-                except TypeError:
-                    # initialize may accept args in some versions; ignore
-                    backend.initialize(None)  # type: ignore[attr-defined]
-        if hasattr(backend, "start"):
-            backend.start()  # type: ignore[attr-defined]
-    else:
-        # Use asyncio for rabbitmq/amqp style backends
-        loop = asyncio.get_event_loop()
-        backend = loop.run_until_complete(
-            start_backend_async(backend_name, block_size)
-        )
-    return backend
-
-
 def get_connection_count_safe(backend) -> int:
-    """Safely get connection count if backend supports it."""
     if hasattr(backend, "get_connection_count"):
         return backend.get_connection_count()  # type: ignore[attr-defined]
     return 0
-
-
-def wait_for_devices(
-    backend, min_devices: int, timeout: int = 120, no_wait: bool = False
-):
-    """Wait for minimum number of devices to connect
-
-    Args:
-        backend: The backend instance
-        min_devices: Minimum devices required before starting
-        timeout: Maximum time to wait in seconds
-        no_wait: If True, return immediately without waiting
-    """
-    if no_wait:
-        print("No-wait mode: Starting immediately without waiting for devices")
-        return get_connection_count_safe(backend)
-
-    print(
-        f"Waiting for at least {min_devices} device(s) to connect (timeout: {timeout}s)..."
-    )
-    start_time = time.time()
-
-    while time.time() - start_time < timeout:
-        try:
-            if hasattr(backend, "get_connection_count"):
-                connection_count = get_connection_count_safe(backend)
-                elapsed = int(time.time() - start_time)
-                print(
-                    f"[{elapsed}s] Connected devices: {connection_count}/{min_devices}"
-                )
-
-                if connection_count >= min_devices:
-                    print(f"✓ {connection_count} device(s) connected!")
-                    return connection_count
-            else:
-                print("Backend does not support connection counting")
-                return 1
-
-            time.sleep(2)
-        except Exception as e:
-            print(f"Error checking connection count: {e}")
-            time.sleep(2)
-
-    final_count = get_connection_count_safe(backend)
-    print(
-        f"Timeout after {timeout}s. Connected: {final_count}/{min_devices} devices"
-    )
-    return final_count
 
 
 def main():
@@ -214,17 +110,16 @@ def main():
     tokenizer = None
     if args.load_model and args.model_name:
         print("Loading model (this may take a while)...")
-        model = AutoModelForCausalLM.from_pretrained(
-            args.model_name, torch_dtype=None
-        )
-        model.eval()
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+        model, tokenizer = load_model_and_tokenizer(args.model_name, dtype=None)
         print("Model loaded")
 
     # Initialize backend
     print("Initializing backend...")
-    backend = start_backend_sync(
-        args.backend, args.block_size, args.enable_cache, args.cfg
+    backend = start_backend(
+        backend_name=args.backend,
+        block_size=args.block_size,
+        cfg_path=args.cfg,
+        enable_cache=args.enable_cache,
     )
     print("Backend started. Server is now listening for device connections.")
 
@@ -237,7 +132,11 @@ def main():
 
     # Wait for minimum devices to connect
     min_devices = 1
-    connected = wait_for_devices(backend, min_devices, no_wait=args.no_wait)
+    if args.no_wait:
+        print("No-wait mode: Starting immediately without waiting for devices")
+        connected = get_connection_count_safe(backend)
+    else:
+        connected = wait_for_connections(backend, min_devices=min_devices)
 
     if connected < min_devices and not args.no_wait:
         print(
@@ -262,13 +161,10 @@ def main():
         )
         print()
 
-        input_text = ["Hello, my dog is cute. He is a good " * 128]
-        inputs = tokenizer(
-            input_text,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=128,
+        inputs = prepare_inputs(
+            tokenizer,
+            batch_size=1,
+            seq_length=128,
         )
         print("inputs:", inputs)
 
