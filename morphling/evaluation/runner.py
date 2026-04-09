@@ -8,7 +8,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .artifacts import _dump_gemm_shapes, _summarize_run, _write_violation_artifacts
+from .artifacts import (
+    _dump_gemm_shapes,
+    _summarize_run,
+    _write_violation_artifacts,
+)
 from .bootstrap import REPO_ROOT, _load_greenctx_symbols, _resolve_trace_path
 from .plotting import WARMUP_STEPS, _plot_comparison, _print_summary
 
@@ -54,7 +58,9 @@ def _make_loader(
         generator=generator,
     )
     dataset = TensorDataset(token_ids)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=True)
+    return DataLoader(
+        dataset, batch_size=batch_size, shuffle=False, drop_last=True
+    )
 
 
 def _prepare_greenctx_controller(
@@ -67,7 +73,9 @@ def _prepare_greenctx_controller(
     LdpcTraceAdapter: Any,
 ) -> tuple[Any, Path]:
     adapter = LdpcTraceAdapter(trace_path, total_sms=total_sms)
-    with tempfile.NamedTemporaryFile(prefix="ldpc_v2_", suffix=".csv", delete=False) as tmp_file:
+    with tempfile.NamedTemporaryFile(
+        prefix="ldpc_v2_", suffix=".csv", delete=False
+    ) as tmp_file:
         v2_path = Path(tmp_file.name)
     adapter.to_v2_file(v2_path)
 
@@ -168,7 +176,9 @@ def _run_mode(
             swap_stats = controller.get_swap_stats()
             python_swap = swap_stats.get("python_layer", {})
             step_swap_count = int(python_swap.get("count", 0))
-            step_swap_overhead_us = float(python_swap.get("total_overhead_us", 0.0))
+            step_swap_overhead_us = float(
+                python_swap.get("total_overhead_us", 0.0)
+            )
             controller.reset_swap_stats()
 
         step_gemm_entries = get_gemm_log(reset=True)
@@ -222,7 +232,9 @@ def _run_benchmark(args: argparse.Namespace) -> None:
             f"{exc}. Install torch/transformers/matplotlib/numpy/pandas."
         ) from exc
 
-    GreenContextConfig, GreenContextController, LdpcTraceAdapter = _load_greenctx_symbols()
+    GreenContextConfig, GreenContextController, LdpcTraceAdapter = (
+        _load_greenctx_symbols()
+    )
     if args.skip_baseline and args.skip_greenctx:
         raise ValueError("Cannot skip both modes")
     if args.num_steps <= 0:
@@ -279,7 +291,9 @@ def _run_benchmark(args: argparse.Namespace) -> None:
 
     for run_idx in range(args.runs):
         seed = base_seed + run_idx
-        logging.info("Starting run %d/%d (seed=%d)", run_idx + 1, args.runs, seed)
+        logging.info(
+            "Starting run %d/%d (seed=%d)", run_idx + 1, args.runs, seed
+        )
 
         loader = _make_loader(
             torch,
@@ -304,7 +318,8 @@ def _run_benchmark(args: argparse.Namespace) -> None:
 
         if not args.skip_baseline:
             collect_baseline_gemm = bool(
-                args.dump_gemm_shapes or (not args.skip_violation_analysis and args.skip_greenctx)
+                args.dump_gemm_shapes
+                or (not args.skip_violation_analysis and args.skip_greenctx)
             )
             if collect_baseline_gemm:
                 install_linear_hooks()
@@ -324,11 +339,17 @@ def _run_benchmark(args: argparse.Namespace) -> None:
             )
             run_gemm_log.extend(baseline_gemm_log)
             baseline_df = pd.DataFrame(baseline_metrics)
-            baseline_df.to_csv(run_dir / "eval_metrics_baseline.csv", index=False)
+            baseline_df.to_csv(
+                run_dir / "eval_metrics_baseline.csv", index=False
+            )
             if args.runs == 1:
-                baseline_df.to_csv(output_dir / "eval_metrics_baseline.csv", index=False)
+                baseline_df.to_csv(
+                    output_dir / "eval_metrics_baseline.csv", index=False
+                )
             results["baseline"] = baseline_df
-            run_summaries.setdefault("baseline", []).append(_summarize_run(baseline_df))
+            run_summaries.setdefault("baseline", []).append(
+                _summarize_run(baseline_df)
+            )
             logging.info("Saved baseline metrics CSV for run %d", run_idx)
             if not args.skip_violation_analysis and args.skip_greenctx:
                 _write_violation_artifacts(
@@ -337,10 +358,14 @@ def _run_benchmark(args: argparse.Namespace) -> None:
                     gemm_log=baseline_gemm_log,
                     max_sm_count=args.total_sms,
                 )
-                logging.info("Saved baseline violation artifacts for run %d", run_idx)
+                logging.info(
+                    "Saved baseline violation artifacts for run %d", run_idx
+                )
 
         if not args.skip_greenctx:
-            collect_greenctx_gemm = bool(args.dump_gemm_shapes or (not args.skip_violation_analysis))
+            collect_greenctx_gemm = bool(
+                args.dump_gemm_shapes or (not args.skip_violation_analysis)
+            )
             trace_path = _resolve_trace_path(args.trace_path)
             ctrl = None
             v2_path: Path | None = None
@@ -380,11 +405,17 @@ def _run_benchmark(args: argparse.Namespace) -> None:
 
             run_gemm_log.extend(greenctx_gemm_log)
             greenctx_df = pd.DataFrame(greenctx_metrics)
-            greenctx_df.to_csv(run_dir / "eval_metrics_greenctx.csv", index=False)
+            greenctx_df.to_csv(
+                run_dir / "eval_metrics_greenctx.csv", index=False
+            )
             if args.runs == 1:
-                greenctx_df.to_csv(output_dir / "eval_metrics_greenctx.csv", index=False)
+                greenctx_df.to_csv(
+                    output_dir / "eval_metrics_greenctx.csv", index=False
+                )
             results["greenctx"] = greenctx_df
-            run_summaries.setdefault("greenctx", []).append(_summarize_run(greenctx_df))
+            run_summaries.setdefault("greenctx", []).append(
+                _summarize_run(greenctx_df)
+            )
             logging.info("Saved greenctx metrics CSV for run %d", run_idx)
             if not args.skip_violation_analysis:
                 _write_violation_artifacts(
@@ -409,7 +440,9 @@ def _run_benchmark(args: argparse.Namespace) -> None:
                 run_metrics_df.to_csv(output_dir / "metrics.csv", index=False)
 
         if args.dump_gemm_shapes:
-            _dump_gemm_shapes(str(run_dir), effective_num_steps, gemm_log=run_gemm_log)
+            _dump_gemm_shapes(
+                str(run_dir), effective_num_steps, gemm_log=run_gemm_log
+            )
         if args.runs == 1:
             single_run_results = results
             single_run_gemm_log = run_gemm_log
@@ -423,8 +456,15 @@ def _run_benchmark(args: argparse.Namespace) -> None:
         }
         for mode_name, summaries in run_summaries.items():
             mode_payload: dict[str, Any] = {}
-            for metric_name in ("tokens_per_sec", "step_time_ms", "swap_count", "swap_overhead_us"):
-                values = np.asarray([row[metric_name] for row in summaries], dtype=float)
+            for metric_name in (
+                "tokens_per_sec",
+                "step_time_ms",
+                "swap_count",
+                "swap_overhead_us",
+            ):
+                values = np.asarray(
+                    [row[metric_name] for row in summaries], dtype=float
+                )
                 mode_payload[metric_name] = {
                     "mean": float(values.mean()),
                     "std": float(values.std()),
@@ -444,10 +484,14 @@ def _run_benchmark(args: argparse.Namespace) -> None:
         return
 
     if args.dump_gemm_shapes:
-        _dump_gemm_shapes(str(output_dir), effective_num_steps, gemm_log=single_run_gemm_log)
+        _dump_gemm_shapes(
+            str(output_dir), effective_num_steps, gemm_log=single_run_gemm_log
+        )
 
     _print_summary(single_run_results)
-    _plot_comparison(results=single_run_results, output_dir=output_dir, plt=plt, np=np)
+    _plot_comparison(
+        results=single_run_results, output_dir=output_dir, plt=plt, np=np
+    )
     if hooks_installed:
         set_greenctx(None, reset_log=True)
         torch.nn.Linear.forward = orig_linear_forward

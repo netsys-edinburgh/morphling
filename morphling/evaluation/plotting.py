@@ -50,7 +50,9 @@ def _print_summary(results: dict[str, Any]) -> None:
 
     print("\nBenchmark Summary (warmup skipped: first 5 steps)")
     print("=" * 78)
-    print(f"{'mode':<12}{'mean_iter_ms':>22}{'mean_throughput':>22}{'final_loss':>22}")
+    print(
+        f"{'mode':<12}{'mean_iter_ms':>22}{'mean_throughput':>22}{'final_loss':>22}"
+    )
     print("-" * 78)
 
     for mode in ("baseline", "greenctx"):
@@ -61,7 +63,9 @@ def _print_summary(results: dict[str, Any]) -> None:
         mean_iter_ms = float(timed["wall_time_ms"].mean())
         mean_tput = float(timed["tokens_per_sec"].mean())
         final_loss = float(df["loss"].iloc[-1])
-        print(f"{mode:<12}{mean_iter_ms:>22.3f}{mean_tput:>22.2f}{final_loss:>22.6f}")
+        print(
+            f"{mode:<12}{mean_iter_ms:>22.3f}{mean_tput:>22.2f}{final_loss:>22.6f}"
+        )
     print("=" * 78)
 
 

@@ -38,7 +38,9 @@ def _write_violation_artifacts(
         )
 
     step_path = run_dir / "step_boundaries.csv"
-    step_df = metrics_df[["step_idx", "step_start_ns", "step_end_ns", "sm_count"]].copy()
+    step_df = metrics_df[
+        ["step_idx", "step_start_ns", "step_end_ns", "sm_count"]
+    ].copy()
     step_df.columns = ["step", "start_ns", "end_ns", "sm_count"]
     step_df.to_csv(step_path, index=False)
 
@@ -47,11 +49,21 @@ def _write_violation_artifacts(
     with open(gemm_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["function_name", "start_ns", "end_ns", "duration_ns", "m", "n", "k"],
+            fieldnames=[
+                "function_name",
+                "start_ns",
+                "end_ns",
+                "duration_ns",
+                "m",
+                "n",
+                "k",
+            ],
         )
         writer.writeheader()
         for entry in gemm_log:
-            start_ns = epoch_ns + int(float(entry.get("start_us", 0.0)) * 1000.0)
+            start_ns = epoch_ns + int(
+                float(entry.get("start_us", 0.0)) * 1000.0
+            )
             end_ns = epoch_ns + int(float(entry.get("end_us", 0.0)) * 1000.0)
             if end_ns < start_ns:
                 end_ns = start_ns
