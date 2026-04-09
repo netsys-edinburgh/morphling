@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 def _parse_trace_file(
     path: str,
 ) -> tuple[list[tuple[int, int]], str, str]:

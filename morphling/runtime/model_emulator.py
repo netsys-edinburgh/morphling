@@ -10,10 +10,10 @@ import torch
 from transformers import PreTrainedModel
 from transformers.configuration_utils import PretrainedConfig
 
-from morphling._C import ArcherTensorHandle, MemoryManagerClient, set_tensor_shm
-from morphling.common import EmulatorConfig
 import morphling.runtime.patching as _patching
 import morphling.runtime.shm_mapping as _shm_mapping
+from morphling._C import ArcherTensorHandle, MemoryManagerClient, set_tensor_shm
+from morphling.common import EmulatorConfig
 from morphling.runtime.checkpoint_loader import (
     discover_checkpoints,
     offload_state_dict,

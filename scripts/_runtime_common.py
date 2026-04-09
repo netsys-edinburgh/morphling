@@ -100,12 +100,16 @@ def wait_for_connections(
             time.sleep(2)
 
     final_count = _get_connection_count_safe(backend)
-    print(f"Timeout after {timeout}s. Connected: {final_count}/{min_devices} devices")
+    print(
+        f"Timeout after {timeout}s. Connected: {final_count}/{min_devices} devices"
+    )
     return final_count
 
 
 def prepare_inputs(tokenizer: Any, batch_size: int, seq_length: int) -> Any:
-    input_text = ["".join("Hello, my dog is cute. He is a good ") * 128] * batch_size
+    input_text = [
+        "".join("Hello, my dog is cute. He is a good ") * 128
+    ] * batch_size
     return tokenizer(
         input_text,
         return_tensors="pt",

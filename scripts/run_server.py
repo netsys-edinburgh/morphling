@@ -110,9 +110,7 @@ def main():
     tokenizer = None
     if args.load_model and args.model_name:
         print("Loading model (this may take a while)...")
-        model, tokenizer = load_model_and_tokenizer(
-            args.model_name, dtype=None
-        )
+        model, tokenizer = load_model_and_tokenizer(args.model_name, dtype=None)
         print("Model loaded")
 
     # Initialize backend

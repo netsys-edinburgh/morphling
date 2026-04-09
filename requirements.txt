@@ -2,6 +2,8 @@ accelerate
 aio-pika
 clang-format
 cmake
+grpcio>=1.60.0
+grpcio-tools>=1.60.0
 matplotlib
 ninja
 numpy
@@ -10,7 +12,5 @@ pre-commit
 protobuf>=4.21.6
 psutil
 pytest-timeout
-grpcio>=1.60.0
-grpcio-tools>=1.60.0
 safetensors>=0.7.0
 transformers

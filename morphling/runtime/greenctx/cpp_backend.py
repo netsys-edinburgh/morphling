@@ -66,10 +66,18 @@ class CppBackend:
 
     def get_stream_bundle(self, sm_count: int) -> StreamBundle:
         gen = self._rt.generation()
-        comp_stream = cast(torch.cuda.Stream, self._stream_cache[(sm_count, "compute")])
-        recv_stream = cast(torch.cuda.Stream, self._stream_cache[(sm_count, "recv")])
-        send_stream = cast(torch.cuda.Stream, self._stream_cache[(sm_count, "send")])
-        dp_stream = cast(torch.cuda.Stream, self._stream_cache[(sm_count, "dp")])
+        comp_stream = cast(
+            torch.cuda.Stream, self._stream_cache[(sm_count, "compute")]
+        )
+        recv_stream = cast(
+            torch.cuda.Stream, self._stream_cache[(sm_count, "recv")]
+        )
+        send_stream = cast(
+            torch.cuda.Stream, self._stream_cache[(sm_count, "send")]
+        )
+        dp_stream = cast(
+            torch.cuda.Stream, self._stream_cache[(sm_count, "dp")]
+        )
         return StreamBundle(
             comp=comp_stream,
             recv=recv_stream,
