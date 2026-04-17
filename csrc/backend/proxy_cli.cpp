@@ -549,14 +549,19 @@ void ProxyCliImpl::HandleRegisterRequest(const ConnectionUeventPtr& conn,
 void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
   LOG_DEBUG << "Sending device profile data to server";
 
+  auto env_or = [](const char* name, uint64_t fallback) -> uint64_t {
+    const char* v = std::getenv(name);
+    return (v && v[0]) ? std::strtoull(v, nullptr, 10) : fallback;
+  };
+
   DeviceProfileData profile;
   profile.uuid = GenUUID64();
-  profile.flops = 100000000000ull;              // 100 GFLOPS - placeholder
-  profile.memory = 16ull * 1024 * 1024 * 1024;  // 16GB - placeholder
-  profile.ul_bw = 10ull * 1024 * 1024 * 1024;   // 10 Gbps
-  profile.dl_bw = 10ull * 1024 * 1024 * 1024;   // 10 Gbps
-  profile.ul_lat = 1000;                        // 1ms
-  profile.dl_lat = 1000;                        // 1ms
+  profile.flops = env_or("MORPHLING_FLOPS", 100000000000ull);
+  profile.memory = env_or("MORPHLING_MEMORY", 16ull * 1024 * 1024 * 1024);
+  profile.ul_bw = env_or("MORPHLING_UL_BW", 10ull * 1024 * 1024 * 1024);
+  profile.dl_bw = env_or("MORPHLING_DL_BW", 10ull * 1024 * 1024 * 1024);
+  profile.ul_lat = env_or("MORPHLING_UL_LAT", 1000);
+  profile.dl_lat = env_or("MORPHLING_DL_LAT", 1000);
 
   auto buffer = profile.Serialize();
   // Zero-copy send: buffer ref-count prevents deallocation until libevent done
