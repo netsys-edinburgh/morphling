@@ -404,7 +404,7 @@ void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx, int64_t device_id)
     : ctx_(ctx),
       connector_(nullptr),
-      cached_tensors_(GB / 16, [](const TensorKey&, const CachedTensor& t) {
+      cached_tensors_(GB * 2, [](const TensorKey&, const CachedTensor& t) {
         if (t.data) {
           LOG_DEBUG << "Evicting cached tensor, freeing memory: " << t.data;
 #ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
@@ -903,7 +903,7 @@ void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
   // Create worker pools based on config + hardware availability
   if (want_gpu && has_gpu) {
     int workers_per_gpu = 1;  // one green-context partition per GPU
-    size_t buffer_size = 256ull * 1024 * 1024;  // 256 MB per worker
+    size_t buffer_size = 1024ull * 1024 * 1024;  // 1 GB per worker
     gpu_pool_ = std::make_unique<XtGemmWorkerPool>(
         workers_per_gpu, buffer_size, WorkerSchedulingPolicy::kRoundRobinGemm);
     LOG_INFO << "GPU worker pool created: " << workers_per_gpu
