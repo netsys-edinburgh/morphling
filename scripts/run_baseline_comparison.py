@@ -104,6 +104,30 @@ MODEL_PRESETS: dict[str, dict[str, int]] = {
         "num_heads": 32,
         "d_ff": 11008,
     },
+    "facebook/opt-30b": {
+        "num_layers": 48,
+        "embedding_dim": 7168,
+        "num_heads": 56,
+        "d_ff": 28672,
+    },
+    "opt-30b": {
+        "num_layers": 48,
+        "embedding_dim": 7168,
+        "num_heads": 56,
+        "d_ff": 28672,
+    },
+    "facebook/opt-66b": {
+        "num_layers": 64,
+        "embedding_dim": 9216,
+        "num_heads": 72,
+        "d_ff": 36864,
+    },
+    "opt-66b": {
+        "num_layers": 64,
+        "embedding_dim": 9216,
+        "num_heads": 72,
+        "d_ff": 36864,
+    },
 }
 
 
