@@ -150,7 +150,13 @@ def main():
             time.sleep(1)
 
     elif args.backend == "proxy":
-        # Set environment variables to override config file if proxy_host is provided
+        os.environ["MORPHLING_FLOPS"] = str(device_info["flops"])
+        os.environ["MORPHLING_MEMORY"] = str(device_info["memory"])
+        os.environ["MORPHLING_UL_BW"] = str(device_info["ul_bw"])
+        os.environ["MORPHLING_DL_BW"] = str(device_info["dl_bw"])
+        os.environ["MORPHLING_UL_LAT"] = str(device_info["ul_lat"])
+        os.environ["MORPHLING_DL_LAT"] = str(device_info["dl_lat"])
+
         if args.proxy_host:
             try:
                 host, port = args.proxy_host.split(":")

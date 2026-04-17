@@ -81,18 +81,24 @@ class ProxySvrHandle : public uevent::LoopHandle {
   MessageHandlerSignature HandleDevicePerf;
 
  private:
+  struct SendMeta {
+    uint64_t vt_send_end_us;
+    size_t send_bytes;
+    int64_t m;
+    int64_t n;
+    int64_t h_dim;
+  };
+
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
   std::unordered_map<std::string, uint32_t> conn_inflight_;
   std::deque<std::function<void()>> task_queue_;
+  std::unordered_map<std::string, SendMeta> send_meta_;
 
   // Handshake tracking: maps connection address to handshake state
   // true = handshake complete, false = waiting for device_id
   std::unordered_map<std::string, bool> conn_handshake_complete_;
   std::mutex handshake_mutex_;
-
-  // std::unordered_map<std::string, DeviceProfileData> device_info_;
-  // Scheduling policy is now in ctx_.sched_policy
 };
 
 class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
@@ -209,6 +215,7 @@ class ProxySvr {
   }
   torch::Tensor WaitMatMul(int oid) { return svr_->WaitMatMul(oid); }
   size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }
+  void FlushPerfLog() const { DEVICE_TRACKER.FlushPerfLog(); }
   size_t GetRegisteredDeviceCount() const {
     return svr_->GetRegisteredDeviceCount();
   }
