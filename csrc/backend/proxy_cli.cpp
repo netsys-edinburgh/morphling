@@ -404,7 +404,7 @@ void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx, int64_t device_id)
     : ctx_(ctx),
       connector_(nullptr),
-      cached_tensors_(GB * 2, [](const TensorKey&, const CachedTensor& t) {
+      cached_tensors_(GB * 8, [](const TensorKey&, const CachedTensor& t) {
         if (t.data) {
           LOG_DEBUG << "Evicting cached tensor, freeing memory: " << t.data;
 #ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
