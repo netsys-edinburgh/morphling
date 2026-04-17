@@ -11,7 +11,7 @@
 #include "sliding_window_tracker.h"
 
 namespace {
-constexpr size_t kDefaultPoolBytes = 256ull * 1024 * 1024;  // 256 MB
+constexpr size_t kDefaultPoolBytes = 1024ull * 1024 * 1024;  // 1 GB
 
 size_t ResolvePoolBytes(size_t buffer_size) {
   if (const char* v = std::getenv("MORPHLING_WORKER_POOL_SIZE")) {
