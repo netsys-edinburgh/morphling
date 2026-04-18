@@ -1,12 +1,16 @@
 #include "proxy_svr.h"
 
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
 
 #include "core/generator.h"
 #include "core/logger.h"
 #include "core/stats.h"
 #include "core/thread_affinity.h"
 #include "device_tracker.h"
+#include "memory/caching_allocator.h"
+#include "memory/torch_caching_allocator.h"
 #include "muduo_base/my_uuid.h"
 #include "network/eventloop_libevent.h"
 #include "network/listener_libevent.h"
@@ -372,6 +376,26 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
   string client_addr = conn->GetPeerAddress().ToString();
 
   task_queue_.push_back([this, conn, partition, client_addr]() {
+    if (ctx_.transport_mode == TransportMode::EMULATOR) {
+      partition->shm_refs_.clear();
+      for (auto& mat_entry : partition->mat) {
+        void* ptr = std::get<0>(mat_entry);
+        int64_t tensor_size = std::get<1>(mat_entry);
+        if (ptr == nullptr || tensor_size <= 0) {
+          continue;
+        }
+
+        ShmMeta meta = kCachingAllocator->FindShmMetaByRange(ptr);
+        size_t offset = static_cast<char*>(ptr) - static_cast<char*>(meta.ptr);
+        partition->shm_refs_.push_back(
+            {meta.name, meta.size, offset, static_cast<size_t>(tensor_size)});
+      }
+
+      for (auto& mat_entry : partition->mat) {
+        mat_entry = {nullptr, 0};
+      }
+    }
+
     // Record SEND start time (virtual time)
     uint64_t vt_send_start = VirtualClockNow();
     DEVICE_TRACKER.LogVirtualTimeEvent(partition->dev_id, partition->gemm_id,
@@ -519,7 +543,29 @@ ProxySvrImpl::~ProxySvrImpl() {
   loop_->CancelTimer(failed_partition_check_timer_);
 }
 
+void ProxySvrImpl::EnsurePinShm(torch::Tensor& tensor) {
+  if (kCachingAllocator == nullptr) {
+    return;
+  }
+
+  void* data_ptr = tensor.data_ptr();
+  if (data_ptr == nullptr || kCachingAllocator->IsAllocated(data_ptr)) {
+    return;
+  }
+
+  const size_t nbytes = tensor.nbytes();
+  void* shm_ptr = kCachingAllocator->Allocate(nbytes);
+  std::memcpy(shm_ptr, data_ptr, nbytes);
+  tensor = torch::from_blob(shm_ptr, tensor.sizes(), tensor.options());
+  LOG_INFO << "EnsurePinShm: migrated tensor to PIN_SHM";
+}
+
 void ProxySvrImpl::Initialize(UeventLoop* loop) {
+  if (ctx_.transport_mode == TransportMode::EMULATOR) {
+    setenv("MORPHLING_PIN_SIZE", "8589934592", 1);
+    ActivatePinShmTorchAllocator();
+  }
+
   LOG_INFO << "[ProxySvrImpl::Initialize] Starting server initialization";
   LOG_INFO << "[ProxySvrImpl::Initialize] Config - listen_ip=" << ctx_.listen_ip
            << ", listen_port=" << ctx_.listen_port;
@@ -668,6 +714,11 @@ void ProxySvrImpl::RequestCb(const ConnectionUeventPtr& conn) {
 
 void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
                                        torch::Tensor& mat_b) {
+  if (ctx_.transport_mode == TransportMode::EMULATOR) {
+    EnsurePinShm(mat_a);
+    EnsurePinShm(mat_b);
+  }
+
   auto* gate = DEVICE_TRACKER.GetDispatchGate();
   if (gate != nullptr) {
     if (gate->GetMode() == DeviceMode::BARRIER) {
