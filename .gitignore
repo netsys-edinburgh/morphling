@@ -483,10 +483,6 @@ node_modules/
 # OS specific
 .DS_Store
 
-# Task files
-# tasks.json
-# tasks/
-
 # Prerequisites
 *.d
 
@@ -567,3 +563,7 @@ Testing/
 
 build_local/
 .trace
+
+# Task files
+# tasks.json
+# tasks/ 

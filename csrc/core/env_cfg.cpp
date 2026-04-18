@@ -1,8 +1,12 @@
 #include "env_cfg.h"
 
-#include "backend/sched_policy.h"
-#include "muduo_base/ini_config.h"
-#include "muduo_base/logging.h"
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
+
+#include "../../external/muduo_base/ini_config.h"
+#include "../../external/muduo_base/logging.h"
+#include "../backend/sched_policy.h"
 
 #define PARSE_INT_ENVCFG(cfg, section, key, required, default_value, value) \
   {                                                                         \
@@ -31,6 +35,17 @@
       value = cfg.GetValue(section, key);                                   \
     }                                                                       \
   }
+
+const char* TransportModeToString(TransportMode mode) {
+  switch (mode) {
+    case TransportMode::EMULATOR:
+      return "emulator";
+    case TransportMode::NETWORK:
+      return "network";
+    default:
+      return "unknown";
+  }
+}
 
 ProxyEnvCfg::ProxyEnvCfg() = default;
 ProxyEnvCfg::~ProxyEnvCfg() = default;
@@ -76,6 +91,18 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
   PARSE_STR_ENVCFG(parser, "worker", "pool_mode", false, "gpu", pool_mode);
   PARSE_STR_ENVCFG(parser, "worker", "loop_strategy", false, "round_robin",
                    loop_strategy);
+  std::string transport_mode_str;
+  PARSE_STR_ENVCFG(parser, "worker", "transport_mode", false, "network",
+                   transport_mode_str);
+  if (transport_mode_str == "emulator") {
+    transport_mode = TransportMode::EMULATOR;
+  } else if (transport_mode_str == "network") {
+    transport_mode = TransportMode::NETWORK;
+  } else {
+    LOG_WARN << "Unknown worker.transport_mode='" << transport_mode_str
+             << "', fallback to 'network'";
+    transport_mode = TransportMode::NETWORK;
+  }
 
   PARSE_INT_ENVCFG(parser, "internal", "cleanup_wait", false, 60, cleanup_wait);
   PARSE_INT_ENVCFG(parser, "internal", "tcp_timeout", false, 5, tcp_timeout);
@@ -133,6 +160,8 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
   if (barrier_count == 0) {
     barrier_count = num_device;
   }
+
+  LOG_INFO << "transport_mode: " << TransportModeToString(transport_mode);
 
   base::Logger::setLogLevel(log_level);
 

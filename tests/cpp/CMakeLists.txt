@@ -264,6 +264,30 @@ target_link_libraries(test_barrier_integration PRIVATE
 add_test(NAME test_barrier_integration COMMAND test_barrier_integration)
 
 # ==========================================================================
+# ProxyEnvCfg transport_mode tests (unit/config/)
+# ==========================================================================
+set(PROJECT_ROOT_CFG ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+file(GLOB CFG_BASE_LOGGING_SRC ${PROJECT_ROOT_CFG}/external/muduo_base/*.cc)
+
+add_executable(test_transport_mode
+  unit/config/test_transport_mode.cpp
+  ${PROJECT_ROOT_CFG}/csrc/core/env_cfg.cpp
+  ${CFG_BASE_LOGGING_SRC}
+)
+target_include_directories(test_transport_mode PRIVATE
+  ${PROJECT_ROOT_CFG}/csrc
+  ${PROJECT_ROOT_CFG}/external
+  ${CMAKE_CURRENT_SOURCE_DIR}/stubs
+)
+target_link_libraries(test_transport_mode PRIVATE
+  GTest::gtest
+  GTest::gtest_main
+  Threads::Threads
+)
+add_test(NAME test_transport_mode COMMAND test_transport_mode)
+
+# ==========================================================================
 # GreenTraceParser tests (unit/worker/) — no CUDA required
 # ============================================================================
 set(PROJECT_ROOT_GTP ${CMAKE_CURRENT_SOURCE_DIR}/../..)
