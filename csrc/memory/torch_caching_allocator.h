@@ -2,6 +2,9 @@
 
 #include <torch/torch.h>
 
+#include <cstring>
+#include <mutex>
+
 #include "caching_allocator.h"
 
 struct TorchCachingAllocator : public torch::Allocator {
@@ -23,24 +26,4 @@ struct TorchCachingAllocator : public torch::Allocator {
   // }
 };
 
-// extern std::unique_ptr<TorchCachingAllocator> kTorchCachingAllocator;
-
-class ReplaceTorchAllocatorOnLoad {
- public:
-  ReplaceTorchAllocatorOnLoad() {
-    std::call_once(flag_, [&]() {
-      InitCachingAllocator(MemoryType::PIN_SHM);
-      torch_caching_allocator_ = new TorchCachingAllocator();
-      LOG_INFO << "Replace torch allocator with caching allocator";
-      torch::SetAllocator(torch::DeviceType::CPU, torch_caching_allocator_);
-      LOG_INFO << "Torch allocator replaced";
-    });
-  }
-
- private:
-  TorchCachingAllocator* torch_caching_allocator_;
-  std::once_flag flag_;
-};
-
-// Create a static instance of this class
-extern ReplaceTorchAllocatorOnLoad kReplaceTorchAllocatorOnLoad;
+void ActivatePinShmTorchAllocator();

@@ -63,6 +63,35 @@ add_zerocopy_test(test_serialization_buffer)
 add_zerocopy_test(test_scatter_gather_buffer)
 add_zerocopy_test(test_matrix_partition)
 
+# Torch allocator activation test (depends on caching allocator + CUDA runtime)
+if(TARGET CUDA::cudart)
+  add_executable(test_torch_caching_allocator_activation
+    test_torch_caching_allocator_activation.cpp
+    ${PROJECT_ROOT}/csrc/memory/caching_allocator.cpp
+    ${PROJECT_ROOT}/csrc/memory/torch_caching_allocator.cpp
+    ${PROJECT_ROOT}/csrc/core/generator.cpp
+    ${PROJECT_ROOT}/csrc/core/logger.cpp
+    ${BASE_LOGGING_SRC}
+  )
+  target_include_directories(test_torch_caching_allocator_activation PRIVATE
+    ${ZEROCOPY_INCLUDE_DIRS}
+  )
+  target_link_libraries(test_torch_caching_allocator_activation PRIVATE
+    GTest::gtest
+    GTest::gtest_main
+    ${Protobuf_LIBRARIES}
+    ${TORCH_LIBRARIES}
+    CUDA::cudart
+    Threads::Threads
+    uuid
+  )
+  if(TARGET generate_proto_files)
+    add_dependencies(test_torch_caching_allocator_activation generate_proto_files)
+  endif()
+  add_test(NAME test_torch_caching_allocator_activation
+           COMMAND test_torch_caching_allocator_activation)
+endif()
+
 # ============================================================================
 # CUDA Pinned Pool Test (uses CUDAToolkit from parent project)
 # ============================================================================

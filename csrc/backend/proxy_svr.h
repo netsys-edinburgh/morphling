@@ -110,6 +110,7 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   void DispatchMatMulAsync(torch::Tensor& mat_a, torch::Tensor& mat_b);
   torch::Tensor WaitMatMul(int oid);
   torch::Tensor& GetOutputMatrix(int oid) { return outputs_[oid]; }
+  void EnsurePinShm(torch::Tensor& tensor);
 
   void IncRspCbCount(int oid, size_t count);
   void DecRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] += count; }
