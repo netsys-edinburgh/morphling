@@ -58,7 +58,15 @@ message ComputeGemmData {
     required int64 gemm_id = 9;
 
     repeated Payload matrices = 10;
+    repeated ShmReference shm_matrices = 11;
 };
+
+message ShmReference {
+    required string shm_name = 1;
+    required uint64 segment_size = 2;
+    required uint64 offset = 3;
+    required uint64 tensor_size = 4;
+}
 
 message ComputeGemmRequest {
     required uint64 version = 1;

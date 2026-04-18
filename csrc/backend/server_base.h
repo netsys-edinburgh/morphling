@@ -111,6 +111,13 @@ struct hash<TensorKey> {
 // Message Structs
 // ============================================================================
 
+struct ShmRef {
+  std::string shm_name;
+  size_t segment_size;
+  size_t offset;
+  size_t tensor_size;
+};
+
 struct MatrixPartition : public ISerializable {
   uint64_t version;
   int64_t row;
@@ -124,8 +131,9 @@ struct MatrixPartition : public ISerializable {
   std::vector<PtrData> mat;  // if ptr is null and size is 0, means that this
                              // entry need to be fetched from cache first mat is
                              // row block, second mat is col block
-  void* ptr_ = nullptr;      // pointer to the data
-  size_t size_ = 0;          // size of the data
+  std::vector<ShmRef> shm_refs_;
+  void* ptr_ = nullptr;  // pointer to the data
+  size_t size_ = 0;      // size of the data
 
   // ISerializable interface
   SerializationBufferPtr Serialize(

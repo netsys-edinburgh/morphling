@@ -356,6 +356,14 @@ SerializationBufferPtr MatrixPartition::SerializeProto() const {
     mat_payload->set_size(std::get<1>(m));
   }
 
+  for (const auto& ref : shm_refs_) {
+    auto* shm_mat = gemm_data->add_shm_matrices();
+    shm_mat->set_shm_name(ref.shm_name);
+    shm_mat->set_segment_size(ref.segment_size);
+    shm_mat->set_offset(ref.offset);
+    shm_mat->set_tensor_size(ref.tensor_size);
+  }
+
   auto end_stage1 = std::chrono::high_resolution_clock::now();
   auto duration_stage1 = std::chrono::duration_cast<std::chrono::microseconds>(
                              end_stage1 - start_stage1)
@@ -577,8 +585,30 @@ void MatrixPartition::DeserializeProto(const void* data, size_t size) {
 
   // Extract tensor data pointers
   mat.clear();
+  shm_refs_.clear();
+
+  for (int i = 0; i < gemm_data.shm_matrices_size(); ++i) {
+    const auto& shm_mat = gemm_data.shm_matrices(i);
+    shm_refs_.push_back({shm_mat.shm_name(), shm_mat.segment_size(),
+                         shm_mat.offset(), shm_mat.tensor_size()});
+  }
+
+  if (!shm_refs_.empty()) {
+    for (size_t i = 0; i < shm_refs_.size(); ++i) {
+      mat.push_back({nullptr, 0});
+    }
+  }
+
+  const bool has_shm_refs = !shm_refs_.empty();
   for (const auto& payload : gemm_data.matrices()) {
     LOG_DEBUG << "Matrix payload: size=" << payload.size();
+    if (has_shm_refs && payload.size() == 0) {
+      continue;
+    }
+    if (payload.size() == 0) {
+      mat.push_back({nullptr, 0});
+      continue;
+    }
     mat.push_back({const_cast<void*>(buffer.GetCurrentPtr()),
                    static_cast<size_t>(payload.size())});
     buffer.SeekTo(buffer.GetOffset() + payload.size());
@@ -837,6 +867,14 @@ ScatterGatherBufferPtr MatrixPartition::SerializeZeroCopy() const {
     auto* mat_payload = gemm_data->add_matrices();
     mat_payload->set_offset(0);
     mat_payload->set_size(std::get<1>(m));
+  }
+
+  for (const auto& ref : shm_refs_) {
+    auto* shm_mat = gemm_data->add_shm_matrices();
+    shm_mat->set_shm_name(ref.shm_name);
+    shm_mat->set_segment_size(ref.segment_size);
+    shm_mat->set_offset(ref.offset);
+    shm_mat->set_tensor_size(ref.tensor_size);
   }
 
   std::string proto_str = umsg.SerializeAsString();
