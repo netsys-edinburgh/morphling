@@ -20,6 +20,13 @@ enum class DeviceMode {
   DYNAMIC = 1,  // Elastic — devices can join/leave at any time
 };
 
+enum class TransportMode {
+  EMULATOR = 0,
+  NETWORK = 1,
+};
+
+const char* TransportModeToString(TransportMode mode);
+
 struct ProxyEnvCfg {
   ProxyEnvCfg();
   ~ProxyEnvCfg();
@@ -59,6 +66,7 @@ struct ProxyEnvCfg {
   std::unique_ptr<morphling::backend::PartitionSchedulingPolicy> sched_policy;
 
   DeviceMode device_mode = DeviceMode::BARRIER;
+  TransportMode transport_mode = TransportMode::NETWORK;
   int64_t barrier_count = 0;       // 0 = use num_device
   int64_t barrier_timeout_ms = 0;  // 0 = infinite
   int64_t max_queue_size = 1024;
