@@ -31,6 +31,10 @@ morphling_emulator --ckpt_path <path to model checkpoint>
 
 ### Virtual Device Usage
 
+You can enable low-memory emulator transport mode by setting
+`transport_mode=emulator` in both `config/proxy/cli.ini` and
+`config/proxy/svr.ini`.
+
 ```bash
 # Start Redis (stop existing container if needed)
 if [ "$(docker ps -q -f name=redis)" ]; then

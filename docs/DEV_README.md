@@ -76,6 +76,21 @@ python3 scripts/run_devices.py \
 1. Modify files under `morphling/`.
 2. Run your tests directly (changes take effect immediately).
 
+## Emulator transport mode (dual-mode cache)
+
+Set `transport_mode=emulator` in both proxy config files to enable
+shared-memory transport for tensor payloads:
+
+- `config/proxy/cli.ini`
+- `config/proxy/svr.ini`
+
+In emulator mode, the proxy keeps tensor payloads in pinned shared memory
+(`PIN_SHM`) and sends shared-memory references instead of raw tensor bytes.
+The client maps and reuses those shared-memory regions.
+
+For virtual device workloads, this mode reduces per-device memory usage from
+about **9GB** to about **1.3GB**.
+
 ### Debugging
 
 ```bash
