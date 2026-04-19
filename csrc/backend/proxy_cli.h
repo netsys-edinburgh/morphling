@@ -6,6 +6,7 @@
 #include "core/env_cfg.h"
 #include "core/lru.h"
 #include "core/pytorch_defs.h"
+#include "memory/shm_attachment_manager.h"
 #include "morphling.pb.h"
 #include "network/connector_libevent.h"
 #include "network/uevent.h"
@@ -161,6 +162,9 @@ struct CachedTensor {
   int64_t rows = 0;
   int64_t cols = 0;
   int64_t bytes = 0;
+  std::string shm_name;
+  size_t shm_offset = 0;
+  bool is_virtual = false;
 };
 
 class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
@@ -193,6 +197,8 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
   void FillPartition(MatrixPartition& partition);
   void CacheTensor(const TensorKey& key, void* ptr, int64_t size,
                    int64_t h_dim);
+  void CacheTensorVirtual(const TensorKey& key, const ShmRef& shm_ref,
+                          int64_t h_dim);
   void SavePartition(MatrixPartition& partition);
   void HandlePartition(const uevent::ConnectionUeventPtr& conn,
                        const MatrixPartition& partition);
@@ -210,6 +216,7 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
   std::vector<MatrixPartition> cached_partitions_;
   std::unordered_set<PtrData> cached_msgs_;
   FixSizeLRUCache<TensorKey, CachedTensor> cached_tensors_;
+  ShmAttachmentManager shm_manager_;
 };
 
 typedef std::shared_ptr<ProxyCliImpl> ProxyCliImplPtr;

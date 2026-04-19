@@ -280,12 +280,57 @@ target_include_directories(test_transport_mode PRIVATE
   ${PROJECT_ROOT_CFG}/external
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
 )
+if(CUDAToolkit_FOUND)
+  target_include_directories(test_transport_mode PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+  )
+endif()
 target_link_libraries(test_transport_mode PRIVATE
   GTest::gtest
   GTest::gtest_main
   Threads::Threads
 )
 add_test(NAME test_transport_mode COMMAND test_transport_mode)
+
+# ==========================================================================
+# ShmAttachmentManager tests (unit/memory/)
+# ==========================================================================
+set(PROJECT_ROOT_MEM ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+add_executable(test_shm_attachment_manager
+  unit/memory/test_shm_attachment_manager.cpp
+  ${PROJECT_ROOT_MEM}/csrc/memory/shm_attachment_manager.cpp
+  ${PROJECT_ROOT_MEM}/csrc/memory/shared_memory.cpp
+  ${PROJECT_ROOT_MEM}/csrc/core/logger.cpp
+  ${PROJECT_ROOT_MEM}/external/muduo_base/log_stream.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/logging.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/log_file.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/date.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/timestamp.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/process_info.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/thread.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/thread_pool.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/condition.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/countdown_latch.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/file_util.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/exception.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/ini_config.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/slice.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/my_uuid.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/async_logging.cc
+  ${PROJECT_ROOT_MEM}/external/muduo_base/timezone.cc
+)
+target_include_directories(test_shm_attachment_manager PRIVATE
+  ${PROJECT_ROOT_MEM}/csrc
+  ${PROJECT_ROOT_MEM}/external
+)
+target_link_libraries(test_shm_attachment_manager PRIVATE
+  GTest::gtest
+  GTest::gtest_main
+  Threads::Threads
+  uuid
+)
+add_test(NAME test_shm_attachment_manager COMMAND test_shm_attachment_manager)
 
 # ==========================================================================
 # GreenTraceParser tests (unit/worker/) — no CUDA required
