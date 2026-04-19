@@ -404,16 +404,25 @@ void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx, int64_t device_id)
     : ctx_(ctx),
       connector_(nullptr),
-      cached_tensors_(GB * 8, [](const TensorKey&, const CachedTensor& t) {
-        if (t.data) {
-          LOG_DEBUG << "Evicting cached tensor, freeing memory: " << t.data;
+      cached_tensors_(
+          ctx.transport_mode == TransportMode::EMULATOR ? MB * 64 : GB * 8,
+          [this](const TensorKey&, const CachedTensor& t) {
+            if (t.is_virtual) {
+              if (!t.shm_name.empty()) {
+                shm_manager_.Release(t.shm_name);
+              }
+              return;
+            }
+
+            if (t.data) {
+              LOG_DEBUG << "Evicting cached tensor, freeing memory: " << t.data;
 #ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
-          cudaFree(t.data);
+              cudaFree(t.data);
 #else
-          free(t.data);
+              free(t.data);
 #endif
-        }
-      }) {
+            }
+          }) {
 }
 
 void ProxyCliImpl::Initialize(UeventLoop* loop) {
@@ -657,12 +666,25 @@ void ProxyCliImpl::HandleMatMul(const ConnectionUeventPtr& conn,
 
   {
     // std::lock_guard<std::mutex> lock(cache_mutex_);
-    if (r_size > 0) {
-      CacheTensor(tensor_key_row, r_ptr, r_size, partition.h_dim);
-    }
+    if (ctx_.transport_mode == TransportMode::EMULATOR &&
+        !partition.shm_refs_.empty()) {
+      if (partition.shm_refs_.size() > 0) {
+        CacheTensorVirtual(tensor_key_row, partition.shm_refs_[0],
+                           partition.h_dim);
+      }
 
-    if (c_size > 0) {
-      CacheTensor(tensor_key_col, c_ptr, c_size, partition.h_dim);
+      if (partition.shm_refs_.size() > 1) {
+        CacheTensorVirtual(tensor_key_col, partition.shm_refs_[1],
+                           partition.h_dim);
+      }
+    } else {
+      if (r_size > 0) {
+        CacheTensor(tensor_key_row, r_ptr, r_size, partition.h_dim);
+      }
+
+      if (c_size > 0) {
+        CacheTensor(tensor_key_col, c_ptr, c_size, partition.h_dim);
+      }
     }
 
     auto r_cached = cached_tensors_.Exist(tensor_key_row);
@@ -812,6 +834,57 @@ void ProxyCliImpl::CacheTensor(const TensorKey& key, void* ptr, int64_t size,
   cached_tensors_.Put(key, CachedTensor{cpy_ptr, ld_size, h_dim, size}, size);
 
   LOG_INFO << "CacheTensor completed successfully";
+}
+
+void ProxyCliImpl::CacheTensorVirtual(const TensorKey& key,
+                                      const ShmRef& shm_ref, int64_t h_dim) {
+  LOG_INFO << DEV_TAG_DEV(device_id_)
+           << "CacheTensorVirtual called: shm_name=" << shm_ref.shm_name
+           << ", segment_size=" << shm_ref.segment_size
+           << ", offset=" << shm_ref.offset
+           << ", tensor_size=" << shm_ref.tensor_size << ", h_dim=" << h_dim;
+
+  if (cached_tensors_.Exist(key)) {
+    LOG_DEBUG << DEV_TAG_DEV(device_id_)
+              << "Virtual tensor already cached, skipping";
+    return;
+  }
+
+  if (h_dim <= 0) {
+    LOG_ERROR << DEV_TAG_DEV(device_id_)
+              << "CacheTensorVirtual: invalid h_dim=" << h_dim;
+    return;
+  }
+
+  if (shm_ref.offset + shm_ref.tensor_size > shm_ref.segment_size) {
+    LOG_ERROR << DEV_TAG_DEV(device_id_)
+              << "CacheTensorVirtual: invalid shm range, offset="
+              << shm_ref.offset << ", tensor_size=" << shm_ref.tensor_size
+              << ", segment_size=" << shm_ref.segment_size;
+    return;
+  }
+
+  void* mapped_ptr =
+      shm_manager_.GetOrAttach(shm_ref.shm_name, shm_ref.segment_size);
+  if (!mapped_ptr) {
+    LOG_ERROR << DEV_TAG_DEV(device_id_)
+              << "CacheTensorVirtual: failed to attach shm segment "
+              << shm_ref.shm_name;
+    return;
+  }
+
+  auto* data_ptr = static_cast<char*>(mapped_ptr) + shm_ref.offset;
+  int64_t ld_size =
+      static_cast<int64_t>(shm_ref.tensor_size / h_dim / sizeof(float));
+
+  cached_tensors_.Put(key,
+                      CachedTensor{data_ptr, ld_size, h_dim,
+                                   static_cast<int64_t>(shm_ref.tensor_size),
+                                   shm_ref.shm_name, shm_ref.offset, true},
+                      sizeof(CachedTensor));
+
+  LOG_INFO << DEV_TAG_DEV(device_id_)
+           << "CacheTensorVirtual completed successfully";
 }
 
 void ProxyCliImpl::FillPartition(MatrixPartition& partition) {

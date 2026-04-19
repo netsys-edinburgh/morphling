@@ -228,6 +228,7 @@ set(MORPHLING_MSG_SRC
   "csrc/python/client_py.cpp"
   "csrc/memory/caching_allocator.cpp"
   "csrc/memory/shared_memory.cpp"
+  "csrc/memory/shm_attachment_manager.cpp"
   "csrc/memory/torch_caching_allocator.cpp"
 )
 set(MORPHLING_EXT_LIB
