@@ -109,6 +109,7 @@ class XtGemmWorker : public WorkerBase,
  private:
   void Run() override;  // Thread entry: set device, init contexts, run loop
   void InitAllContexts();
+  void InitPrimaryContextSlot(int sm_count);
   ContextSlot CreateContextSlot(CUdevResource* groups, int num_groups,
                                 int sm_count);
 
@@ -122,8 +123,9 @@ class XtGemmWorker : public WorkerBase,
   // Multi-context state (populated by InitAllContexts on worker thread)
   std::unordered_map<int, ContextSlot> context_slots_;
   ContextSlot* active_slot_ = nullptr;
-  int sm_step_ = 0;             // hardware SM granularity
-  int partition_sm_count_ = 0;  // total SMs for this partition
+  int sm_step_ = 0;               // hardware SM granularity
+  int partition_sm_count_ = 0;    // total SMs for this partition
+  bool use_primary_ctx_ = false;  // true when green ctx bypassed
   std::vector<CUdevResource> sm_groups_;
 
   // Per-worker CUDA memory pool
