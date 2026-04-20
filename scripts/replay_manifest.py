@@ -247,7 +247,7 @@ def main() -> None:
     if not cfg.has_section("scalability"):
         cfg.add_section("scalability")
     cfg.set("scalability", "barrier_count", str(required_devices))
-    cfg.set("scalability", "barrier_timeout", "60000")
+    cfg.set("scalability", "barrier_timeout", "600000")
 
     tmp_cfg = tempfile.NamedTemporaryFile(
         mode="w", suffix=".ini", delete=False, prefix="svr_replay_"

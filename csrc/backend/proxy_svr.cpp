@@ -510,7 +510,7 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 /********************************ProxySvrImpl****************************************/
 
 ProxySvrImpl::ProxySvrImpl(ProxyEnvCfg& ctx)
-    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(1024) {
+    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(65536) {
   // Initialize with greedy scheduling policy by default
 }
 
@@ -561,7 +561,7 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   // Start();
   // InitLogger();
 
-  outputs_.resize(1024);
+  outputs_.resize(65536);
   for (size_t i = 0; i < outputs_.size(); i++) {
     outputs_[i] = torch::empty({0, 0});
     rsp_cb_counts_[i] = 0;
@@ -885,8 +885,14 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
 }
 
 void ProxySvrImpl::IncRspCbCount(int oid, size_t count) {
-  int prev = rsp_cb_counts_[oid];
-  rsp_cb_counts_[oid] -= count;
+  unsigned long long prev = rsp_cb_counts_[oid].load();
+  if (prev < count) {
+    LOG_WARN << "[IncRspCbCount] Clamping underflow for oid=" << oid
+             << ", current=" << prev << ", decrement=" << count;
+    rsp_cb_counts_[oid] = 0;
+  } else {
+    rsp_cb_counts_[oid] -= count;
+  }
   LOG_DEBUG << "[IncRspCbCount] oid=" << oid << ", count=" << count
             << ", prev=" << prev << ", now=" << rsp_cb_counts_[oid];
 }
@@ -940,11 +946,10 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
     return;
   }
 
-  // Count FAILED partitions and OIDs (only those that were RUNNING)
   size_t num_failed_partitions = 0;
   std::unordered_map<int64_t, size_t> oid_counts;
   for (const auto& part : failed_partitions) {
-    if (part->state == PartitionState::IDLE) {
+    if (part->state == PartitionState::RUNNING) {
       num_failed_partitions++;
       oid_counts[part->oid]++;
     }

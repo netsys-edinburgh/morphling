@@ -128,6 +128,42 @@ MODEL_PRESETS: dict[str, dict[str, int]] = {
         "num_heads": 72,
         "d_ff": 36864,
     },
+    "meta-llama/llama-2-13b-hf": {
+        "num_layers": 40,
+        "embedding_dim": 5120,
+        "num_heads": 40,
+        "d_ff": 13824,
+    },
+    "llama2-13b": {
+        "num_layers": 40,
+        "embedding_dim": 5120,
+        "num_heads": 40,
+        "d_ff": 13824,
+    },
+    "llama-2-13b": {
+        "num_layers": 40,
+        "embedding_dim": 5120,
+        "num_heads": 40,
+        "d_ff": 13824,
+    },
+    "meta-llama/llama-2-70b-hf": {
+        "num_layers": 80,
+        "embedding_dim": 8192,
+        "num_heads": 64,
+        "d_ff": 28672,
+    },
+    "llama2-70b": {
+        "num_layers": 80,
+        "embedding_dim": 8192,
+        "num_heads": 64,
+        "d_ff": 28672,
+    },
+    "llama-2-70b": {
+        "num_layers": 80,
+        "embedding_dim": 8192,
+        "num_heads": 64,
+        "d_ff": 28672,
+    },
 }
 
 
