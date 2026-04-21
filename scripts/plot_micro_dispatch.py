@@ -13,7 +13,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-
 WONG = [
     "#000000",
     "#E69F00",
@@ -115,7 +114,9 @@ def main() -> int:
     eager_runtime = float(eager.get("batch_runtime_ms", 0.0))
     bp_runtime = float(bp.get("batch_runtime_ms", 0.0))
 
-    with matplotlib.rc_context(_style(width=float(args.width), height=float(args.height))):
+    with matplotlib.rc_context(
+        _style(width=float(args.width), height=float(args.height))
+    ):
         fig, axes = plt.subplots(1, 3)
 
         ax0 = axes[0]

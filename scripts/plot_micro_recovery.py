@@ -104,9 +104,13 @@ def main() -> int:
             "recompute": "#009E73",
         }
 
-        ax.barh(y, detect, left=left, color=colors["detection"], label="Detection")
+        ax.barh(
+            y, detect, left=left, color=colors["detection"], label="Detection"
+        )
         left += np.array(detect, dtype=float)
-        ax.barh(y, resolve, left=left, color=colors["re_solve"], label="Re-solve")
+        ax.barh(
+            y, resolve, left=left, color=colors["re_solve"], label="Re-solve"
+        )
         left += np.array(resolve, dtype=float)
         ax.barh(
             y,

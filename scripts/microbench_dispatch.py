@@ -57,10 +57,17 @@ class DeviceState:
             self.write_errors += 1
             self.cumulative_penalty_s += self.RECONNECT_PENALTY_S
         effective_bw = self.bw_bytes_s
-        if bloat_threshold_bytes > 0.0 and self.queue_bytes > bloat_threshold_bytes:
+        if (
+            bloat_threshold_bytes > 0.0
+            and self.queue_bytes > bloat_threshold_bytes
+        ):
             ratio = self.queue_bytes / bloat_threshold_bytes
             effective_bw = self.bw_bytes_s / (1.0 + 0.3 * (ratio - 1.0))
-        network_finish_t = t + self.cumulative_penalty_s + (self.queue_bytes / max(1.0, effective_bw))
+        network_finish_t = (
+            t
+            + self.cumulative_penalty_s
+            + (self.queue_bytes / max(1.0, effective_bw))
+        )
         compute_start_t = max(network_finish_t, self.compute_available_t)
         finish_t = compute_start_t + max(0.0, float(compute_s))
         self.compute_available_t = finish_t
@@ -118,7 +125,9 @@ def _build_bandwidths(
 ) -> list[float]:
     rng = random.Random(seed)
     bws = [rng.uniform(10.0e6, 100.0e6) for _ in range(num_devices)]
-    slow_ids = rng.sample(range(num_devices), k=min(max(0, num_slow), num_devices))
+    slow_ids = rng.sample(
+        range(num_devices), k=min(max(0, num_slow), num_devices)
+    )
     for idx in slow_ids:
         bws[idx] = 2.0e6
     return bws
@@ -148,7 +157,9 @@ def _build_shards(
     return shards
 
 
-def _group_pending(shards: list[Shard], num_devices: int) -> dict[int, list[Shard]]:
+def _group_pending(
+    shards: list[Shard], num_devices: int
+) -> dict[int, list[Shard]]:
     grouped: dict[int, list[Shard]] = {i: [] for i in range(num_devices)}
     for shard in shards:
         grouped[shard.device_id].append(shard)
@@ -221,7 +232,9 @@ def _simulate_eager(
     return {
         "dispatch_round_ms": dispatch_round_s * 1000.0,
         "peak_queue_per_conn_mb": per_conn_peaks,
-        "peak_queue_overall_mb": max((float(v) for v in per_conn_peaks.values()), default=0.0),
+        "peak_queue_overall_mb": max(
+            (float(v) for v in per_conn_peaks.values()), default=0.0
+        ),
         "write_errors": total_write_errors,
         "batch_runtime_ms": batch_runtime_s * 1000.0,
         "queue_occupancy_timeline": occupancy,
@@ -303,7 +316,9 @@ def _simulate_backpressure(
     return {
         "dispatch_round_ms": dispatch_round_s * 1000.0,
         "peak_queue_per_conn_mb": per_conn_peaks,
-        "peak_queue_overall_mb": max((float(v) for v in per_conn_peaks.values()), default=0.0),
+        "peak_queue_overall_mb": max(
+            (float(v) for v in per_conn_peaks.values()), default=0.0
+        ),
         "write_errors": total_write_errors,
         "batch_runtime_ms": batch_runtime_s * 1000.0,
         "queue_occupancy_timeline": occupancy,
@@ -368,7 +383,10 @@ def main() -> int:
             "num_devices": int(args.num_devices),
             "num_slow_devices": int(args.num_slow_devices),
             "num_shards": int(args.num_shards),
-            "shard_size_mb_range": [float(args.min_shard_mb), float(args.max_shard_mb)],
+            "shard_size_mb_range": [
+                float(args.min_shard_mb),
+                float(args.max_shard_mb),
+            ],
             "coord_overhead_ms": float(args.coord_overhead_ms),
             "tick_ms": float(args.tick_ms),
             "watermark_low_mb": float(args.watermark_low_mb),

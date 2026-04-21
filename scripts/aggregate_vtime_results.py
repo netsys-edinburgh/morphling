@@ -20,7 +20,6 @@ import argparse
 import json
 from pathlib import Path
 
-
 BASELINES = ["cleave", "dtfm", "asteroid", "confident", "alpa"]
 
 # Model display names for the plot

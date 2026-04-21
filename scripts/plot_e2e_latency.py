@@ -15,10 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, cast
-
-import sys
 
 import matplotlib
 
@@ -35,7 +34,6 @@ from plot_utils import (  # type: ignore[reportMissingImports]
     paper_style,
     save_dual_output,
 )
-
 
 MODEL_SOURCES: list[tuple[str, Path]] = [
     (
@@ -341,7 +339,7 @@ def plot_e2e_latency(
         ax.set_xlabel("Model")
         ax.set_ylabel("Normalized runtime")
         # ax.set_yscale("log")
-        ax.set_ylim(0,30)
+        ax.set_ylim(0, 30)
         ax.grid(True, axis="y", alpha=0.3)
         ax.axhline(
             1.0,

@@ -52,7 +52,6 @@ from plot_utils import (  # type: ignore[reportMissingImports]
     save_dual_output,
 )
 
-
 # ── Model architectures ──────────────────────────────────────────────
 
 MODELS: list[tuple[str, dict[str, int]]] = [

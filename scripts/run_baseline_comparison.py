@@ -11,21 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from scripts.compute_batch_runtime import (
-    BatchRuntimeResult,
-    compute_batch_runtime,
-    parse_vtime_log,
-)
-from morphling.evaluation.plan_dispatcher import (
-    DispatchManifest,
-    gemm_dag_from_model_config,
-    plan_to_manifest,
-)
-from morphling.evaluation.topology_bridge import (
-    fleet_to_topology,
-    load_fleet_json,
-)
-
+import baselines.strategies.dtfm_strategy as _dtfm_mod
 from baselines.core.config import ModelConfig
 from baselines.strategies import (
     AlpaStrategy,
@@ -35,7 +21,20 @@ from baselines.strategies import (
     DTFMStrategy,
 )
 
-import baselines.strategies.dtfm_strategy as _dtfm_mod
+from morphling.evaluation.plan_dispatcher import (
+    DispatchManifest,
+    gemm_dag_from_model_config,
+    plan_to_manifest,
+)
+from morphling.evaluation.topology_bridge import (
+    fleet_to_topology,
+    load_fleet_json,
+)
+from scripts.compute_batch_runtime import (
+    BatchRuntimeResult,
+    compute_batch_runtime,
+    parse_vtime_log,
+)
 
 _dtfm_mod._HAS_GCMA = False
 
