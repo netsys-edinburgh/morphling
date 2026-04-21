@@ -9,7 +9,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-
 PHASES = {"SEND", "DOWNLOAD", "COMPUTE", "UPLOAD", "RECEIVE"}
 ALLREDUCE_TYPES = {"dp_allreduce", "tp_allreduce"}
 

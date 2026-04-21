@@ -86,13 +86,7 @@ def _repo_root() -> Path:
 
 
 def _load_batch_time_s(repo_root: Path, num_devices: int) -> float:
-    points_dir = (
-        repo_root
-        / "results"
-        / "sweeps"
-        / "num_devices"
-        / "points"
-    )
+    points_dir = repo_root / "results" / "sweeps" / "num_devices" / "points"
     if points_dir.exists():
         candidates = sorted(
             points_dir.glob(f"*_{num_devices}/comparison/summary.json")
@@ -249,9 +243,7 @@ def main() -> int:
     output_json.parent.mkdir(parents=True, exist_ok=True)
 
     counts = [
-        int(x.strip())
-        for x in str(args.device_counts).split(",")
-        if x.strip()
+        int(x.strip()) for x in str(args.device_counts).split(",") if x.strip()
     ]
 
     imports = _import_baselines(repo_root)
@@ -280,7 +272,9 @@ def main() -> int:
                         "estimated",
                         "Based on paper cold-start at 1024 devices.",
                     ).to_json(),
-                    "reuse": _mode_result(0.001, batch_s, "estimated").to_json(),
+                    "reuse": _mode_result(
+                        0.001, batch_s, "estimated"
+                    ).to_json(),
                     "incremental": _mode_result(
                         incr_ms,
                         batch_s,
@@ -338,9 +332,7 @@ def main() -> int:
                 cold_note = "gurobipy unavailable or no feasible MIP solution; estimated from paper."
                 cold_latency_ms = _estimated_coldstart_ms(
                     num_devices=num_devices,
-                    paper_coldstart_1024_s=float(
-                        args.paper_coldstart_1024_s
-                    ),
+                    paper_coldstart_1024_s=float(args.paper_coldstart_1024_s),
                 )
             else:
                 mip_available_any = True
@@ -374,12 +366,13 @@ def main() -> int:
             full_dag, orphaned_keys, len(failed), num_devices
         )
         if not orphaned_dag:
-            orphaned_dag = [[shape] for level in full_dag for shape in level][:6]
+            orphaned_dag = [[shape] for level in full_dag for shape in level][
+                :6
+            ]
         survivors = [d for d in devices if int(d.device_id) not in failed]
 
-        orphan_fraction = (
-            float(len(orphaned_dag))
-            / max(1.0, float(sum(len(level) for level in full_dag)))
+        orphan_fraction = float(len(orphaned_dag)) / max(
+            1.0, float(sum(len(level) for level in full_dag))
         )
 
         incr_source = "measured"

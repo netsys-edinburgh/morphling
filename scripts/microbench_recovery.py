@@ -78,7 +78,9 @@ def _import_baselines(repo_root: Path) -> tuple[Any, Any, Any] | None:
         return None
 
 
-def _model_config(cls_model: Any, model_name: str, batch_size: int, seq_len: int) -> Any:
+def _model_config(
+    cls_model: Any, model_name: str, batch_size: int, seq_len: int
+) -> Any:
     presets = {
         "opt-13b": {
             "num_layers": 40,
@@ -149,7 +151,9 @@ def _subset_dag(
     return out
 
 
-def _phase_detection_ms(min_ms: float, max_ms: float, rng: random.Random) -> float:
+def _phase_detection_ms(
+    min_ms: float, max_ms: float, rng: random.Random
+) -> float:
     low = max(1.0, min(float(min_ms), float(max_ms)))
     high = max(low, max(float(min_ms), float(max_ms)))
     return rng.uniform(low, high)
@@ -234,7 +238,10 @@ def main() -> int:
                     "recompute": recompute_ms,
                 },
                 "total_recovery_ms": total_ms,
-                "solver": {"mode": str(args.solver_mode), "source": "estimated"},
+                "solver": {
+                    "mode": str(args.solver_mode),
+                    "source": "estimated",
+                },
             }
         payload = {
             "metadata": {
@@ -280,9 +287,13 @@ def main() -> int:
         )
         survivors = [d for d in devices if int(d.device_id) not in failed]
         orphaned = _orphaned_keys(full_assignments, failed)
-        orphaned_dag = _subset_dag(full_dag, orphaned, len(failed), int(args.num_devices))
+        orphaned_dag = _subset_dag(
+            full_dag, orphaned, len(failed), int(args.num_devices)
+        )
         if not orphaned_dag:
-            orphaned_dag = [[shape] for level in full_dag for shape in level][:6]
+            orphaned_dag = [[shape] for level in full_dag for shape in level][
+                :6
+            ]
 
         detection_ms = _phase_detection_ms(tmin, tmax, rng)
 
@@ -295,7 +306,9 @@ def main() -> int:
                 elapsed_ms = (time.perf_counter() - t0) * 1000.0
                 if mip_result is None:
                     solver_source = "estimated"
-                    re_solve_ms = max(5.0, 12.0 * float(len(orphaned_dag)) / 10.0)
+                    re_solve_ms = max(
+                        5.0, 12.0 * float(len(orphaned_dag)) / 10.0
+                    )
                 else:
                     re_solve_ms = elapsed_ms
             except Exception:

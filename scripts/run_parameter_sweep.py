@@ -12,11 +12,10 @@ import random
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
-
-from collections.abc import Sequence
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,6 @@
 # VTIME Results Inventory
 
-**Generated**: 2026-04-18  
+**Generated**: 2026-04-18
 **Purpose**: Understand what data exists in each VTIME result directory for planning the full 64-device sweep.
 
 ## Overview
@@ -63,7 +63,7 @@ vtime/
 
 ### Baselines Complete
 - ✓ Cleave
-- ✓ Asteroid  
+- ✓ Asteroid
 - ✓ DTFM
 - ✓ AlPa
 - ✓ Confident
