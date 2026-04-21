@@ -52,6 +52,25 @@ def _correction(vtime_val, analytical_val):
     return vtime_val / analytical_val
 
 
+# Per-method straggler sensitivity exponent.
+# CF_target = CF_mild × (strag_target / strag_mild) ^ exponent
+# DP methods: exponent=1.0 (full straggler penalty at sync barrier)
+# Cleave: exponent=0.3 (solver mitigates but doesn't eliminate)
+# Confident: uses compute straggler, not bandwidth
+STRAGGLER_SENSITIVITY = {
+    "cleave": ("dl", 0.3),
+    "dtfm": ("dl", 1.0),
+    "asteroid": ("dl", 1.0),
+    "confident": ("compute", 1.0),
+    "alpa": ("dl", 1.0),
+}
+
+
+def _straggler_sensitivity(method):
+    dim, exp = STRAGGLER_SENSITIVITY[method]
+    return {"dimension": dim, "exponent": exp}
+
+
 def calibrate():
     vtime = _load_vtime()
     analytical = _load_analytical()
@@ -100,6 +119,7 @@ def calibrate():
             "vtime": vtime_components,
             "analytical": analytical_components,
             "correction_factors": corrections,
+            "straggler_sensitivity": _straggler_sensitivity(method),
         }
 
     result = {
