@@ -51,6 +51,24 @@ CALIBRATION_PATH = REPO / "results/analytical_scaling/calibration.json"
 FLEET_PATH = (
     REPO / "results/device_scaling/opt-125m/n64" / "generated_device_fleet.json"
 )
+
+FLEET_PROFILES = {
+    "mild": {
+        "flops": (5e12, 7e12),
+        "ul_bw": (5e6, 10e6),
+        "dl_bw": (14e6, 100e6),
+    },
+    "moderate": {
+        "flops": (2e12, 10e12),
+        "ul_bw": (2e6, 20e6),
+        "dl_bw": (5e6, 200e6),
+    },
+    "extreme": {
+        "flops": (1e12, 20e12),
+        "ul_bw": (1e6, 50e6),
+        "dl_bw": (1e6, 500e6),
+    },
+}
 OUTPUT_DIR = REPO / "results/analytical_scaling"
 PROJECTIONS_PATH = OUTPUT_DIR / "projections.json"
 VALIDATION_PATH = OUTPUT_DIR / "validation.json"
@@ -72,6 +90,12 @@ MODEL_CONFIGS = {
         "embedding_dim": 2048,
         "num_heads": 32,
         "d_ff": 8192,
+    },
+    "llama2-7b": {
+        "num_layers": 32,
+        "embedding_dim": 4096,
+        "num_heads": 32,
+        "d_ff": 11008,
     },
     "opt-13b": {
         "num_layers": 40,
@@ -103,9 +127,34 @@ BYTES_PER_ELEMENT = 2.0
 # -- fleet helpers --
 
 
-def _load_base_fleet() -> list[dict[str, Any]]:
-    with open(FLEET_PATH) as f:
-        return json.load(f)
+def _load_base_fleet(
+    profile: str | None = None, seed: int = 42
+) -> list[dict[str, Any]]:
+    if profile is None:
+        with open(FLEET_PATH) as f:
+            return json.load(f)
+    return _generate_fleet(64, profile, seed)
+
+
+def _generate_fleet(n: int, profile: str, seed: int) -> list[dict[str, Any]]:
+    import random
+
+    rng = random.Random(seed)
+    cfg = FLEET_PROFILES[profile]
+    fleet = []
+    for i in range(n):
+        fleet.append(
+            {
+                "rank": i,
+                "flops": int(rng.uniform(*cfg["flops"])),
+                "memory": 8 * 1024 * 1024 * 1024,
+                "ul_bw": float(rng.uniform(*cfg["ul_bw"])),
+                "dl_bw": float(rng.uniform(*cfg["dl_bw"])),
+                "ul_lat": 0.0,
+                "dl_lat": 0.0,
+            }
+        )
+    return fleet
 
 
 def _repeat_fleet(base: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
@@ -317,6 +366,56 @@ def _run_analytical(
     )
 
 
+# -- extrapolation from existing data points --
+
+
+def _extrapolate(
+    results: list[dict], method: str, model: str, target_n: int
+) -> BatchRuntimeResult | None:
+    import numpy as np
+
+    pts = [
+        (r["num_devices"], r["raw_analytical"])
+        for r in results
+        if r["method"] == method and r["model"] == model
+    ]
+    if len(pts) < 3:
+        return None
+
+    pts.sort()
+    ns = [p[0] for p in pts]
+    components = [
+        "total_ms",
+        "compute_ms",
+        "network_ms",
+        "allreduce_ms",
+        "bubble_ms",
+    ]
+    projected = {}
+    for comp in components:
+        vals = [p[1][comp] for p in pts]
+        pos_vals = [(n, v) for n, v in zip(ns, vals) if v > 0]
+        if len(pos_vals) >= 2:
+            log_ns = np.log([x[0] for x in pos_vals])
+            log_vs = np.log([x[1] for x in pos_vals])
+            a, b = np.polyfit(log_ns, log_vs, 1)
+            projected[comp] = float(np.exp(b) * target_n**a)
+        else:
+            projected[comp] = 0.0
+
+    return BatchRuntimeResult(
+        baseline_name=method,
+        total_runtime_ms=projected["total_ms"],
+        compute_time_ms=projected["compute_ms"],
+        network_time_ms=projected["network_ms"],
+        pipeline_bubble_ms=projected["bubble_ms"],
+        allreduce_time_ms=projected["allreduce_ms"],
+        optimizer_tail_ms=0.0,
+        per_device_breakdown={},
+        per_level_breakdown=[],
+    )
+
+
 # -- fallback: load from existing device_scaling --
 
 
@@ -345,14 +444,43 @@ def _load_existing_analytical(
     )
 
 
-# -- calibration --
+# -- calibration rescaling --
+
+
+def _straggler_ratio(fleet: list[dict[str, Any]], dim: str) -> float:
+    if dim == "dl":
+        vals = [d["dl_bw"] for d in fleet]
+    else:
+        vals = [d["flops"] for d in fleet]
+    inv = [1.0 / v for v in vals]
+    return max(inv) / (sum(inv) / len(inv))
+
+
+def _rescale_factors(
+    calibration: dict,
+    mild_fleet: list[dict[str, Any]],
+    target_fleet: list[dict[str, Any]],
+) -> dict[str, dict[str, float]]:
+    rescaled = {}
+    for method, mcal in calibration["per_method"].items():
+        factors = dict(mcal["correction_factors"])
+        sens = mcal.get("straggler_sensitivity")
+        if sens is None:
+            rescaled[method] = factors
+            continue
+        dim = sens["dimension"]
+        exp = sens["exponent"]
+        mild_sr = _straggler_ratio(mild_fleet, dim)
+        target_sr = _straggler_ratio(target_fleet, dim)
+        scale = (target_sr / mild_sr) ** exp
+        rescaled[method] = {k: v * scale for k, v in factors.items()}
+    return rescaled
 
 
 def _apply_calibration(
     raw: BatchRuntimeResult,
     factors: dict[str, float],
 ) -> dict[str, float]:
-    """Apply correction factors to raw analytical result."""
     return {
         "total_ms": raw.total_runtime_ms * factors["total"],
         "compute_ms": raw.compute_time_ms * factors["compute"],
@@ -375,12 +503,22 @@ def _raw_dict(r: BatchRuntimeResult) -> dict[str, float]:
 # -- main projection --
 
 
-def project():
+def project(fleet_profile: str | None = None):
     with open(CALIBRATION_PATH) as f:
         calibration = json.load(f)
 
-    base_fleet = _load_base_fleet()
+    base_fleet = _load_base_fleet(profile=fleet_profile)
     models = list(MODEL_CONFIGS.keys())
+
+    if fleet_profile is not None:
+        mild_fleet = _load_base_fleet(profile=None)
+        rescaled = _rescale_factors(calibration, mild_fleet, base_fleet)
+        LOG.info("Rescaled correction factors for '%s' profile", fleet_profile)
+        for m, f in rescaled.items():
+            orig = calibration["per_method"][m]["correction_factors"]["total"]
+            LOG.info("  %s: %.2f -> %.2f", m, orig, f["total"])
+    else:
+        rescaled = None
 
     # Resume from existing results if available
     results = []
@@ -423,10 +561,14 @@ def project():
                     n_devices,
                 )
 
-                raw = _load_existing_analytical(method, model_name, n_devices)
-                if raw is not None:
-                    LOG.info("  -> loaded from device_scaling")
-                elif n_devices <= 512:
+                raw = None
+                if fleet_profile is None:
+                    raw = _load_existing_analytical(
+                        method, model_name, n_devices
+                    )
+                    if raw is not None:
+                        LOG.info("  -> loaded from device_scaling")
+                if raw is None and n_devices <= 512:
                     raw = _run_analytical(
                         method, model_name, n_devices, base_fleet
                     )
@@ -434,12 +576,22 @@ def project():
                         LOG.warning("  -> FAILED")
                         continue
                 else:
-                    LOG.info("  -> skip (no fallback at n>512)")
-                    continue
+                    extrap = _extrapolate(
+                        results, method, model_name, n_devices
+                    )
+                    if extrap is not None:
+                        raw = extrap
+                        LOG.info("  -> extrapolated from trend")
+                    else:
+                        LOG.info("  -> skip (no data to extrapolate)")
+                        continue
 
-                factors = calibration["per_method"][method][
-                    "correction_factors"
-                ]
+                if rescaled is not None:
+                    factors = rescaled[method]
+                else:
+                    factors = calibration["per_method"][method][
+                        "correction_factors"
+                    ]
                 calibrated = _apply_calibration(raw, factors)
 
                 results.append(
@@ -568,6 +720,12 @@ def main():
         help="Cross-validate against existing device_scaling results",
     )
     parser.add_argument(
+        "--fleet-profile",
+        default=None,
+        choices=["mild", "moderate", "extreme"],
+        help="Fleet heterogeneity profile (default: load saved fleet)",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
     )
@@ -581,7 +739,7 @@ def main():
     if args.validate:
         validate()
     else:
-        project()
+        project(fleet_profile=args.fleet_profile)
 
 
 if __name__ == "__main__":

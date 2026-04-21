@@ -27,6 +27,7 @@ import numpy as np
 MODELS = [
     "opt-125m",
     "opt-1.3b",
+    "llama2-7b",
     "opt-13b",
     "opt-30b",
     "opt-66b",
@@ -39,6 +40,7 @@ DEVICE_COUNTS = [64, 128, 256, 512, 1024, 2048]
 MODEL_PARAM_COUNTS = {
     "opt-125m": 125e6,
     "opt-1.3b": 1.3e9,
+    "llama2-7b": 7e9,
     "opt-13b": 13e9,
     "opt-30b": 30e9,
     "opt-66b": 66e9,
@@ -47,6 +49,7 @@ MODEL_PARAM_COUNTS = {
 MODEL_PARAM_TICK_LABELS = {
     "opt-125m": "125M",
     "opt-1.3b": "1.3B",
+    "llama2-7b": "7B",
     "opt-13b": "13B",
     "opt-30b": "30B",
     "opt-66b": "66B",
