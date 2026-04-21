@@ -39,6 +39,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              return self.WaitMatMul(oid);
            })
       .def("get_connection_count", &ProxySvr::GetConnectionCount)
+      .def("flush_perf_log", &ProxySvr::FlushPerfLog)
       .def("is_barrier_met", &ProxySvr::IsBarrierMet)
       .def("get_queue_size", &ProxySvr::GetQueueSize)
       .def("get_device_mode", &ProxySvr::GetDeviceMode);

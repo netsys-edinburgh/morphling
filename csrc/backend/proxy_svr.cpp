@@ -164,6 +164,7 @@ void ProxySvrHandle::DecodeAndDispatch(const ConnectionUeventPtr& conn,
         task_queue_.pop_front();
         task();
       }
+      loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, this));
       break;
 
     default:
@@ -284,12 +285,59 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
                    .count()
             << "us";
 
-  // Record RECEIVE end time (virtual time) for RECEIVE phase
   DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
                                      "RECEIVE", "END", vt_receive_start,
                                      vt_receive_end);
 
-  // Mark partition as FINISHED and remove from tracker
+  // Synthetic VTIME phases derived from device profile (FLOPS, bandwidth)
+  {
+    auto sm_it = send_meta_.find(part_key);
+    auto liveness = DEVICE_TRACKER.GetDeviceLiveness(partition.dev_id);
+    if (sm_it != send_meta_.end() && liveness.device_id >= 0) {
+      const auto& sm = sm_it->second;
+      const auto& prof = liveness.profile;
+
+      double dl_bw = prof.dl_bw > 0 ? prof.dl_bw : 1.0;
+      double ul_bw = prof.ul_bw > 0 ? prof.ul_bw : 1.0;
+      double flops = prof.flops > 0 ? prof.flops : 1.0;
+
+      uint64_t dl_dur_us =
+          static_cast<uint64_t>(sm.send_bytes / dl_bw * 1e6 + prof.dl_lat);
+      uint64_t comp_dur_us =
+          static_cast<uint64_t>(2.0 * sm.m * sm.n * sm.h_dim / flops * 1e6);
+      uint64_t ul_dur_us =
+          static_cast<uint64_t>(size / ul_bw * 1e6 + prof.ul_lat);
+
+      uint64_t vt_dl_start = sm.vt_send_end_us;
+      uint64_t vt_dl_end = vt_dl_start + dl_dur_us;
+      uint64_t vt_comp_start = vt_dl_end;
+      uint64_t vt_comp_end = vt_comp_start + comp_dur_us;
+      uint64_t vt_ul_start = vt_comp_end;
+      uint64_t vt_ul_end = vt_ul_start + ul_dur_us;
+
+      DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                         "DOWNLOAD", "START", vt_dl_start,
+                                         vt_dl_start);
+      DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                         "DOWNLOAD", "END", vt_dl_start,
+                                         vt_dl_end);
+      DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                         "COMPUTE", "START", vt_comp_start,
+                                         vt_comp_start);
+      DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                         "COMPUTE", "END", vt_comp_start,
+                                         vt_comp_end);
+      DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                         "UPLOAD", "START", vt_ul_start,
+                                         vt_ul_start);
+      DEVICE_TRACKER.LogVirtualTimeEvent(partition.dev_id, partition.gemm_id,
+                                         "UPLOAD", "END", vt_ul_start,
+                                         vt_ul_end);
+
+      send_meta_.erase(sm_it);
+    }
+  }
+
   PARTITION_TRACKER.MarkPartitionFinished(part_key);
   PARTITION_TRACKER.RemovePartitionByKey(part_key);
   DEVICE_TRACKER.RecordPartitionProcessed(partition.dev_id);
@@ -377,6 +425,25 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
                                        "SEND", "END", vt_send_start,
                                        vt_send_end);
 
+    {
+      auto pkey = partition->GetPartitionKey();
+      SendMeta sm;
+      sm.vt_send_end_us = vt_send_end;
+      sm.send_bytes = size;
+      sm.m = 0;
+      sm.n = 0;
+      sm.h_dim = partition->h_dim;
+      for (const auto& m : partition->mat) {
+        auto mat_bytes = std::get<1>(m);
+        int64_t dim = mat_bytes / partition->h_dim / sizeof(float);
+        if (sm.m == 0)
+          sm.m = dim;
+        else
+          sm.n = dim;
+      }
+      send_meta_[pkey] = sm;
+    }
+
     DEVICE_TRACKER.RecordBytesSent(partition->dev_id, size);
 
     double last_packet_tp =
@@ -389,13 +456,11 @@ void ProxySvrHandle::SendInLoop(const ConnectionUeventPtr& conn,
                                        end_us);
   });
 
-  if (conn_inflight_[client_addr] >= ctx_.max_inflight) {
-    return;
+  while (!task_queue_.empty()) {
+    auto task = task_queue_.front();
+    task_queue_.pop_front();
+    task();
   }
-
-  auto task = task_queue_.front();
-  task_queue_.pop_front();
-  task();
 }
 
 void ProxySvrHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
@@ -445,7 +510,7 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 /********************************ProxySvrImpl****************************************/
 
 ProxySvrImpl::ProxySvrImpl(ProxyEnvCfg& ctx)
-    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(5) {
+    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(65536) {
   // Initialize with greedy scheduling policy by default
 }
 
@@ -496,11 +561,8 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   // Start();
   // InitLogger();
 
-  // no more than 5 MAtMul in parallel
-  outputs_ = std::move(std::vector<torch::Tensor>(5));
-  // rsp_cb_counts_ = std::move(std::vector<std::atomic_ullong>(5));
-  // outputs_mutex_ = std::move(std::vector<std::mutex>(5));
-  for (int i = 0; i < 5; i++) {
+  outputs_.resize(65536);
+  for (size_t i = 0; i < outputs_.size(); i++) {
     outputs_[i] = torch::empty({0, 0});
     rsp_cb_counts_[i] = 0;
   }
@@ -819,13 +881,18 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
   LOG_INFO << "[WaitMatMul] Completed for oid=" << oid
            << ", wait_time=" << wait_time << "us, shape=" << shape;
 
-  mm_count_--;
   return outputs_[oid];
 }
 
 void ProxySvrImpl::IncRspCbCount(int oid, size_t count) {
-  int prev = rsp_cb_counts_[oid];
-  rsp_cb_counts_[oid] -= count;
+  unsigned long long prev = rsp_cb_counts_[oid].load();
+  if (prev < count) {
+    LOG_WARN << "[IncRspCbCount] Clamping underflow for oid=" << oid
+             << ", current=" << prev << ", decrement=" << count;
+    rsp_cb_counts_[oid] = 0;
+  } else {
+    rsp_cb_counts_[oid] -= count;
+  }
   LOG_DEBUG << "[IncRspCbCount] oid=" << oid << ", count=" << count
             << ", prev=" << prev << ", now=" << rsp_cb_counts_[oid];
 }
@@ -879,11 +946,10 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
     return;
   }
 
-  // Count FAILED partitions and OIDs (only those that were RUNNING)
   size_t num_failed_partitions = 0;
   std::unordered_map<int64_t, size_t> oid_counts;
   for (const auto& part : failed_partitions) {
-    if (part->state == PartitionState::IDLE) {
+    if (part->state == PartitionState::RUNNING) {
       num_failed_partitions++;
       oid_counts[part->oid]++;
     }

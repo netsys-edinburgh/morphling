@@ -404,7 +404,7 @@ void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx, int64_t device_id)
     : ctx_(ctx),
       connector_(nullptr),
-      cached_tensors_(GB / 16, [](const TensorKey&, const CachedTensor& t) {
+      cached_tensors_(GB * 8, [](const TensorKey&, const CachedTensor& t) {
         if (t.data) {
           LOG_DEBUG << "Evicting cached tensor, freeing memory: " << t.data;
 #ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
@@ -549,14 +549,19 @@ void ProxyCliImpl::HandleRegisterRequest(const ConnectionUeventPtr& conn,
 void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
   LOG_DEBUG << "Sending device profile data to server";
 
+  auto env_or = [](const char* name, uint64_t fallback) -> uint64_t {
+    const char* v = std::getenv(name);
+    return (v && v[0]) ? std::strtoull(v, nullptr, 10) : fallback;
+  };
+
   DeviceProfileData profile;
   profile.uuid = GenUUID64();
-  profile.flops = 100000000000ull;              // 100 GFLOPS - placeholder
-  profile.memory = 16ull * 1024 * 1024 * 1024;  // 16GB - placeholder
-  profile.ul_bw = 10ull * 1024 * 1024 * 1024;   // 10 Gbps
-  profile.dl_bw = 10ull * 1024 * 1024 * 1024;   // 10 Gbps
-  profile.ul_lat = 1000;                        // 1ms
-  profile.dl_lat = 1000;                        // 1ms
+  profile.flops = env_or("MORPHLING_FLOPS", 100000000000ull);
+  profile.memory = env_or("MORPHLING_MEMORY", 16ull * 1024 * 1024 * 1024);
+  profile.ul_bw = env_or("MORPHLING_UL_BW", 10ull * 1024 * 1024 * 1024);
+  profile.dl_bw = env_or("MORPHLING_DL_BW", 10ull * 1024 * 1024 * 1024);
+  profile.ul_lat = env_or("MORPHLING_UL_LAT", 1000);
+  profile.dl_lat = env_or("MORPHLING_DL_LAT", 1000);
 
   auto buffer = profile.Serialize();
   // Zero-copy send: buffer ref-count prevents deallocation until libevent done
@@ -898,7 +903,7 @@ void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
   // Create worker pools based on config + hardware availability
   if (want_gpu && has_gpu) {
     int workers_per_gpu = 1;  // one green-context partition per GPU
-    size_t buffer_size = 256ull * 1024 * 1024;  // 256 MB per worker
+    size_t buffer_size = 1024ull * 1024 * 1024;  // 1 GB per worker
     gpu_pool_ = std::make_unique<XtGemmWorkerPool>(
         workers_per_gpu, buffer_size, WorkerSchedulingPolicy::kRoundRobinGemm);
     LOG_INFO << "GPU worker pool created: " << workers_per_gpu

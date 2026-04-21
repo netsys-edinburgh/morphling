@@ -746,6 +746,13 @@ void DevicePartitionTracker::InitSeparatePerfLog(const std::string& log_dir,
            << log_path;
 }
 
+void DevicePartitionTracker::FlushPerfLog() const {
+  std::lock_guard<std::mutex> lock(perf_log_mutex_);
+  if (perf_log_file_) {
+    perf_log_file_->flush();
+  }
+}
+
 std::string DevicePartitionTracker::GetPerfLogPath() const {
   // perf_log_path_ removed; returning empty string for compatibility
   return "";

@@ -155,6 +155,8 @@ class DevicePartitionTracker {
                            const std::string& phase, const std::string& event,
                            uint64_t vt_start_us, uint64_t vt_end_us) const;
 
+  void FlushPerfLog() const;
+
   void InitPerfLog(const std::string& log_path = "./perf.log");
 
   // Initialize separate performance logs for Server and each Device
