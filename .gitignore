@@ -8,6 +8,7 @@
 node_modules
 .taskmaster
 .vscode
+.qa-vtime-qa
 .claude
 .opencode
 .tmp*
