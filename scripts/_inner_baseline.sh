@@ -16,23 +16,30 @@ python3 /app/scripts_host/replay_manifest.py \
   --output-log "$OUTDIR/vtime.log" \
   --timeout 180 &
 SVR_PID=$!
-sleep 5
+sleep "${INNER_STARTUP_WAIT:-2}"
 
-for i in $(seq 0 $(($NDEV - 1))); do
-  FLOPS=$(python3 -c "import json; f=json.load(open('$FLEET')); print(int(f[$i % len(f)]['flops']))")
-  MEMORY=$(python3 -c "import json; f=json.load(open('$FLEET')); print(int(f[$i % len(f)]['memory']))")
-  UL_BW=$(python3 -c "import json; f=json.load(open('$FLEET')); print(int(f[$i % len(f)]['ul_bw']))")
-  DL_BW=$(python3 -c "import json; f=json.load(open('$FLEET')); print(int(f[$i % len(f)]['dl_bw']))")
-  UL_LAT=$(python3 -c "import json; f=json.load(open('$FLEET')); print(f[$i % len(f)].get('ul_lat', 0.0))")
-  DL_LAT=$(python3 -c "import json; f=json.load(open('$FLEET')); print(f[$i % len(f)].get('dl_lat', 0.0))")
+# Read all device params in a single Python call (avoids 6N interpreter boots)
+DEVICE_PARAMS=$(python3 -c "
+import json, sys
+fleet = json.load(open('$FLEET'))
+n = len(fleet)
+for i in range($NDEV):
+    d = fleet[i % n]
+    print(int(d['flops']), int(d['memory']),
+          int(d['ul_bw']), int(d['dl_bw']),
+          d.get('ul_lat', 0.0), d.get('dl_lat', 0.0))
+")
 
-  morphling_device --id $i \
+DEV_IDX=0
+while IFS=' ' read -r FLOPS MEMORY UL_BW DL_BW UL_LAT DL_LAT; do
+  morphling_device --id $DEV_IDX \
     --flops "$FLOPS" --memory "$MEMORY" \
     --ul_bw "$UL_BW" --dl_bw "$DL_BW" \
     --ul_lat "$UL_LAT" --dl_lat "$DL_LAT" \
     --backend proxy --cfg config/proxy/svr.ini \
-    > "$OUTDIR/device_logs/dev_${i}.log" 2>&1 &
-done
+    > "$OUTDIR/device_logs/dev_${DEV_IDX}.log" 2>&1 &
+  DEV_IDX=$((DEV_IDX + 1))
+done <<< "$DEVICE_PARAMS"
 
 wait $SVR_PID
 RET=$?

@@ -10,7 +10,6 @@ rm -rf "$OUTDIR" logs/perf_server* 2>/dev/null
 mkdir -p "$OUTDIR/device_logs" logs
 
 docker run --rm --gpus all \
-  -e PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python \
   -v "$(pwd)/scripts:/app/scripts_host" \
   -v "$(pwd)/results:/app/results" \
   -v "$(pwd)/config:/app/config" \
