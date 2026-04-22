@@ -291,11 +291,24 @@ def _extract_baseline_runtimes(
     baseline_set = {_canonical_baseline_name(x) for x in baselines}
     out: dict[str, float] = {}
 
+    if isinstance(payload, dict):
+        baselines_payload = payload.get("baselines")
+        if isinstance(baselines_payload, dict):
+            for key, value in baselines_payload.items():
+                canon = _canonical_baseline_name(str(key))
+                if canon not in baseline_set:
+                    continue
+                runtime = _extract_runtime_ms(value)
+                if runtime is not None:
+                    out[canon] = runtime
+
     def visit(node: Any) -> None:
         if isinstance(node, dict):
             for key, value in node.items():
+                if _canonical_baseline_name(str(key)) == "normalized":
+                    continue
                 canon = _canonical_baseline_name(str(key))
-                if canon in baseline_set:
+                if canon in baseline_set and canon not in out:
                     runtime = _extract_runtime_ms(value)
                     if runtime is not None:
                         out[canon] = runtime

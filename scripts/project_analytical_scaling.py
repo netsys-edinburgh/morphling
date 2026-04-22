@@ -21,6 +21,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import baselines.strategies.cleave_strategy as _cleave_mod
 import baselines.strategies.dtfm_strategy as _dtfm_mod
 from baselines.core.config import ModelConfig
 from baselines.strategies import (
@@ -44,6 +45,231 @@ from scripts.compute_batch_runtime import (
 _dtfm_mod._HAS_GCMA = False
 
 LOG = logging.getLogger("project_analytical_scaling")
+
+
+class FastCleaveStrategy(CleaveStrategy):
+    """Cleave wrapper with linear-time topology aggregation."""
+
+    def _extract_device_runtime(self, topology):
+        incoming_bw_sum: dict[int, float] = {}
+        incoming_bw_count: dict[int, int] = {}
+        outgoing_bw_sum: dict[int, float] = {}
+        outgoing_bw_count: dict[int, int] = {}
+        incoming_lat_sum: dict[int, float] = {}
+        incoming_lat_count: dict[int, int] = {}
+        outgoing_lat_sum: dict[int, float] = {}
+        outgoing_lat_count: dict[int, int] = {}
+
+        for (src, dst), value in topology.bandwidths.items():
+            bw = float(value)
+            outgoing_bw_sum[src] = outgoing_bw_sum.get(src, 0.0) + bw
+            outgoing_bw_count[src] = outgoing_bw_count.get(src, 0) + 1
+            incoming_bw_sum[dst] = incoming_bw_sum.get(dst, 0.0) + bw
+            incoming_bw_count[dst] = incoming_bw_count.get(dst, 0) + 1
+
+        for (src, dst), value in topology.latencies.items():
+            lat = float(value)
+            outgoing_lat_sum[src] = outgoing_lat_sum.get(src, 0.0) + lat
+            outgoing_lat_count[src] = outgoing_lat_count.get(src, 0) + 1
+            incoming_lat_sum[dst] = incoming_lat_sum.get(dst, 0.0) + lat
+            incoming_lat_count[dst] = incoming_lat_count.get(dst, 0) + 1
+
+        runtimes = []
+        for spec in topology.device_specs:
+            device_id = int(spec.device_id)
+            dl_bw_mbps = incoming_bw_sum.get(device_id, 100.0) / max(
+                1, incoming_bw_count.get(device_id, 0)
+            )
+            ul_bw_mbps = outgoing_bw_sum.get(device_id, 100.0) / max(
+                1, outgoing_bw_count.get(device_id, 0)
+            )
+            dl_lat_ms = incoming_lat_sum.get(device_id, 0.1) / max(
+                1, incoming_lat_count.get(device_id, 0)
+            )
+            ul_lat_ms = outgoing_lat_sum.get(device_id, 0.1) / max(
+                1, outgoing_lat_count.get(device_id, 0)
+            )
+
+            runtimes.append(
+                _cleave_mod._DeviceRuntime(
+                    device_id=device_id,
+                    flops=self._normalize_flops(spec.compute_capacity),
+                    memory_bytes=max(1.0, spec.memory_budget_mb) * 1024.0 * 1024.0,
+                    ul_bw_bytes_per_s=max(1e-9, ul_bw_mbps) * 1024.0 * 1024.0,
+                    dl_bw_bytes_per_s=max(1e-9, dl_bw_mbps) * 1024.0 * 1024.0,
+                    ul_lat_s=max(0.0, ul_lat_ms) / 1000.0,
+                    dl_lat_s=max(0.0, dl_lat_ms) / 1000.0,
+                )
+            )
+        return runtimes
+
+
+class FastDTFMStrategy(DTFMStrategy):
+    """DTFM wrapper that caches repeated stage-boundary communication costs."""
+
+    def _dp_partition(
+        self,
+        model_config,
+        topology,
+        device_groups,
+        profiler,
+    ):
+        num_layers = max(1, model_config.num_layers)
+        stage_ids = sorted(device_groups)
+        num_stages = min(len(stage_ids), num_layers)
+        spec_by_id = {
+            spec.device_id: spec
+            for spec in topology.device_specs
+        }
+        if num_stages <= 1:
+            group = device_groups.get(stage_ids[0] if stage_ids else 0, [])
+            if not group:
+                return [], 0.0
+            worst_total = 0.0
+            for did in group:
+                sp = spec_by_id.get(did, _dtfm_mod.DeviceConfig(device_id=did))
+                total = sum(
+                    self._layer_time(li, did, sp, model_config, profiler)
+                    for li in range(num_layers)
+                )
+                worst_total = max(worst_total, total)
+            return [], worst_total
+
+        stage_prefix: list[list[float]] = []
+        for stage_idx in range(num_stages):
+            stage = stage_ids[stage_idx]
+            group = device_groups[stage]
+            rep_id = group[0]
+            rep_time = float("-inf")
+            for did in group:
+                sp = spec_by_id.get(did, _dtfm_mod.DeviceConfig(device_id=did))
+                t = sum(
+                    self._layer_time(li, did, sp, model_config, profiler)
+                    for li in range(num_layers)
+                )
+                if t > rep_time:
+                    rep_time = t
+                    rep_id = did
+            spec = spec_by_id.get(rep_id, _dtfm_mod.DeviceConfig(device_id=rep_id))
+            prefix = [0.0]
+            for layer_idx in range(num_layers):
+                layer_t = self._layer_time(
+                    layer_idx,
+                    rep_id,
+                    spec,
+                    model_config,
+                    profiler,
+                )
+                prefix.append(prefix[-1] + layer_t)
+            stage_prefix.append(prefix)
+
+        boundary_costs: list[float] = []
+        for stage_idx in range(1, num_stages):
+            boundary_costs.append(
+                self._boundary_comm_time(
+                    boundary_layer=stage_idx - 1,
+                    left_group=device_groups[stage_ids[stage_idx - 1]],
+                    right_group=device_groups[stage_ids[stage_idx]],
+                    model_config=model_config,
+                    topology=topology,
+                    profiler=profiler,
+                )
+            )
+
+        dp = [
+            [float("inf")] * num_stages
+            for _ in range(num_layers)
+        ]
+        split = [[-1] * num_stages for _ in range(num_layers)]
+
+        def range_cost(stage_idx: int, start: int, end: int) -> float:
+            prefix = stage_prefix[stage_idx]
+            return prefix[end + 1] - prefix[start]
+
+        for i in range(num_layers):
+            dp[i][0] = range_cost(0, 0, i)
+
+        for stage_idx in range(1, num_stages):
+            comm = boundary_costs[stage_idx - 1]
+            for end in range(stage_idx, num_layers):
+                for cut in range(stage_idx - 1, end):
+                    comp = range_cost(stage_idx, cut + 1, end)
+                    candidate = max(dp[cut][stage_idx - 1], comp + comm)
+                    if candidate < dp[end][stage_idx]:
+                        dp[end][stage_idx] = candidate
+                        split[end][stage_idx] = cut
+
+        points: list[int] = []
+        end = num_layers - 1
+        stage_idx = num_stages - 1
+        while stage_idx > 0:
+            cut = split[end][stage_idx]
+            if cut < 0:
+                break
+            points.append(cut)
+            end = cut
+            stage_idx -= 1
+        points.reverse()
+        bottleneck = dp[num_layers - 1][num_stages - 1]
+        if bottleneck == float("inf"):
+            points = self._fallback_points(num_layers, num_stages)
+            bottleneck = 0.0
+        return points, bottleneck
+
+
+class FastAsteroidStrategy(AsteroidStrategy):
+    """Asteroid wrapper that avoids the exact DP path at the 32-device cliff."""
+
+    _EXACT_DP_DEVICE_LIMIT = 31
+
+    def create_plan(
+        self,
+        model_config,
+        device_topology,
+        profiler=None,
+    ):
+        topology = self._normalize_topology(device_topology)
+        exec_profiles = self._build_exec_profiles(
+            model_config,
+            topology,
+            profiler,
+        )
+        max_stages = min(
+            max(1, self.num_stages + 2),
+            len(topology.device_specs),
+            max(1, model_config.num_layers),
+        )
+        num_devices = len(topology.device_specs)
+
+        best_plan = None
+        if num_devices <= self._EXACT_DP_DEVICE_LIMIT:
+            for stages in range(1, max_stages + 1):
+                candidate = self._dp_plan(
+                    model_config,
+                    topology,
+                    exec_profiles,
+                    stages,
+                )
+                if candidate is None:
+                    continue
+                if (
+                    best_plan is None
+                    or candidate.estimated_latency_ms < best_plan.estimated_latency_ms
+                ):
+                    best_plan = candidate
+
+        if best_plan is None:
+            best_plan = self._fallback_plan(
+                model_config,
+                topology,
+                exec_profiles,
+            )
+        LOG.info(
+            "Fast asteroid plan points=%s latency=%.2fms",
+            best_plan.partition_points,
+            best_plan.estimated_latency_ms,
+        )
+        return best_plan
 
 REPO = Path(__file__).resolve().parent.parent
 CALIBRATION_PATH = REPO / "results/analytical_scaling/calibration.json"
@@ -229,11 +455,11 @@ def _build_scaling_strategy(
     - Alpa: auto-tuned 3D search
     """
     if method == "cleave":
-        return CleaveStrategy()
+        return FastCleaveStrategy()
 
     if method == "dtfm":
         pp, dp = 2, num_devices // 2
-        return DTFMStrategy(
+        return FastDTFMStrategy(
             pp_size=pp,
             dp_size=dp,
             population_size=10,
@@ -244,7 +470,7 @@ def _build_scaling_strategy(
 
     if method == "asteroid":
         pp = 8
-        return AsteroidStrategy(
+        return FastAsteroidStrategy(
             num_stages=pp,
             micro_batch_size=MICRO_BATCH_SIZE,
             num_microbatches=NUM_MICROBATCHES,
