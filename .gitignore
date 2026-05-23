@@ -19,6 +19,10 @@ node_modules
 logs/
 results/
 
+# Experiment / evaluation figure outputs (kept locally, not released)
+figures/evaluation/
+figures/comparison/
+
 # CMake-generated files
 .ninja_deps
 .ninja_logs
