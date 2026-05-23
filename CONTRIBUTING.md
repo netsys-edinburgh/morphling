@@ -9,7 +9,6 @@ contributions.
 ## Table of Contents
 
 - [How to Contribute](#how-to-contribute)
-- [Merge Policy](#merge-policy)
 - [Development Environment](#development-environment)
 - [Testing Policy (Docker-only)](#testing-policy-docker-only)
 - [Commit Message Guidelines](#commit-message-guidelines)
@@ -34,23 +33,6 @@ If you fix a bug, add a regression test under `tests/python/unit/` or
 `tests/cpp/unit/` where possible.
 If you add a feature, include unit tests and update the relevant doc under
 `docs/`.
-
-## Merge Policy
-
-To keep `main` coherent and reviewed, only the project owner presses the
-**Merge** button on pull requests. Contributors with write access should:
-
-- Open pull requests targeting `main`.
-- Push commits to feature/PR branches as needed.
-- Review pull requests, leave comments, formally Approve / Request changes.
-- **Not press the Merge button** on any PR, including their own. Wait for the
-  owner to merge after approval.
-
-Pull requests must have at least one approving review (from a Code Owner
-where applicable, per [`.github/CODEOWNERS`](.github/CODEOWNERS)) and a green
-CI status before the owner merges. Direct pushes to `main` are reserved for
-the owner only. This policy is currently enforced socially and will be
-enforced via GitHub branch protection once the repository goes fully public.
 
 ## Development Environment
 
