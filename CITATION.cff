@@ -55,7 +55,7 @@ preferred-citation:
   publisher:
     name: ACM
   doi: 10.1145/3812836.3814779
-  isbn: 979-8-4007-2712-2/26/06
+  isbn: '979-8-4007-2712-2'
   url: 'https://doi.org/10.1145/3812836.3814779'
   authors:
     - family-names: Xue
