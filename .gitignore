@@ -430,6 +430,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.taskmaster/.env.example
 .venv
 env/
 venv/
