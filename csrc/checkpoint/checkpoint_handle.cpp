@@ -29,7 +29,7 @@ std::filesystem::path CheckpointHandle::GetFilePathByID(
 }
 
 void CheckpointHandle::ReadCheckpoint() {
-  int file_id = 0;  // FIXME: hard code only one file
+  int file_id = 0;  // FIXME(#49): single-file checkpoint assumption.
   auto param_filename = GetFilePathByID(file_id);
   auto index_filename = prefix_ / std::string(ARCHER_IHDEX_NAME);
 

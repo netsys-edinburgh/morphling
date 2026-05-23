@@ -55,9 +55,7 @@ void TaskExecution(const GemmArgsPtr& args) {
   void* c = pointer_to_void(args->c[0]);
   LOG_DEBUG << "Executing task locally " << buffer_args->DebugString();
 
-  // TODO: Replace with local GEMM execution logic
-  // For now, this is a placeholder - the actual computation should be
-  // implemented here
+  // TODO(#47): TaskExecution is marshal-only; no local GEMM path yet.
 
   kCachingAllocator->Free(task_buffer);
 }

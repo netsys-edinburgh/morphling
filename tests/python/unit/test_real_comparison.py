@@ -129,7 +129,9 @@ def benchmark_true_comparison(num_iterations=10, matrix_size_mb=40):
     print("\n[2] FLATBUFFERS TEST")
     print("-" * 70)
     print("  ⏳ 等待 FlatBuffers C++ 实现...")
-    print("  TODO: 实现 Python FlatBuffers 绑定或 C++ 扩展")
+    print(
+        "  TODO(#50): implement Python FlatBuffers bindings or C++ extension."
+    )
 
     # ============================================================
     # 对比

@@ -76,7 +76,8 @@ void sgemm_(const char* transa, const char* transb, const int* m, const int* n,
 // enum class CPUDataType { kFloat, kHalf };
 // enum class GPUDataType { kFloat, kHalf, kBFloat };
 
-#define MAX_GEMM_DIM 5  // FIXME: very unlikely the dimension will exceed 5
+#define MAX_GEMM_DIM \
+  5  // FIXME(#48): dim cap, dtype, and group-size assumptions.
 struct GemmArgs {
   char transa[MAX_GEMM_DIM];
   char transb[MAX_GEMM_DIM];
@@ -84,15 +85,14 @@ struct GemmArgs {
   int n[MAX_GEMM_DIM];
   int k[MAX_GEMM_DIM];
   float alpha[MAX_GEMM_DIM];
-  const float* a[MAX_GEMM_DIM];  // FIXME: assumes CPU always use float, GPU use
-                                 // different types
+  const float* a[MAX_GEMM_DIM];  // FIXME(#48): float-only operand assumption.
   int lda[MAX_GEMM_DIM];
   const float* b[MAX_GEMM_DIM];
   int ldb[MAX_GEMM_DIM];
   float beta[MAX_GEMM_DIM];
   float* c[MAX_GEMM_DIM];
   int ldc[MAX_GEMM_DIM];
-  int group_size;  // FIXME: we do not deal with group with different sizes
+  int group_size;  // FIXME(#48): heterogeneous group sizes not supported.
 
   std::string DebugString() const {
     std::string str = "GemmArgs: ";

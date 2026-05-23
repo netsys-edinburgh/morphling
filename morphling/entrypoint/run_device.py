@@ -118,9 +118,7 @@ def main():
         "logical_time": 0,
     }
 
-    # FIXME: subject to change as we do not trust the device to do its own measurement
-    # 1. latency and bandwidth are measured by the server
-    # 2. server send random number matrix multiplication tasks to the device to measure flops, results needs to be matched.
+    # FIXME(#45): server-side trust model for device-reported FLOPS/bandwidth/latency.
 
     if args.emulation:
         # enable interception of torch.mm
