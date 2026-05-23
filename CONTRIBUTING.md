@@ -8,11 +8,23 @@ contributions.
 
 ## Table of Contents
 
+- [Community](#community)
 - [How to Contribute](#how-to-contribute)
 - [Development Environment](#development-environment)
 - [Testing Policy (Docker-only)](#testing-policy-docker-only)
 - [Commit Message Guidelines](#commit-message-guidelines)
 - [Reporting Bugs](#reporting-bugs)
+
+## Community
+
+This project adopts the [Contributor Covenant Code of
+Conduct](CODE_OF_CONDUCT.md). By participating you agree to abide by its
+terms. Report unacceptable behavior privately via GitHub Security
+Advisories: <https://github.com/drunkcoding/DeviceEmulator/security/advisories/new>.
+
+Security vulnerabilities follow the same private channel. See
+[SECURITY.md](SECURITY.md) for the reporting process and response
+timeline.
 
 ## How to Contribute
 
