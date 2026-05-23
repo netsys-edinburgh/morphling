@@ -84,8 +84,24 @@ docker run --rm --gpus all device-emulator:latest python3 -m pytest tests -v
 make docker-test
 ```
 
-A GPU is required for the full suite. CPU-only contributors should still
-verify that `docker build` succeeds and rely on CI for the GPU runs.
+### What CI does (and does not)
+
+CI (`.github/workflows/build.yml`, "Build Sanity") validates build
+*inputs* only: Dockerfile lint (hadolint), `pyproject.toml` validation,
+`pip install --dry-run` of `requirements*.txt`, `MANIFEST.in` glob
+coverage, `CITATION.cff` parsing, and presence of required community
+files. It does **not** run `docker build`, does **not** import the
+package, and does **not** run pytest (GPU or CPU). Every PR must
+additionally pass `make docker-test` locally; CPU-only contributors
+should label the PR `needs-gpu-verification` so a maintainer can run
+the GPU suite.
+
+### Local fast-iteration loop
+
+For a faster local iteration loop, see [docs/DEV_README.md](docs/DEV_README.md).
+The Docker path (`make docker-test`) remains the required local
+pre-merge verification path; CI itself only validates build inputs (see
+above).
 
 If you change a `.proto` file, update both C++ and Python consumers in the
 same PR and re-run the Docker tests. See [`CLAUDE.md`](CLAUDE.md) for

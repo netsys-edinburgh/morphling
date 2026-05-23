@@ -19,9 +19,9 @@ If it fixes an issue, link it (e.g., `closes #123`).
       [Angular Commit Format](https://github.com/angular/angular/blob/main/CONTRIBUTING.md#-commit-message-format).
 - [ ] I rebuilt the Docker image after my code change
       (`docker build -t device-emulator:latest .` or `make docker-build`).
-- [ ] I ran the test suite in Docker
-      (`make docker-test` or
-      `docker run --rm --gpus all device-emulator:latest python3 -m pytest tests -v`).
+- [ ] I ran `make docker-test` locally **OR** I have labelled this PR
+      `needs-gpu-verification` for a maintainer to run it. (CI does not
+      run pytest — see [CONTRIBUTING.md §Testing Policy](../CONTRIBUTING.md#testing-policy-docker-only).)
 - [ ] I updated the tests when behavior changed.
 - [ ] I updated documentation under `docs/` when public APIs or workflows
       changed.
