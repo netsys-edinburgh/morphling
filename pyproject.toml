@@ -11,8 +11,41 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "morphling"
 version = "0.0.1"
+description = "Morphling: an emulator for distributed machine-learning training on heterogeneous edge devices (EdgeSys '26 companion code)."
 readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "The Morphling Authors" },
+]
+keywords = [
+    "distributed-training",
+    "edge-computing",
+    "gpu-emulation",
+    "cuda",
+    "green-context",
+    "research",
+]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Distributed Computing",
+    "Intended Audience :: Science/Research",
+]
 dynamic = ["dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/drunkcoding/DeviceEmulator"
+Documentation = "https://github.com/drunkcoding/DeviceEmulator#readme"
+Source = "https://github.com/drunkcoding/DeviceEmulator"
+Issues = "https://github.com/drunkcoding/DeviceEmulator/issues"
+Paper = "https://doi.org/10.1145/3812836.3814779"
 
 [project.optional-dependencies]
 test = [
