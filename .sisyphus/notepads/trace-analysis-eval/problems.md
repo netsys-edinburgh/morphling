@@ -1,2 +1,0 @@
-- LDPC source CSV files are not present inside this worktree; long-term fix is to add canonical `data/` assets to this branch or provide stable test fixtures under `tests/data/`.
-- Runtime import chain still couples lightweight runtime modules to heavyweight top-level package imports; consider decoupling to simplify unit test imports.
