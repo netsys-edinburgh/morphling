@@ -1,24 +1,23 @@
 *.pdf
 *.csv
 *.txt
+!requirements*.txt
+!CMakeLists.txt
 *.png
 *.nsys-rep
 *.ncu-rep
 *.sqlite
 node_modules
-.taskmaster
+.taskmaster/
 .vscode
 .qa-vtime-qa
 .claude
 .opencode
 .tmp*
 .sisyphus/
-figures/
-evaluation/
+.omo/
 logs/
 results/
-CLAUDE.md
-AGENTS.md
 
 # CMake-generated files
 .ninja_deps
@@ -539,6 +538,7 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+!/Makefile
 install_manifest.txt
 compile_commands.json
 

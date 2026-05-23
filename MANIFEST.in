@@ -1,0 +1,35 @@
+# sdist contents for Morphling (DeviceEmulator).
+# The Python package alone is not buildable: it needs C++/CUDA sources under
+# csrc/, vendored headers under external/, the CMake glue, and the .proto
+# files. Anything compiled at install time must appear here.
+
+include LICENSE README.md CITATION.cff
+include requirements.txt requirements-lint.txt
+include pyproject.toml CMakeLists.txt
+include _setup_helpers.py
+include CLAUDE.md
+
+recursive-include csrc *.h *.hpp *.cpp *.cc *.cu *.cuh CMakeLists.txt *.cmake
+recursive-include external *.h *.hpp *.cpp *.cc *.cu *.cuh CMakeLists.txt
+recursive-include cmake *.cmake CMakeLists.txt
+recursive-include proto *.proto
+recursive-include morphling *.py *.pyi *.proto py.typed
+recursive-include config *.ini *.json *.yaml *.yml
+recursive-include scripts *.py *.sh
+recursive-include docs *.md
+
+prune build
+prune build-verify-msg
+prune .qa-vtime-qa
+prune logs
+prune results
+prune figures
+prune __pycache__
+prune .pytest_cache
+prune .ruff_cache
+prune .omo
+prune .sisyphus
+prune .taskmaster
+
+global-exclude __pycache__ *.py[cod] *.so *.o *.a *.dylib
+global-exclude .DS_Store nohup.out .env.tmp
