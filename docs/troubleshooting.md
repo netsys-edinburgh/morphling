@@ -87,3 +87,16 @@ If a fresh clone fails to build with missing files under `external/`:
 ```bash
 git submodule update --init --recursive
 ```
+
+## Intercept log directory
+
+The C-side BLAS interceptor (`csrc/intercept/`, `csrc/memory/`) writes
+debug logs to a directory controlled by the `MORPHLING_INTERCEPT_LOG_DIR`
+environment variable. When unset, it falls back to
+`/tmp/morphling-intercept-logs/`. Create the directory before running the
+intercept code if it does not exist:
+
+```bash
+export MORPHLING_INTERCEPT_LOG_DIR="$HOME/.cache/morphling/intercept-logs"
+mkdir -p "$MORPHLING_INTERCEPT_LOG_DIR"
+```

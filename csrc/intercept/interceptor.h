@@ -163,11 +163,14 @@ void TaskExecution(const GemmArgsPtr& args);
 #include <unistd.h>
 
 // Updated includes for shared memory management
-#include "/home/eren/DeviceEmulator/csrc/memory/shared_memory_initializer.h"
-#include "/home/eren/DeviceEmulator/csrc/memory/shared_memory_manager.h"
+#include "memory/shared_memory_initializer.h"
+#include "memory/shared_memory_manager.h"
 
 #define SHM_NAME "/sgemm_shm"
-#define LOG_DIR "/home/eren/DeviceEmulator/csrc/intercept/logs/"
+// LOG_DIR honours the MORPHLING_INTERCEPT_LOG_DIR env var at runtime via
+// the helper logic in csrc/intercept/interceptor.cpp; this macro is the
+// fallback used when the env var is unset (intentionally world-writable).
+#define LOG_DIR "/tmp/morphling-intercept-logs/"
 #define EMPTY 0
 #define WRITING 1
 #define WRITTEN 2
