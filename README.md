@@ -149,6 +149,13 @@ A machine-readable citation is also available in
 [`CITATION.cff`](CITATION.cff) — GitHub renders a "Cite this repository"
 button from it.
 
+## Licensing
+
+Morphling is released under the [Apache License 2.0](LICENSE). Bundled
+and linked third-party components and their licenses are listed in
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md); see also
+[`NOTICE`](NOTICE).
+
 ## Acknowledgements
 
 Morphling builds on excellent open-source work:
