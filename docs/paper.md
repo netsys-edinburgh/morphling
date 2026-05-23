@@ -43,36 +43,36 @@ Celsius. The emulator scales to thousands of emulated devices on a single
 GPU server, enabling practical what-if studies of edge training without
 large physical device fleets.
 
-## Figure inventory
+## Figure inventory and data availability
 
-The table below lists figures referenced in the paper and the scripts /
-artefacts that produce them. **Reproduction commands are TODO(owner)** — the
-repository owner will fill these in based on the camera-ready figure list. For
-each row, "Status" reflects whether the figure currently exists under
-`figures/` in this repo.
+The figures in the EdgeSys '26 camera-ready paper were produced by an
+experiment pipeline that depended on a private companion baselines
+repository and on per-device measurement data collected on hardware
+that is not part of this release. The pipeline scripts were therefore
+removed from this open-source distribution (see commit
+`chore(release): purge paper figures, plot scripts, and morphling.evaluation`).
 
-| ID | Caption (paper) | Source / script | Output under `figures/` | Status |
-|---|---|---|---|---|
-| `fig:cpu-gpu-shape` | GEMM sensitivity to shape on Samsung S24 Ultra | TODO(owner) | TODO(owner) | TODO(owner) |
-| `fig:cpu-gpu-comm` | GEMM (left) and GEMV (right) results motivate joint modeling of compute and communication | TODO(owner) | TODO(owner) | TODO(owner) |
-| `fig:thermal-throttling` | Thermal throttling on Samsung S24 Ultra (CPU left, GPU right) | TODO(owner) | TODO(owner) | TODO(owner) |
-| `fig:num_devices_per_gpu_config` | Maximum emulated devices as host GPUs increase | TODO(owner) | TODO(owner) | TODO(owner) |
-| `fig:emulator_latency_dilution` | Latency dilution factor versus number of emulated devices | TODO(owner) | TODO(owner) | TODO(owner) |
-| `fig:cache_performance_by_gflops` | Execution-time decomposition across GFLOPS with and without GPU buffer reuse | TODO(owner) | TODO(owner) | TODO(owner) |
-| `fig:latency-variability` (appendix) | Achieved efficiency vs. workload size (GFLOPs) | TODO(owner) | TODO(owner) | TODO(owner) |
-| `fig:motiovation-rtt-layout` (appendix) | On-device memory access overhead vs. network delay | TODO(owner) | TODO(owner) | TODO(owner) |
+For all figures below the status is **[data not public]**: the source
+data, the plotting scripts, and the rendered PDFs are not part of this
+repository.
 
-### `figures/` cleanup pending
+| ID | Caption (paper) | Status |
+|---|---|---|
+| `fig:cpu-gpu-shape` | GEMM sensitivity to shape on Samsung S24 Ultra | [data not public] |
+| `fig:cpu-gpu-comm` | GEMM (left) and GEMV (right) results motivate joint modeling of compute and communication | [data not public] |
+| `fig:thermal-throttling` | Thermal throttling on Samsung S24 Ultra (CPU left, GPU right) | [data not public] |
+| `fig:num_devices_per_gpu_config` | Maximum emulated devices as host GPUs increase | [data not public] |
+| `fig:emulator_latency_dilution` | Latency dilution factor versus number of emulated devices | [data not public] |
+| `fig:cache_performance_by_gflops` | Execution-time decomposition across GFLOPS with and without GPU buffer reuse | [data not public] |
+| `fig:latency-variability` (appendix) | Achieved efficiency vs. workload size (GFLOPs) | [data not public] |
+| `fig:motiovation-rtt-layout` (appendix) | On-device memory access overhead vs. network delay | [data not public] |
 
-The repository currently tracks ~3.4 MB of PDF/PNG outputs under `figures/`
-including some that originated from an unrelated LDPC experiment
-(`deadline_compliance`, `decode_latency_cdf`, `violation_inefficiency_events`,
-`workload_vs_latency`, `timeline_decode_and_sm`, `fig_e2e_latency`,
-`figures/comparison/`, `figures/evaluation/`). The owner will decide which
-files correspond to EdgeSys '26 paper figures (keep, map to rows above) and
-which to delete. Tracked as a follow-up in
-[`.omo/plans/opensource-readiness.md`](../.omo/plans/opensource-readiness.md)
-§W5 / §7.
+If you need to reproduce or extend any figure, the runtime APIs that
+the original pipeline exercised remain available in this repository
+(`morphling/runtime/*`, `morphling/hooks/*`, the C++ backend under
+`csrc/backend/`, and the CUDA green-context layer documented in
+[`docs/green-context.md`](green-context.md)). The plotting layer must
+be re-implemented against your own measurement data.
 
 ## BibTeX
 
