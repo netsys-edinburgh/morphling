@@ -1,3 +1,16 @@
+"""Demo: globally decorate every torch / torch.Tensor callable.
+
+NOT a pytest test. This script monkey-patches torch.* and torch.Tensor.*
+at module import time. Running it inside the pytest process corrupts
+torch for every subsequently collected test (isinstance checks fail,
+torch.cuda lazy init throws ``registerOp not callable``, etc.).
+
+The leading underscore in the filename keeps pytest from auto-collecting
+it. Run it directly::
+
+    python3 tests/python/unit/_demo_pytorch_decorator.py
+"""
+
 import torch
 
 from morphling.common.keywords import pyobj_keywords, pytorch_keywords
