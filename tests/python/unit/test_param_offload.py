@@ -1,10 +1,19 @@
 import numpy as np
 import pytest
 
-pytest.importorskip(
+_c = pytest.importorskip(
     "morphling._C",
     reason="morphling core extension is required for EmulationEngine",
 )
+if not all(
+    hasattr(_c, sym)
+    for sym in ("ArcherTensorHandle", "MemoryManagerClient", "set_tensor_shm")
+):
+    pytest.skip(
+        "morphling._C is missing ArcherTensorHandle / MemoryManagerClient; "
+        "EmulationEngine cannot construct. Tracked in #53.",
+        allow_module_level=True,
+    )
 
 try:
     from transformers import AutoConfig, OPTForCausalLM

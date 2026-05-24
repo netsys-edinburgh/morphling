@@ -1,8 +1,20 @@
-import random
+import pytest
 
-import numpy as np
-import torch
-from transformers import AdamW, GPT2LMHeadModel, GPT2Tokenizer, set_seed
+pytest.skip(
+    "transformers.AdamW was removed in transformers >= 4.x. Tracked in #52.",
+    allow_module_level=True,
+)
+
+import random  # noqa: E402
+
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+from transformers import (  # noqa: E402
+    AdamW,
+    GPT2LMHeadModel,
+    GPT2Tokenizer,
+    set_seed,
+)
 
 # Set the seed for reproducibility
 seed = 42

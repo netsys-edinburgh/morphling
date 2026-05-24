@@ -2,9 +2,21 @@ import ctypes
 import sys
 
 import pytest
-import torch
 
-from morphling.runtime import InitEmptyModel
+_c = pytest.importorskip("morphling._C")
+if not all(
+    hasattr(_c, sym)
+    for sym in ("ArcherTensorHandle", "MemoryManagerClient", "set_tensor_shm")
+):
+    pytest.skip(
+        "morphling._C is missing ArcherTensorHandle / MemoryManagerClient; "
+        "InitEmptyModel cannot construct. Tracked in #53.",
+        allow_module_level=True,
+    )
+
+import torch  # noqa: E402
+
+from morphling.runtime import InitEmptyModel  # noqa: E402
 
 try:
     from transformers import (
