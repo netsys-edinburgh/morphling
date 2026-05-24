@@ -17,6 +17,16 @@ def _repo_root() -> Path:
 
 
 def _bootstrap_morphling() -> None:
+    # Prefer the real installed/in-tree morphling so other tests in the
+    # same pytest session that need morphling.set_backend, hooks, etc.
+    # are not poisoned by a stub module.
+    try:
+        importlib.import_module("morphling")
+        importlib.import_module("morphling.runtime")
+        return
+    except Exception:
+        pass
+
     root = _repo_root()
     if "morphling" not in sys.modules:
         morphling_mod = types.ModuleType("morphling")
@@ -90,8 +100,20 @@ def _write_csv(path: Path, rows: list[dict[str, int]]) -> None:
     pd.DataFrame(rows).to_csv(path, index=False)
 
 
+def _maybe_ldpc_csv(name: str) -> Path:
+    try:
+        return _resolve_ldpc_csv(name)
+    except FileNotFoundError:
+        import pytest
+
+        pytest.skip(
+            f"LDPC trace fixture {name!r} not present "
+            "(external paper data, see docs/paper.md)"
+        )
+
+
 def test_parse_with_ctrl() -> None:
-    csv_path = _resolve_ldpc_csv("ldpc_trace_with_ctrl.csv")
+    csv_path = _maybe_ldpc_csv("ldpc_trace_with_ctrl.csv")
     line_count = sum(1 for _ in csv_path.open(encoding="utf-8"))
     assert line_count == 29816
     adapter = LdpcTraceAdapter(csv_path)
@@ -100,7 +122,7 @@ def test_parse_with_ctrl() -> None:
 
 
 def test_parse_without_ctrl() -> None:
-    csv_path = _resolve_ldpc_csv("ldpc_trace_without_ctrl.csv")
+    csv_path = _maybe_ldpc_csv("ldpc_trace_without_ctrl.csv")
     line_count = sum(1 for _ in csv_path.open(encoding="utf-8"))
     assert line_count == 27463
     adapter = LdpcTraceAdapter(csv_path)

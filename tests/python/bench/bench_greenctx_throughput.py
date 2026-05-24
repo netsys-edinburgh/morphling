@@ -93,6 +93,16 @@ def _ensure_ld_library_path() -> None:
 
 
 def _bootstrap_morphling() -> None:
+    # Prefer the real installed/in-tree morphling so other tests in the
+    # same pytest session that need morphling.set_backend, hooks, etc.
+    # are not poisoned by a stub module.
+    try:
+        importlib.import_module("morphling")
+        importlib.import_module("morphling.runtime")
+        return
+    except Exception:
+        pass
+
     root = Path(__file__).resolve().parents[3]
     sys.path.insert(0, str(root))
 
