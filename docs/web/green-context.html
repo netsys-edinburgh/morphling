@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Per-GEMM Green Contexts — Morphling Documentation</title>
+<meta name="description" content="Morphling: an emulator for distributed machine-learning training on heterogeneous edge devices. EdgeSys '26 companion code." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400;9..144,500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/styles.css" />
+<script>
+  // Apply stored theme BEFORE first paint to avoid flash
+  (() => {
+    try {
+      const t = localStorage.getItem("morphling-docs-theme");
+      if (t === "light" || t === "dark") {
+        document.documentElement.setAttribute("data-theme", t);
+      }
+    } catch {
+      /* ignore */
+    }
+  })();
+</script>
+</head>
+<body>
+
+<a href="#main" class="skip-link">Skip to content</a>
+
+<!-- ============ NAVBAR ============ -->
+<header id="navbar">
+  <div class="navbar-inner">
+    <button type="button" class="menu-btn" aria-label="Open navigation" data-menu-toggle>
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+
+    <a class="logo" href="index.html">
+      <span class="lockup-mark" aria-hidden="true"></span>
+      <span>Morphling</span>
+    </a>
+
+    <button type="button" class="search-pill" data-search-open aria-label="Open search">
+      <span style="display:inline-flex;align-items:center;gap:0.5rem;">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Search docs…
+      </span>
+      <span class="kbd">⌘ K</span>
+    </button>
+
+    <button type="button" class="assistant-pill" aria-label="Ask assistant">
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.75L11.412 7.587L16.25 9.5L11.412 11.413L9.5 16.25L7.587 11.413L2.75 9.5L7.587 7.587L9.5 2.75Z"/></svg>
+      Ask the Emulator
+    </button>
+
+    <button type="button" class="theme-btn" data-theme-toggle aria-label="Toggle theme">
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ============ TAB BAR ============ -->
+<nav id="tabbar" aria-label="Sections">
+  <div class="tabbar-inner">
+    <a class="tab" href="index.html">Get Started</a>
+    <a class="tab" href="green-context.html" aria-current="page">Internals</a>
+    <a class="tab" href="deployment.html">Deployment</a>
+    <a class="tab" href="paper.html">Paper</a>
+    <a class="tab" href="https://github.com/drunkcoding/DeviceEmulator">GitHub ↗</a>
+  </div>
+</nav>
+
+<div class="shell">
+
+  
+
+  <!-- Sidebar -->
+  <aside class="sidebar" aria-label="Documentation navigation">
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7L8 5z"/></svg>
+        Get Started
+      </div>
+      <ul>
+        <li><a href="index.html">Welcome to Morphling</a></li>
+        <li><a href="install.html">Installation</a></li>
+        <li><a href="quickstart.html">Quickstart</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Internals
+      </div>
+      <ul>
+        <li><a href="green-context.html" aria-current="page">Per-GEMM Green Contexts</a></li>
+        <li><a href="worker-pool.html">Worker Pool &amp; Scheduling</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Deployment
+      </div>
+      <ul>
+        <li><a href="deployment.html">Virtual &amp; Physical Devices</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        Reference
+      </div>
+      <ul>
+        <li><a href="troubleshooting.html">Troubleshooting</a></li>
+        <li><a href="paper.html">EdgeSys '26 Paper</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main id="main" class="content">
+
+    <div class="breadcrumbs"><a href="index.html">Get Started</a><span class="sep">/</span><a href="green-context.html">Internals</a><span class="sep">/</span><span>Green Contexts</span></div>
+    <div class="hero-eyebrow"><span class="dot"></span> Internals</div>
+    <h1>Per-GEMM CUDA<br/>Green Contexts.</h1>
+    <p class="hero-sub">
+      Morphling can switch CUDA green contexts per linear GEMM using a
+      trace-driven controller and autograd hooks. Before each linear GEMM
+      dispatch in forward and backward the controller activates a partition;
+      after the GEMM, a structured log entry is recorded.
+    </p>
+
+    <h2 id="how">How it works</h2>
+    <ul class="bul">
+      <li>Before each linear GEMM dispatch in forward and backward, the
+        controller is asked to activate a partition with
+        <code>activate_for_time(elapsed_us)</code>.</li>
+      <li><code>elapsed_us</code> is a wall-clock timestamp in microseconds
+        taken from the first GEMM after the green context is set. Timestamps
+        are relative to this epoch.</li>
+      <li>After each GEMM completes, a structured log entry is recorded.</li>
+    </ul>
+
+    <h2 id="config">Configuration</h2>
+    <p>Configure a <code>GreenContextController</code> in wall-clock mode with
+    a trace file:</p>
+<pre><code><span class="tok-k">from</span> morphling.runtime.green_context <span class="tok-k">import</span> (
+    GreenContextConfig,
+    GreenContextController,
+)
+
+cfg = GreenContextConfig(
+    enabled=<span class="tok-k">True</span>,
+    trace_path=<span class="tok-s">"traces/second_level.trace"</span>,
+    clock_mode=<span class="tok-s">"wall"</span>,
+)
+controller = GreenContextController.from_config(device_id=0, cfg=cfg)</code></pre>
+
+    <ul class="bul">
+      <li><code>enabled=True</code> turns on green context management;
+        otherwise an off backend is used and per-GEMM switching is disabled.</li>
+      <li><code>clock_mode="wall"</code> is required so
+        <code>activate_for_time(elapsed_us)</code> uses wall-clock
+        microseconds instead of step-based indices.</li>
+      <li><code>trace_path</code> must point to a trace the selected backend
+        can load.</li>
+    </ul>
+
+    <h2 id="hooks">Hook usage and GEMM log format</h2>
+    <p>Install linear hooks with the controller:</p>
+<pre><code><span class="tok-k">from</span> morphling.hooks <span class="tok-k">import</span> apply_hooks, get_gemm_log
+
+apply_hooks(<span class="tok-s">"linear"</span>, greenctx=controller)</code></pre>
+
+    <p>This routes linear GEMMs through a custom autograd function that:</p>
+    <ul class="bul">
+      <li>Activates the configured green context before each GEMM in forward,
+        <code>backward_grad_input</code>, and <code>backward_grad_weight</code>.</li>
+      <li>Deactivates the context after each GEMM.</li>
+      <li>Appends a dictionary to an in-memory GEMM log for each operation.</li>
+    </ul>
+
+    <p>Each log entry has the following fields:</p>
+
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>gemm_idx</code></td><td>int</td><td>Index of the GEMM within the run</td></tr>
+        <tr><td><code>phase</code></td><td>str</td><td><code>"forward"</code>, <code>"backward_grad_input"</code>, or <code>"backward_grad_weight"</code></td></tr>
+        <tr><td><code>start_us</code></td><td>int</td><td>Wall-clock μs when <code>activate_for_time</code> was called</td></tr>
+        <tr><td><code>end_us</code></td><td>int</td><td>Wall-clock μs after the GEMM completes</td></tr>
+        <tr><td><code>duration_us</code></td><td>int</td><td><code>end_us - start_us</code></td></tr>
+        <tr><td><code>sm_count</code></td><td>int / None</td><td>SMs requested, or <code>None</code> if backend doesn't report</td></tr>
+        <tr><td><code>greenctx_enabled</code></td><td>bool</td><td>Whether a controller was configured</td></tr>
+        <tr><td><code>m, n, k</code></td><td>int</td><td>GEMM dimensions for this op</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="example">End-to-end example</h2>
+<pre><code><span class="tok-k">import</span> torch
+
+<span class="tok-k">from</span> morphling.runtime.green_context <span class="tok-k">import</span> (
+    GreenContextConfig, GreenContextController,
+)
+<span class="tok-k">from</span> morphling.hooks <span class="tok-k">import</span> apply_hooks, get_gemm_log
+
+cfg = GreenContextConfig(
+    enabled=<span class="tok-k">True</span>,
+    trace_path=<span class="tok-s">"traces/second_level.trace"</span>,
+    clock_mode=<span class="tok-s">"wall"</span>,
+)
+controller = GreenContextController.from_config(device_id=0, cfg=cfg)
+
+apply_hooks(<span class="tok-s">"linear"</span>, greenctx=controller)
+
+model = torch.nn.Linear(16, 16).cuda()
+x = torch.randn(8, 16, device=<span class="tok-s">"cuda"</span>, requires_grad=<span class="tok-k">True</span>)
+target = torch.randn(8, 16, device=<span class="tok-s">"cuda"</span>)
+
+out = model(x)
+loss = torch.nn.functional.mse_loss(out, target)
+loss.backward()
+
+<span class="tok-fn">print</span>(get_gemm_log()[0])</code></pre>
+
+    <h2 id="cleanup">Cleanup ordering (critical)</h2>
+    <div class="callout warn">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <div>
+        Green contexts share lifetime with the CUDA runtime. Mis-ordered
+        teardown SIGSEGVs at process exit. Follow the order below exactly.
+      </div>
+    </div>
+    <ol class="bul">
+      <li><code>cuCtxSetCurrent(ctx)</code> <strong>before</strong> destroying
+        any resource bound to that context (cuBLAS handles, streams, device
+        memory).</li>
+      <li>Free pooled / cached CUDA memory <strong>before</strong> destroying
+        the contexts that own it.</li>
+      <li>After destroying all green contexts, call
+        <code>cudaSetDevice(gpu_id)</code> to restore the primary context — without
+        this, CUDA runtime cleanup at process exit will SIGSEGV.</li>
+      <li>Worker threads must <code>Stop()</code> (join) before destroying
+        CUDA resources.</li>
+    </ol>
+
+    <p>This is implemented inside <code>morphling.runtime.green_context</code>;
+    downstream users do not need to manage it manually as long as they let
+    <code>GreenContextController</code> go out of scope before module teardown.</p>
+
+    <h2 id="step">SM step sizes by compute capability</h2>
+    <table>
+      <thead><tr><th>Compute capability</th><th>SM partition step</th></tr></thead>
+      <tbody>
+        <tr><td>8.x (Ampere)</td><td>2 SMs</td></tr>
+        <tr><td>9.0+ (Hopper)</td><td>8 SMs</td></tr>
+      </tbody>
+    </table>
+    <p>A trace requesting a non-multiple SM count is rounded up to the next
+    valid multiple, which can change observed performance. Verify trace SM
+    counts against your target GPU.</p>
+
+
+    <div class="page-nav">
+      <a href="quickstart.html">
+        <div class="label">← Previous</div>
+        <div class="title">Quickstart</div>
+      </a>
+      <a href="worker-pool.html" class="next">
+        <div class="label">Next →</div>
+        <div class="title">Worker Pool</div>
+      </a>
+    </div>
+  </main>
+
+  <aside class="toc" aria-label="On this page">
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#config">Configuration</a></li>
+      <li><a href="#hooks">Hooks & log</a></li>
+      <li><a href="#example">Example</a></li>
+      <li><a href="#cleanup">Cleanup ordering</a></li>
+      <li><a href="#step">SM step sizes</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="docs-footer">
+  <div>© 2026 The Morphling Authors · Apache-2.0</div>
+  <div>
+    <a href="https://github.com/drunkcoding/DeviceEmulator">GitHub</a> ·
+    <a href="https://doi.org/10.1145/3812836.3814779">DOI</a> ·
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </div>
+</footer>
+
+<!-- ============ Search modal ============ -->
+<div id="search-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Search">
+  <div class="modal">
+    <input id="search-input" type="text" placeholder="Search docs… (try 'green context')" autocomplete="off" />
+    <div id="search-results" class="results"></div>
+  </div>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

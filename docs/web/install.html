@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en" data-page="install">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Installation — Morphling Documentation</title>
+<meta name="description" content="Morphling: an emulator for distributed machine-learning training on heterogeneous edge devices. EdgeSys '26 companion code." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400;9..144,500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/styles.css" />
+<script>
+  // Apply stored theme BEFORE first paint to avoid flash
+  (() => {
+    try {
+      const t = localStorage.getItem("morphling-docs-theme");
+      if (t === "light" || t === "dark") {
+        document.documentElement.setAttribute("data-theme", t);
+      }
+    } catch {
+      /* ignore */
+    }
+  })();
+</script>
+</head>
+<body>
+
+<a href="#main" class="skip-link">Skip to content</a>
+
+<!-- ============ NAVBAR ============ -->
+<header id="navbar">
+  <div class="navbar-inner">
+    <button type="button" class="menu-btn" aria-label="Open navigation" data-menu-toggle>
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+
+    <a class="logo" href="index.html" aria-current="page">
+      <span class="lockup-mark" aria-hidden="true"></span>
+      <span>Morphling</span>
+    </a>
+
+    <button type="button" class="search-pill" data-search-open aria-label="Open search">
+      <span style="display:inline-flex;align-items:center;gap:0.5rem;">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Search docs…
+      </span>
+      <span class="kbd">⌘ K</span>
+    </button>
+
+    <button type="button" class="assistant-pill" aria-label="Ask assistant">
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.75L11.412 7.587L16.25 9.5L11.412 11.413L9.5 16.25L7.587 11.413L2.75 9.5L7.587 7.587L9.5 2.75Z"/></svg>
+      Ask the Emulator
+    </button>
+
+    <button type="button" class="theme-btn" data-theme-toggle aria-label="Toggle theme">
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ============ TAB BAR ============ -->
+<nav id="tabbar" aria-label="Sections">
+  <div class="tabbar-inner">
+    <a class="tab" href="index.html">Get Started</a>
+    <a class="tab" href="green-context.html">Internals</a>
+    <a class="tab" href="deployment.html">Deployment</a>
+    <a class="tab" href="paper.html">Paper</a>
+    <a class="tab" href="https://github.com/drunkcoding/DeviceEmulator">GitHub ↗</a>
+  </div>
+</nav>
+
+<div class="shell">
+
+  
+
+  <!-- Sidebar -->
+  <aside class="sidebar" aria-label="Documentation navigation">
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7L8 5z"/></svg>
+        Get Started
+      </div>
+      <ul>
+        <li><a href="index.html">Welcome to Morphling</a></li>
+        <li><a href="install.html" aria-current="page">Installation</a></li>
+        <li><a href="quickstart.html">Quickstart</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Internals
+      </div>
+      <ul>
+        <li><a href="green-context.html">Per-GEMM Green Contexts</a></li>
+        <li><a href="worker-pool.html">Worker Pool &amp; Scheduling</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Deployment
+      </div>
+      <ul>
+        <li><a href="deployment.html">Virtual &amp; Physical Devices</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        Reference
+      </div>
+      <ul>
+        <li><a href="troubleshooting.html">Troubleshooting</a></li>
+        <li><a href="paper.html">EdgeSys '26 Paper</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main id="main" class="content">
+
+    <div class="breadcrumbs"><a href="index.html">Get Started</a><span class="sep">/</span><span>Installation</span></div>
+    <div class="hero-eyebrow"><span class="dot"></span> Step 1 of 2</div>
+    <h1>Installation</h1>
+    <p class="hero-sub">
+      The canonical Morphling environment is the Docker image defined by
+      <code>Dockerfile</code>. The image is the source of truth — every Python
+      or C++ change requires a rebuild.
+    </p>
+
+    <h2 id="requirements">Requirements</h2>
+    <ul class="bul">
+      <li>Linux host with Docker 20.10+ and Docker Compose 2.0+.</li>
+      <li>NVIDIA Container Toolkit (<code>--gpus all</code>) for GPU paths.</li>
+      <li>NVIDIA GPU with compute capability 7.0+. Development uses L40S.</li>
+      <li>Green-context partitioning needs driver <strong>12.5 or newer</strong>.</li>
+      <li>At least 8 GB RAM and 10 GB free disk for the image and cache.</li>
+    </ul>
+
+    <h2 id="build">Build the image</h2>
+    <p>Run from the repository root:</p>
+<pre><code><span class="tok-c"># enables BuildKit + ccache mount layer</span>
+<span class="tok-k">DOCKER_BUILDKIT</span>=1 docker build -t device-emulator:latest .
+
+<span class="tok-c"># or via the Makefile target</span>
+make docker-build</code></pre>
+
+    <div class="callout">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+      <div>
+        <strong>ccache is cached across rebuilds.</strong> The Dockerfile
+        mounts <code>type=cache,target=/ccache</code> capped at 5&nbsp;GB, so a
+        second build only recompiles changed translation units. Inspect with
+        <code>docker run --rm device-emulator:latest ccache -s</code>.
+      </div>
+    </div>
+
+    <h2 id="run">Start an interactive container</h2>
+<pre><code>docker run --rm -itd --gpus=all \
+  --ulimit memlock=-1:-1 \
+  --cap-add IPC_LOCK \
+  device-emulator bash</code></pre>
+
+    <p>
+      <code>--cap-add IPC_LOCK</code> and the unlimited <code>memlock</code> rlimit
+      are required because Morphling's pinned-host and aligned buffer pools call
+      <code>mlock</code> to stabilise latency.
+    </p>
+
+    <h2 id="verify">Verify the install</h2>
+    <p>Run the full Python test suite inside a freshly built image:</p>
+<pre><code>docker run --rm --gpus all device-emulator:latest \
+  python3 -m pytest tests -v</code></pre>
+
+    <p>The image builds <strong>all</strong> C++ test categories at image-build
+    time (unit, CUDA/cuBLAS, XtGemm/worker, zerocopy, benchmarks). See the
+    <a href="https://github.com/drunkcoding/DeviceEmulator/blob/main/tests/cpp/README.md">C++ test catalogue</a>
+    for the full list.</p>
+
+    <h2 id="native">Native (non-Docker) development</h2>
+    <p>Possible, but not the supported path. See <code>docs/DEV_README.md</code>
+    for prerequisites and <code>docs/troubleshooting.md</code> for the common
+    library-loading errors.</p>
+
+
+    <div class="page-nav">
+      <a href="index.html">
+        <div class="label">← Previous</div>
+        <div class="title">Welcome</div>
+      </a>
+      <a href="quickstart.html" class="next">
+        <div class="label">Next →</div>
+        <div class="title">Quickstart</div>
+      </a>
+    </div>
+  </main>
+
+  <aside class="toc" aria-label="On this page">
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#requirements">Requirements</a></li>
+      <li><a href="#build">Build the image</a></li>
+      <li><a href="#run">Start a container</a></li>
+      <li><a href="#verify">Verify</a></li>
+      <li><a href="#native">Native dev</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="docs-footer">
+  <div>© 2026 The Morphling Authors · Apache-2.0</div>
+  <div>
+    <a href="https://github.com/drunkcoding/DeviceEmulator">GitHub</a> ·
+    <a href="https://doi.org/10.1145/3812836.3814779">DOI</a> ·
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </div>
+</footer>
+
+<!-- ============ Search modal ============ -->
+<div id="search-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Search">
+  <div class="modal">
+    <input id="search-input" type="text" placeholder="Search docs… (try 'green context')" autocomplete="off" />
+    <div id="search-results" class="results"></div>
+  </div>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

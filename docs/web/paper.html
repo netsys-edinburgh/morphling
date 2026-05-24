@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>EdgeSys '26 Paper — Morphling Documentation</title>
+<meta name="description" content="Morphling: an emulator for distributed machine-learning training on heterogeneous edge devices. EdgeSys '26 companion code." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400;9..144,500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/styles.css" />
+<script>
+  // Apply stored theme BEFORE first paint to avoid flash
+  (() => {
+    try {
+      const t = localStorage.getItem("morphling-docs-theme");
+      if (t === "light" || t === "dark") {
+        document.documentElement.setAttribute("data-theme", t);
+      }
+    } catch {
+      /* ignore */
+    }
+  })();
+</script>
+</head>
+<body>
+
+<a href="#main" class="skip-link">Skip to content</a>
+
+<!-- ============ NAVBAR ============ -->
+<header id="navbar">
+  <div class="navbar-inner">
+    <button type="button" class="menu-btn" aria-label="Open navigation" data-menu-toggle>
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+
+    <a class="logo" href="index.html">
+      <span class="lockup-mark" aria-hidden="true"></span>
+      <span>Morphling</span>
+    </a>
+
+    <button type="button" class="search-pill" data-search-open aria-label="Open search">
+      <span style="display:inline-flex;align-items:center;gap:0.5rem;">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Search docs…
+      </span>
+      <span class="kbd">⌘ K</span>
+    </button>
+
+    <button type="button" class="assistant-pill" aria-label="Ask assistant">
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.75L11.412 7.587L16.25 9.5L11.412 11.413L9.5 16.25L7.587 11.413L2.75 9.5L7.587 7.587L9.5 2.75Z"/></svg>
+      Ask the Emulator
+    </button>
+
+    <button type="button" class="theme-btn" data-theme-toggle aria-label="Toggle theme">
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ============ TAB BAR ============ -->
+<nav id="tabbar" aria-label="Sections">
+  <div class="tabbar-inner">
+    <a class="tab" href="index.html">Get Started</a>
+    <a class="tab" href="green-context.html">Internals</a>
+    <a class="tab" href="deployment.html">Deployment</a>
+    <a class="tab" href="paper.html" aria-current="page">Paper</a>
+    <a class="tab" href="https://github.com/drunkcoding/DeviceEmulator">GitHub ↗</a>
+  </div>
+</nav>
+
+<div class="shell">
+
+  
+
+  <!-- Sidebar -->
+  <aside class="sidebar" aria-label="Documentation navigation">
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7L8 5z"/></svg>
+        Get Started
+      </div>
+      <ul>
+        <li><a href="index.html">Welcome to Morphling</a></li>
+        <li><a href="install.html">Installation</a></li>
+        <li><a href="quickstart.html">Quickstart</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Internals
+      </div>
+      <ul>
+        <li><a href="green-context.html">Per-GEMM Green Contexts</a></li>
+        <li><a href="worker-pool.html">Worker Pool &amp; Scheduling</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Deployment
+      </div>
+      <ul>
+        <li><a href="deployment.html">Virtual &amp; Physical Devices</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        Reference
+      </div>
+      <ul>
+        <li><a href="troubleshooting.html">Troubleshooting</a></li>
+        <li><a href="paper.html" aria-current="page">EdgeSys '26 Paper</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main id="main" class="content">
+
+    <div class="breadcrumbs"><a href="index.html">Get Started</a><span class="sep">/</span><span>Paper</span></div>
+    <div class="hero-eyebrow"><span class="dot"></span> EdgeSys '26</div>
+    <h1>Morphling: Emulator<br/>for Distributed ML<br/>at the Edge.</h1>
+    <p class="hero-sub">
+      EdgeSys '26 paper companion. Canonical place for paper metadata,
+      abstract, and figure-reproduction commands.
+    </p>
+
+    <h2 id="venue">Venue</h2>
+    <p><strong>The 24th Annual International Conference on Mobile Systems,
+    Applications and Services (MobiSys Workshop '26)</strong>, Cambridge,
+    United Kingdom, June 21–25, 2026.</p>
+    <ul class="bul">
+      <li>DOI: <a href="https://doi.org/10.1145/3812836.3814779"><code>10.1145/3812836.3814779</code></a></li>
+      <li>ISBN: <code>979-8-4007-2712-2/26/06</code></li>
+      <li>License: CC BY 4.0</li>
+    </ul>
+
+    <h2 id="authors">Authors</h2>
+    <ul class="bul">
+      <li>Leyang Xue (The University of Edinburgh)</li>
+      <li>Yufeng Xia (The University of Edinburgh)</li>
+      <li>Eren Mendi (The University of Edinburgh)</li>
+      <li>Ismaeel Bashir (The University of Edinburgh)</li>
+      <li>Jiaxun Yang (The University of Edinburgh)</li>
+      <li>Myungjin Lee (Cisco Research)</li>
+      <li>Mahesh K. Marina (The University of Edinburgh)</li>
+    </ul>
+
+    <h2 id="abstract">Abstract</h2>
+    <p>Evaluating distributed ML training on heterogeneous edge devices at
+    scale demands an emulator that jointly provides system efficiency for
+    scaling to a large number of devices, single-device fidelity, and
+    distributed-device fidelity. No existing tool meets all three: device
+    emulators incur high per-device overhead, performance models lack a
+    distributed runtime, and training simulators omit device-level thermal
+    dynamics and heterogeneity.</p>
+
+    <p>Morphling addresses these gaps with a measurement-driven approach and a
+    unified backend that runs unmodified training scripts on both real and
+    emulated devices: it intercepts backend dispatch calls, fits
+    stride-aware and thermal-aware models from real measurements, decouples
+    memory demand from device count, and uses event-driven virtual time to
+    preserve execution semantics. The performance model yields latency MAE on
+    the order of milliseconds on CPU and GPU, and temperature MAE within a few
+    degrees Celsius. The emulator scales to thousands of emulated devices on
+    a single GPU server, enabling practical what-if studies of edge training
+    without large physical device fleets.</p>
+
+    <h2 id="figures">Figure inventory &amp; data availability</h2>
+    <p>The figures in the EdgeSys '26 camera-ready paper were produced by an
+    experiment pipeline that depended on a private companion baselines
+    repository and on per-device measurement data collected on hardware that
+    is not part of this release. The pipeline scripts were therefore removed
+    from this open-source distribution (commit
+    <code>chore(release): purge paper figures, plot scripts, and morphling.evaluation</code>).</p>
+
+    <p>For all figures below the status is <strong>[data not public]</strong>:
+    the source data, the plotting scripts, and the rendered PDFs are not part
+    of this repository.</p>
+
+    <table>
+      <thead><tr><th>ID</th><th>Caption (paper)</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><code>fig:cpu-gpu-shape</code></td><td>GEMM sensitivity to shape on Samsung S24 Ultra</td><td>data not public</td></tr>
+        <tr><td><code>fig:cpu-gpu-comm</code></td><td>GEMM (left) and GEMV (right) motivate joint compute/comm modeling</td><td>data not public</td></tr>
+        <tr><td><code>fig:thermal-throttling</code></td><td>Thermal throttling on Samsung S24 Ultra (CPU left, GPU right)</td><td>data not public</td></tr>
+        <tr><td><code>fig:num_devices_per_gpu_config</code></td><td>Max emulated devices as host GPUs increase</td><td>data not public</td></tr>
+        <tr><td><code>fig:emulator_latency_dilution</code></td><td>Latency dilution factor vs. number of emulated devices</td><td>data not public</td></tr>
+        <tr><td><code>fig:cache_performance_by_gflops</code></td><td>Execution-time decomposition across GFLOPS with/without GPU buffer reuse</td><td>data not public</td></tr>
+        <tr><td><code>fig:latency-variability</code> (appendix)</td><td>Achieved efficiency vs. workload size</td><td>data not public</td></tr>
+        <tr><td><code>fig:motiovation-rtt-layout</code> (appendix)</td><td>On-device memory access overhead vs. network delay</td><td>data not public</td></tr>
+      </tbody>
+    </table>
+
+    <p>If you need to reproduce or extend any figure, the runtime APIs the
+    original pipeline exercised remain available in this repository
+    (<code>morphling/runtime/*</code>, <code>morphling/hooks/*</code>,
+    the C++ backend under <code>csrc/backend/</code>, and the CUDA green-context
+    layer in <a href="green-context.html">Green Contexts</a>). The plotting
+    layer must be re-implemented against your own measurement data.</p>
+
+    <h2 id="bibtex">BibTeX</h2>
+<pre><code><span class="tok-k">@inproceedings</span>{DBLP:conf/mobisys/XueXMBYLM26,
+  <span class="tok-n">author</span>     = {Leyang Xue and Yufeng Xia and Eren Mendi and
+                Ismaeel Bashir and Jiaxun Yang and
+                Myungjin Lee and Mahesh K. Marina},
+  <span class="tok-n">title</span>      = {Morphling: Emulator for Distributed
+                Machine Learning at the Edge},
+  <span class="tok-n">booktitle</span>  = {The 24th Annual International Conference on
+                Mobile Systems, Applications and Services,
+                MobiSys Workshop '26, Cambridge, United
+                Kingdom, June 21-25, 2026},
+  <span class="tok-n">publisher</span>  = {ACM},
+  <span class="tok-n">year</span>       = {2026},
+  <span class="tok-n">url</span>        = {https://doi.org/10.1145/3812836.3814779},
+  <span class="tok-n">doi</span>        = {10.1145/3812836.3814779}
+}</code></pre>
+
+    <p>The same metadata in CFF (machine-readable) form is at
+    <a href="https://github.com/drunkcoding/DeviceEmulator/blob/main/CITATION.cff">CITATION.cff</a>.</p>
+
+
+    <div class="page-nav">
+      <a href="troubleshooting.html">
+        <div class="label">← Previous</div>
+        <div class="title">Troubleshooting</div>
+      </a>
+      <span></span>
+    </div>
+  </main>
+
+  <aside class="toc" aria-label="On this page">
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#venue">Venue</a></li>
+      <li><a href="#authors">Authors</a></li>
+      <li><a href="#abstract">Abstract</a></li>
+      <li><a href="#figures">Figure inventory</a></li>
+      <li><a href="#bibtex">BibTeX</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="docs-footer">
+  <div>© 2026 The Morphling Authors · Apache-2.0</div>
+  <div>
+    <a href="https://github.com/drunkcoding/DeviceEmulator">GitHub</a> ·
+    <a href="https://doi.org/10.1145/3812836.3814779">DOI</a> ·
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </div>
+</footer>
+
+<!-- ============ Search modal ============ -->
+<div id="search-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Search">
+  <div class="modal">
+    <input id="search-input" type="text" placeholder="Search docs… (try 'green context')" autocomplete="off" />
+    <div id="search-results" class="results"></div>
+  </div>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>
