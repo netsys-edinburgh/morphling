@@ -7,13 +7,10 @@ Supports multiple backends including RabbitMQ, AMQP, and proxy mode.
 
 import asyncio
 import os
-import subprocess
-import threading
 import time
-import uuid
-from argparse import REMAINDER, ArgumentParser
+from argparse import ArgumentParser
 
-from morphling.common import bytes2human, human2bytes
+from morphling.common import human2bytes
 
 
 def main():
@@ -83,21 +80,7 @@ def main():
         help="The path to the config file",
     )
 
-    # # positional
-    # parser.add_argument(
-    #     "user_script",
-    #     type=str,
-    #     help="The full path to the single GPU user "
-    #     "program/script to be launched in parallel, "
-    #     "followed by all the arguments for the "
-    #     "user script",
-    # )
-
-    # # rest from the user program
-    # parser.add_argument("user_script_args", nargs=REMAINDER)
-
     args = parser.parse_args()
-    # print(args, flush=True)
 
     # human to bytes
     args.flops = human2bytes(args.flops)
@@ -167,21 +150,6 @@ def main():
         worker.start()
         while True:
             time.sleep(1)
-
-    # # create env variables
-    # env = os.environ.copy()
-    # env["MORPHLING_FLOPS"] = str(args.flops)
-    # env["MORPHLING_MEMORY"] = str(args.memory)
-    # env["MORPHLING_UL_BW"] = str(args.ul_bw)
-    # env["MORPHLING_DL_BW"] = str(args.dl_bw)
-    # env["MORPHLING_UL_LAT"] = str(args.ul_lat)
-    # env["MORPHLING_DL_LAT"] = str(args.dl_lat)
-
-    # # run the user script with the env
-    # cmd = ["python", args.user_script] + args.user_script_args
-
-    # print(f"Running user script: {cmd} with env: {env}")
-    # subprocess.run(cmd, env=env)
 
 
 if __name__ == "__main__":
