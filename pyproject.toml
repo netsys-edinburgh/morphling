@@ -71,7 +71,6 @@ where = ["."]
 morphling = [
     "py.typed",
     "*.so",
-    "morphling_worker_server",
 ]
 
 [tool.setuptools.dynamic]
