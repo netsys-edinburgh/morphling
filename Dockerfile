@@ -35,16 +35,15 @@ RUN apt-get install -y \
 RUN apt-get install -y \
     libevent-dev
 
-RUN apt-get install -y \
+RUN apt-get update && apt-get install -y \
     libxml2-dev \
     xsltproc \
     uuid-dev \
-    libmosquitto-dev \
     libhiredis-dev \
     rapidjson-dev \
     libxslt1-dev
 
-RUN apt-get install -y \
+RUN apt-get update && apt-get install -y \
     gdb \
     vim \
     nano \
