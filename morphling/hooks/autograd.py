@@ -170,7 +170,7 @@ class LinearFunction(torch.autograd.Function):
         # logger.debug(f"weight shape: {weight.shape}")
         # output = torch.as_tensor(np.matmul(input, weight))
 
-        # FIXME(#46): greenctx instrumentation is mqtt-backend-specific.
+        # FIXME(#46): greenctx instrumentation is backend-specific.
         start_us: Optional[float] = None
         sm_count: Optional[int] = None
         gemm_idx: Optional[int] = None

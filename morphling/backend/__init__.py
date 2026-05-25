@@ -3,8 +3,6 @@
 from morphling._Msg import (
     AMQPBackend,
     AMQPWorker,
-    MQTTServer,
-    MQTTWorker,
     ProxyCli,
     ProxySvr,
 )
@@ -23,9 +21,6 @@ class AutoBackend:
         elif name == "amqp":
             print("Using AMQP backend")
             return AMQPBackend(args[0], args[1])
-        elif name == "mqtt":
-            print("Using MQTT backend")
-            return MQTTServer(args[0])
         elif name == "proxy":
             print("Using Proxy backend")
             return ProxySvr()
@@ -42,9 +37,6 @@ class AutoWorker:
         elif name == "amqp":
             print("Using AMQP worker")
             return AMQPWorker(args[0], args[1])
-        elif name == "mqtt":
-            print("Using MQTT worker")
-            return MQTTWorker(args[0])
         elif name == "proxy":
             print("Using Proxy worker")
             return ProxyCli()
@@ -55,8 +47,6 @@ class AutoWorker:
 __all__ = [
     "AMQPBackend",
     "AMQPWorker",
-    "MQTTServer",
-    "MQTTWorker",
     "ProxyCli",
     "ProxySvr",
     "BaseBackend",

@@ -88,49 +88,6 @@ if __name__ == "__main__":
 
     print("Model loaded", model)
 
-    # # get output of "docker exec mosquitto mosquitto_sub -t '$SYS/broker/subscriptions/count'  -C 1"
-    # while True:
-    #     command = [
-    #             "docker",
-    #             "exec",
-    #             "mosquitto",
-    #             "mosquitto_sub",
-    #             "-t",
-    #             "$SYS/broker/subscriptions/count",
-    #             "-C",
-    #             "1",
-    #         ]
-    #     # command = [
-    #     #         "docker",
-    #     #         "exec",
-    #     #         "emqx",
-    #     #         "emqx_ctl",
-    #     #         "broker",
-    #     #         "stats",
-    #     #     ]
-    #     output = subprocess.run(
-    #         command,
-    #         stdout=subprocess.PIPE,
-    #     )
-    #     print("Command", " ".join(command))
-    #     print("Subscriptions count", output.stdout)
-    #     # print("Error", output.stderr)
-
-    #     # # find line of "connections.count" from output.stdout
-    #     # for line in output.stdout.decode("utf-8").split("\n"):
-    #     #     if "connections.count" in line:
-    #     #         print("Connections count", line)
-    #     #         break
-
-    #     # if int(line.split(" ")[-1]) >= device_args.num_devices:
-    #     #     break
-
-    #     if int(output.stdout) >= device_args.num_devices:
-    #         break
-
-    #     time.sleep(1)
-    #     print("Waiting for devices to connect")
-
     backend = start_backend(
         backend_name=model_args.backend,
         block_size=model_args.block_size,
@@ -198,10 +155,6 @@ if __name__ == "__main__":
         # # create new process rather than subprocess
         # os.system(" ".join(command))
         # # device_processes.append(p)
-
-    #     / # mosquitto_sub -t '$SYS/broker/subscriptions/count' -v
-    # $SYS/broker/subscriptions/count 40
-    # $SYS/broker/subscriptions/count 41
 
     # Wait for devices to connect for proxy backend
     if model_args.backend == "proxy":

@@ -2,7 +2,7 @@
 
 Provides CLI interface for launching virtual or physical device instances
 with configurable FLOPs, memory, network bandwidth, and latency parameters.
-Supports multiple backends including RabbitMQ, AMQP, MQTT, and proxy mode.
+Supports multiple backends including RabbitMQ, AMQP, and proxy mode.
 """
 
 import asyncio
@@ -70,7 +70,7 @@ def main():
         type=str,
         default="rabbitmq",
         help="The backend to use for the device",
-        choices=["rabbitmq", "amqp", "mqtt", "proxy"],  # more to be added later
+        choices=["rabbitmq", "amqp", "proxy"],  # more to be added later
     )
     parser.add_argument(
         "--emulation",
@@ -140,12 +140,6 @@ def main():
     elif args.backend == "amqp":
         worker = AutoWorker.from_name(args.backend, "localhost", 32)
         worker.handle_req()
-
-    elif args.backend == "mqtt":
-        worker = AutoWorker.from_name(args.backend, str(args.id))
-        worker.start()
-        while True:
-            time.sleep(1)
 
     elif args.backend == "proxy":
         os.environ["MORPHLING_FLOPS"] = str(device_info["flops"])
