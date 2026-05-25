@@ -7,7 +7,6 @@ Errors like:
 ```text
 undefined symbol: sk_pop_free_ex (e.g., OpenSSL/gRPC mismatch)
 ImportError: librttr_core.so.*: cannot open shared object file (missing RTTR)
-ImportError: libmosquitto.so.*: cannot open shared object file (missing Mosquitto)
 ```
 
 usually mean libraries were built in a different environment than the one
@@ -19,7 +18,7 @@ used at runtime, or the dynamic linker cannot find them.
 pip install --no-build-isolation --force-reinstall -e .
 ```
 
-If certain libraries (e.g., RTTR, Mosquitto) are in a non-standard location,
+If certain libraries (e.g., RTTR) are in a non-standard location,
 set `LD_LIBRARY_PATH`:
 
 ```bash
