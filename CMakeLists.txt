@@ -232,7 +232,7 @@ set(MORPHLING_MSG_SRC
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
-  rabbitmq mosquitto
+  rabbitmq
   ${Protobuf_LIBRARIES}
   redis++
   hiredis

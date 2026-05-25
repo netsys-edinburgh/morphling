@@ -4,8 +4,6 @@
 
 #include <string>
 
-#include "backend/mqtt_server.h"
-#include "backend/mqtt_worker.h"
 #include "backend/proxy_cli.h"
 #include "backend/proxy_svr.h"
 #include "core/pytorch_defs.h"
@@ -48,37 +46,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def(py::init<>())
       .def("initialize", &ProxyCli::Initialize)
       .def("start", &ProxyCli::Start);
-
-  py::class_<MQTTWorker>(m, "MQTTWorker")
-      .def(py::init<const std::string&>())
-      //   .def(py::init<const std::unordered_map<std::string, uint64_t>&>())
-      //   .def("subscribe", &MQTTWorker::Subscribe, "Handle request message")
-      .def("start", &MQTTWorker::Start, "Start MQTT worker");
-
-  py::class_<MQTTServer>(m, "MQTTServer")
-      .def(py::init<int64_t>())
-      .def(py::init<>())
-      //   .def("subscribe", &MQTTServer::Subscribe, "Handle request message")
-      .def("start", &MQTTServer::Start, "Start MQTT server")
-      .def("async_dispatch_matmul", &MQTTServer::DispatchMatMulAsync,
-           "Dispatch matmul to devices")
-      .def(
-          "wait_matmul",
-          [](MQTTServer& self, int oid) {
-            py::gil_scoped_release release;
-            return self.WaitMatMul(oid);
-          },
-          "Wait for matmul response");
-  //   .def("publish",
-  //        [](MQTTServer& server, std::string& topic, torch::Tensor& payload) {
-  //          server.Publish(topic, payload.data_ptr(),
-  //                         payload.numel() * sizeof(float));
-  //        });
-
-  //   py::class_<AMQPBackend>(m, "AMQPBackend")
-  //       .def(py::init<const std::string&, uint32_t>())
-  //       .def("sync_dispatch_matmul", &AMQPBackend::DispatchMatMul,
-  //            "Dispatch matmul to devices");
 
   // define a function equal to torch::matmul
   m.def(
