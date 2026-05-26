@@ -23,7 +23,7 @@ class ModelConfigArguments:
     batch_size: int = field(default=128, metadata={"help": "Batch size"})
     seq_length: int = field(default=1024, metadata={"help": "Sequence length"})
     backend: str = field(
-        default="rabbitmq",
+        default="proxy",
         metadata={"help": "The backend to use for the device"},
     )
     block_size: int = field(default=128, metadata={"help": "Block size"})

@@ -2,10 +2,9 @@
 
 Provides CLI interface for launching virtual or physical device instances
 with configurable FLOPs, memory, network bandwidth, and latency parameters.
-Supports multiple backends including RabbitMQ and proxy mode.
+Supports the proxy backend.
 """
 
-import asyncio
 import os
 import time
 from argparse import ArgumentParser
@@ -65,9 +64,9 @@ def main():
     parser.add_argument(
         "--backend",
         type=str,
-        default="rabbitmq",
+        default="proxy",
         help="The backend to use for the device",
-        choices=["rabbitmq", "proxy"],  # more to be added later
+        choices=["proxy"],
     )
     parser.add_argument(
         "--emulation",
@@ -111,16 +110,7 @@ def main():
         import morphling._C
     from morphling.backend import AutoWorker
 
-    if args.backend == "rabbitmq":
-
-        async def main():
-            loop = asyncio.get_event_loop()
-            worker = AutoWorker.from_name(args.backend, device_info, loop)
-            await worker.connect()
-            await worker.start_consuming()
-
-        asyncio.run(main())
-    elif args.backend == "proxy":
+    if args.backend == "proxy":
         os.environ["MORPHLING_FLOPS"] = str(device_info["flops"])
         os.environ["MORPHLING_MEMORY"] = str(device_info["memory"])
         os.environ["MORPHLING_UL_BW"] = str(device_info["ul_bw"])

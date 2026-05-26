@@ -32,7 +32,7 @@ def parse_args() -> LaunchArgs:
     _ = parser.add_argument(
         "--backend",
         default="proxy",
-        choices=["rabbitmq", "proxy"],
+        choices=["proxy"],
     )
     _ = parser.add_argument("--proxy-host", default="127.0.0.1:39000", type=str)
     _ = parser.add_argument("--cfg", default="config/proxy/cli.ini", type=str)

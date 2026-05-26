@@ -75,7 +75,7 @@ def parse_args():
         "--backend",
         type=str,
         default="proxy",
-        help="Backend to use: proxy, rabbitmq",
+        help="Backend to use: proxy",
     )
     parser.add_argument(
         "--block_size",

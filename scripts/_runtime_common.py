@@ -1,4 +1,3 @@
-import asyncio
 import os
 import time
 from typing import Any, Optional, cast
@@ -35,14 +34,6 @@ def start_backend(
     loop: Optional[Any] = None,
 ) -> Any:
     from morphling.backend import AutoBackend
-
-    if backend_name == "rabbitmq":
-        event_loop = loop or asyncio.get_event_loop()
-        backend = AutoBackend.from_name(
-            backend_name, event_loop, block_size=block_size
-        )
-        event_loop.run_until_complete(backend.connect())
-        return backend
 
     if backend_name == "proxy":
         backend = cast(Any, AutoBackend.from_name(backend_name))

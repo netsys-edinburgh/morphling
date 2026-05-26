@@ -1,4 +1,4 @@
-"""Backend module for distributed matrix multiplication via various protocols."""
+"""Backend module for distributed matrix multiplication via the proxy backend."""
 
 from morphling._Msg import (
     ProxyCli,
@@ -6,17 +6,13 @@ from morphling._Msg import (
 )
 
 from .base import BaseBackend, MatMulRequestMessage, MatMulResponseMessage
-from .rabbitmq import RabbitMQBackend, RabbitMQWorker
 
 
 # auto backend from name
 class AutoBackend:
     @classmethod
     def from_name(cls, name, *args, **kwargs):
-        if name == "rabbitmq":
-            print("Using RabbitMQ backend")
-            return RabbitMQBackend(*args, **kwargs)
-        elif name == "proxy":
+        if name == "proxy":
             print("Using Proxy backend")
             return ProxySvr()
         else:
@@ -26,10 +22,7 @@ class AutoBackend:
 class AutoWorker:
     @classmethod
     def from_name(cls, name, *args, **kwargs):
-        if name == "rabbitmq":
-            print("Using RabbitMQ worker")
-            return RabbitMQWorker(*args, **kwargs)
-        elif name == "proxy":
+        if name == "proxy":
             print("Using Proxy worker")
             return ProxyCli()
         else:
@@ -42,8 +35,6 @@ __all__ = [
     "BaseBackend",
     "MatMulRequestMessage",
     "MatMulResponseMessage",
-    "RabbitMQBackend",
-    "RabbitMQWorker",
     "AutoBackend",
     "AutoWorker",
 ]
