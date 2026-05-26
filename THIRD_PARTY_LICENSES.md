@@ -17,7 +17,6 @@ For the main project license, see [`LICENSE`](LICENSE) (Apache-2.0).
 | Path | Component | Upstream | License |
 |------|-----------|----------|---------|
 | `external/protobuf` | Protocol Buffers | <https://github.com/protocolbuffers/protobuf> | BSD-3-Clause |
-| `external/rabbitmq-c` | RabbitMQ C client | <https://github.com/alanxz/rabbitmq-c> | MIT |
 | `external/redis-plus-plus` | Redis-plus-plus | <https://github.com/sewenew/redis-plus-plus> | Apache-2.0 |
 
 Each submodule retains its upstream license file at the root of its
