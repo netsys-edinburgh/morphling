@@ -44,9 +44,6 @@ def start_backend(
         event_loop.run_until_complete(backend.connect())
         return backend
 
-    if backend_name == "amqp":
-        return AutoBackend.from_name(backend_name, "localhost", block_size)
-
     if backend_name == "proxy":
         backend = cast(Any, AutoBackend.from_name(backend_name))
         if enable_cache and hasattr(backend, "set_cache_enabled"):

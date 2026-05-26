@@ -1,8 +1,6 @@
 """Backend module for distributed matrix multiplication via various protocols."""
 
 from morphling._Msg import (
-    AMQPBackend,
-    AMQPWorker,
     ProxyCli,
     ProxySvr,
 )
@@ -18,9 +16,6 @@ class AutoBackend:
         if name == "rabbitmq":
             print("Using RabbitMQ backend")
             return RabbitMQBackend(*args, **kwargs)
-        elif name == "amqp":
-            print("Using AMQP backend")
-            return AMQPBackend(args[0], args[1])
         elif name == "proxy":
             print("Using Proxy backend")
             return ProxySvr()
@@ -34,9 +29,6 @@ class AutoWorker:
         if name == "rabbitmq":
             print("Using RabbitMQ worker")
             return RabbitMQWorker(*args, **kwargs)
-        elif name == "amqp":
-            print("Using AMQP worker")
-            return AMQPWorker(args[0], args[1])
         elif name == "proxy":
             print("Using Proxy worker")
             return ProxyCli()
@@ -45,8 +37,6 @@ class AutoWorker:
 
 
 __all__ = [
-    "AMQPBackend",
-    "AMQPWorker",
     "ProxyCli",
     "ProxySvr",
     "BaseBackend",

@@ -94,7 +94,6 @@ if __name__ == "__main__":
         cfg_path=model_args.cfg,
     )
 
-    # backend = AutoBackend.from_name("amqp", "localhost", model_args.block_size)
     morphling.hooks.autograd._backend = backend
 
     time.sleep(5)

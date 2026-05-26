@@ -2,7 +2,7 @@
 """
 Run server-only for the DeviceEmulator project.
 
-This script initializes the selected backend (rabbitmq/amqp/proxy)
+This script initializes the selected backend (rabbitmq/proxy)
 and, if requested, loads the model. It does NOT spawn any device client
 processes — it only starts the server and waits for connections.
 
@@ -37,7 +37,7 @@ def parse_args():
         "--backend",
         type=str,
         default="proxy",
-        help="Backend to use: proxy, rabbitmq, amqp",
+        help="Backend to use: proxy, rabbitmq",
     )
     parser.add_argument(
         "--cfg",
