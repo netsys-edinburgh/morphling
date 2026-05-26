@@ -7,8 +7,6 @@
 #include "backend/proxy_cli.h"
 #include "backend/proxy_svr.h"
 #include "core/pytorch_defs.h"
-#include "scheduler/amqp_dispatcher.h"
-#include "scheduler/amqp_worker.h"
 
 namespace py = pybind11;
 
@@ -20,11 +18,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .value("BARRIER", DeviceMode::BARRIER)
       .value("DYNAMIC", DeviceMode::DYNAMIC)
       .export_values();
-
-  py::class_<AMQPBackend>(m, "AMQPBackend")
-      .def(py::init<const std::string&, uint32_t>())
-      .def("sync_dispatch_matmul", &AMQPBackend::DispatchMatMul,
-           "Dispatch matmul to devices");
 
   py::class_<ProxySvr>(m, "ProxySvr")
       .def(py::init<>())
@@ -137,10 +130,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   //         return result.to(torch::kCPU);
   //       },
   //       "Matrix multiplication");
-
-  py::class_<AMQPWorker>(m, "AMQPWorker")
-      .def(py::init<const std::string&, uint32_t>())
-      .def("handle_req", &AMQPWorker::HandleReq, "Handle request message");
 
   py::class_<MatMulRequestMessage>(m, "MatMulRequestMessage")
       .def(py::init<>())

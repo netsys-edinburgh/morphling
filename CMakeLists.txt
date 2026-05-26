@@ -41,7 +41,6 @@ set(Protobuf_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/external/protobuf/src")
 set(Protobuf_LIBRARIES protobuf::libprotobuf)
 include(FindProtobuf)
 
-add_subdirectory(external/rabbitmq-c)
 add_subdirectory(external/redis-plus-plus)
 
 if(DEFINED ENV{CONDA_PREFIX})
@@ -196,7 +195,6 @@ set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
   ${Protobuf_LIBRARIES}
-  rabbitmq
   CUDA::cublas
 )
 
@@ -221,8 +219,6 @@ set(MORPHLING_MSG_SRC
   ${TIMER_SRC}
   ${CORE_SRC}
   ${PROTO_SRCS}
-  "csrc/scheduler/amqp_dispatcher.cpp"
-  "csrc/scheduler/amqp_worker.cpp"
   "csrc/scheduler/cpu_worker.cpp"
   "csrc/scheduler/gpu_worker.cpp"
   "csrc/python/client_py.cpp"
@@ -232,7 +228,6 @@ set(MORPHLING_MSG_SRC
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
-  rabbitmq
   ${Protobuf_LIBRARIES}
   redis++
   hiredis
