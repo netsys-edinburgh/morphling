@@ -138,7 +138,6 @@ include_directories(
   /usr/local/include
 )
 
-file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
 file(GLOB MEMORY_SRC "csrc/memory/*.cpp")
 # CORE_SRC split: _C only needs the lightweight utils subset;
 # _Msg needs the full core (including env_cfg which pulls in backend vtables)
