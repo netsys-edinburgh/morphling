@@ -140,9 +140,7 @@
     <h2 id="launch">2. Launch the emulator</h2>
 <pre><code>morphling_emulator --ckpt_path <span class="tok-n">&lt;ckpt-path&gt;</span></code></pre>
 
-    <p>That's it. The emulator boots a single virtual device, runs the
-    intercepted backend, and emits per-GEMM logs to the configured log
-    directory.</p>
+    <p>That's it. The emulator boots a single virtual device.</p>
 
     <h2 id="multi">3. Multi-device runs</h2>
     <p>For virtual fleets and physical-device deployments behind an Nginx
@@ -179,13 +177,6 @@ apply_hooks(<span class="tok-s">"linear"</span>, greenctx=controller)</code></pr
     <p>Full API and structured log format documented in
     <a href="green-context.html">Per-GEMM Green Contexts</a>.</p>
 
-    <h2 id="logs">5. Where do the logs go?</h2>
-    <p>The C-side BLAS interceptor writes logs to
-    <code>MORPHLING_INTERCEPT_LOG_DIR</code>, defaulting to
-    <code>/tmp/morphling-intercept-logs/</code>. Create the directory first:</p>
-<pre><code><span class="tok-k">export</span> MORPHLING_INTERCEPT_LOG_DIR=<span class="tok-s">"$HOME/.cache/morphling/intercept-logs"</span>
-mkdir -p <span class="tok-s">"$MORPHLING_INTERCEPT_LOG_DIR"</span></code></pre>
-
 
     <div class="page-nav">
       <a href="install.html">
@@ -206,7 +197,6 @@ mkdir -p <span class="tok-s">"$MORPHLING_INTERCEPT_LOG_DIR"</span></code></pre>
       <li><a href="#launch">2. Launch</a></li>
       <li><a href="#multi">3. Multi-device</a></li>
       <li><a href="#hooks">4. Green contexts</a></li>
-      <li><a href="#logs">5. Logs</a></li>
     </ul>
   </aside>
 </div>

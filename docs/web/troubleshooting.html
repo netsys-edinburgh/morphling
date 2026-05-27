@@ -195,14 +195,6 @@ make docker-test</code></pre>
     <code>external/</code>:</p>
 <pre><code>git submodule update --init --recursive</code></pre>
 
-    <h2 id="logs">Intercept log directory</h2>
-    <p>The C-side BLAS interceptor writes debug logs to a directory controlled
-    by <code>MORPHLING_INTERCEPT_LOG_DIR</code>. When unset, it falls back to
-    <code>/tmp/morphling-intercept-logs/</code>. Create the directory before
-    running the intercept code:</p>
-<pre><code><span class="tok-k">export</span> MORPHLING_INTERCEPT_LOG_DIR=<span class="tok-s">"$HOME/.cache/morphling/intercept-logs"</span>
-mkdir -p <span class="tok-s">"$MORPHLING_INTERCEPT_LOG_DIR"</span></code></pre>
-
 
     <div class="page-nav">
       <a href="deployment.html">
@@ -225,7 +217,6 @@ mkdir -p <span class="tok-s">"$MORPHLING_INTERCEPT_LOG_DIR"</span></code></pre>
       <li><a href="#sigsegv">Cleanup SIGSEGV</a></li>
       <li><a href="#stale">Stale image</a></li>
       <li><a href="#submodules">Submodules</a></li>
-      <li><a href="#logs">Intercept logs</a></li>
     </ul>
   </aside>
 </div>
