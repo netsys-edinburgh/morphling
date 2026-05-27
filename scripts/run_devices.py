@@ -117,7 +117,6 @@ if __name__ == "__main__":
         #     str(device_args.ul_lat[i]),
         #     "--dl_lat",
         #     str(device_args.dl_lat[i]),
-        #     "--emulation",
         #     "--backend",
         #     model_args.backend,
         #     "&",

@@ -69,11 +69,6 @@ def main():
         choices=["proxy"],
     )
     parser.add_argument(
-        "--emulation",
-        action="store_true",
-        help="Enable emulation mode",
-    )
-    parser.add_argument(
         "--cfg",
         default="",
         help="The path to the config file",
@@ -102,12 +97,6 @@ def main():
 
     # FIXME(#45): server-side trust model for device-reported FLOPS/bandwidth/latency.
 
-    if args.emulation:
-        # enable interception of torch.mm
-        print("Enabling interception of torch.mm")
-        import torch
-
-        import morphling._C
     from morphling.backend import AutoWorker
 
     if args.backend == "proxy":
