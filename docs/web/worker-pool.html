@@ -127,8 +127,8 @@
     <h1>Worker Pool &amp;<br/>Scheduling Policies.</h1>
     <p class="hero-sub">
       The worker pool dispatches GEMM tasks through a pluggable
-      <code>SchedulingPolicy</code>. Two scheduling policies ship today
-      (round-robin, shortest-wait). Two virtual-time alignment strategies
+      <code>SchedulingPolicy</code>. Three scheduling policies ship today
+      (round-robin, greedy, load-balanced). Two virtual-time alignment strategies
       —&nbsp;<code>EARLIEST</code> and <code>LATEST</code>&nbsp;— answer
       different research questions.
     </p>
@@ -138,7 +138,7 @@
       <li><code>WorkerBase</code> → <code>XtGemmWorker</code> (GPU, cublasXt)
         and <code>CpuWorker</code> (MKL).</li>
       <li><code>WorkerPool</code> dispatches via pluggable
-        <code>SchedulingPolicy</code> (round-robin, shortest-wait).</li>
+        <code>SchedulingPolicy</code> (round-robin, greedy, load-balanced).</li>
       <li>Task queue: <code>std::mutex</code> + <code>std::condition_variable</code>,
         with atomic task counts.</li>
       <li>Dual-path GPU/CPU with identical public interfaces
