@@ -34,7 +34,7 @@ Shame in blind modification, Honor in careful refactoring
 **Heuristics:**
 - Runtime behavior / CLI / Python logic → `morphling/`, `scripts/`
 - Perf / concurrency / networking → `csrc/backend/`
-- Config-driven behavior → `config/**` + config loading callsites in `scripts/`/`morphling/`
+- Config-driven behavior → `config/proxy/` + config loading callsites in `scripts/`/`morphling/`
 - Wire format / RPC contracts → `proto/*.proto` (ask before changing)
 
 ## 1) Development workflow (Docker-only; GPU by default)
@@ -149,7 +149,7 @@ tests/
 
 ### Worker pool model
 - `WorkerBase` → `XtGemmWorker` (GPU, cublasXt) and `CpuWorker` (MKL)
-- `WorkerPool` dispatches via pluggable `SchedulingPolicy` (round-robin, shortest-wait)
+- `WorkerPool` dispatches via pluggable `SchedulingPolicy` (round-robin, greedy, load-balanced)
 - Task queue: `std::mutex` + `std::condition_variable`, atomic task counts
 - Dual-path GPU/CPU with identical public interfaces (`AddTask`, `EnqueueGemm`)
 
