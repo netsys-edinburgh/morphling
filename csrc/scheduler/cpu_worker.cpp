@@ -151,15 +151,13 @@ void CpuWorker::RunMklGemm(std::shared_ptr<GemmArgs> args) {
   openblas_set_num_threads(cores);
 
   CBLAS_TRANSPOSE cblas_transa =
-      (args->transa[0] == 'N' || args->transa[0] == 'n') ? CblasNoTrans
-                                                         : CblasTrans;
+      (args->transa == 'N' || args->transa == 'n') ? CblasNoTrans : CblasTrans;
   CBLAS_TRANSPOSE cblas_transb =
-      (args->transb[0] == 'N' || args->transb[0] == 'n') ? CblasNoTrans
-                                                         : CblasTrans;
+      (args->transb == 'N' || args->transb == 'n') ? CblasNoTrans : CblasTrans;
 
-  cblas_sgemm(CblasColMajor, cblas_transa, cblas_transb, args->m[0], args->n[0],
-              args->k[0], args->alpha[0], args->a[0], args->lda[0], args->b[0],
-              args->ldb[0], args->beta[0], args->c[0], args->ldc[0]);
+  cblas_sgemm(CblasColMajor, cblas_transa, cblas_transb, args->m, args->n,
+              args->k, args->alpha, args->a, args->lda, args->b, args->ldb,
+              args->beta, args->c, args->ldc);
 
   LOG_DEBUG << "RunMklGemm completed on partition=" << partition_idx_;
 }

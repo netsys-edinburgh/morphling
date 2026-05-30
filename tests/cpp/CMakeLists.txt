@@ -246,6 +246,27 @@ target_link_libraries(test_dispatch_gate PRIVATE
 )
 add_test(NAME test_dispatch_gate COMMAND test_dispatch_gate)
 
+# ============================================================================
+# GemmArgs layout tests (unit/intercept/) — Issue #48 collapse
+# ============================================================================
+add_executable(test_gemm_args_layout
+  unit/intercept/test_gemm_args_layout.cpp
+  ${PROJECT_ROOT_DG}/csrc/core/logger.cpp
+  ${DG_BASE_LOGGING_SRC}
+)
+target_include_directories(test_gemm_args_layout PRIVATE
+  ${PROJECT_ROOT_DG}/csrc
+  ${PROJECT_ROOT_DG}/external
+)
+target_link_libraries(test_gemm_args_layout PRIVATE
+  GTest::gtest
+  GTest::gtest_main
+  Threads::Threads
+  uuid
+  fmt
+)
+add_test(NAME test_gemm_args_layout COMMAND test_gemm_args_layout)
+
 add_executable(test_barrier_integration
   integration/test_barrier_integration.cpp
   ${PROJECT_ROOT_DG}/csrc/backend/dispatch_gate.cpp

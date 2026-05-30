@@ -270,20 +270,19 @@ std::shared_ptr<GemmArgs> ProxyCliHandle::BuildGemmArgs(
     const float* col_ptr, int64_t col_size, const float* row_ptr,
     int64_t row_size, int64_t h_dim, float* out_ptr) {
   auto args = std::make_shared<GemmArgs>();
-  args->group_size = 1;
-  args->transa[0] = 'T';
-  args->transb[0] = 'N';
-  args->m[0] = static_cast<int>(col_size);
-  args->n[0] = static_cast<int>(row_size);
-  args->k[0] = static_cast<int>(h_dim);
-  args->alpha[0] = 1.0f;
-  args->beta[0] = 0.0f;
-  args->a[0] = col_ptr;
-  args->lda[0] = static_cast<int>(h_dim);
-  args->b[0] = row_ptr;
-  args->ldb[0] = static_cast<int>(h_dim);
-  args->c[0] = out_ptr;
-  args->ldc[0] = static_cast<int>(col_size);
+  args->transa = 'T';
+  args->transb = 'N';
+  args->m = static_cast<int>(col_size);
+  args->n = static_cast<int>(row_size);
+  args->k = static_cast<int>(h_dim);
+  args->alpha = 1.0f;
+  args->beta = 0.0f;
+  args->a = col_ptr;
+  args->lda = static_cast<int>(h_dim);
+  args->b = row_ptr;
+  args->ldb = static_cast<int>(h_dim);
+  args->c = out_ptr;
+  args->ldc = static_cast<int>(col_size);
   return args;
 }
 

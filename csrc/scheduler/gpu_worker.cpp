@@ -298,13 +298,12 @@ void XtGemmWorker::RunXtGemm(std::shared_ptr<GemmArgs> args) {
 
   cublasXtHandle_t handle = active_slot_->xt_handle;
 
-  cublasOperation_t transa = CUDA_TRANS_OP(args->transa[0]);
-  cublasOperation_t transb = CUDA_TRANS_OP(args->transb[0]);
+  cublasOperation_t transa = CUDA_TRANS_OP(args->transa);
+  cublasOperation_t transb = CUDA_TRANS_OP(args->transb);
 
-  CHECK_CUBLAS_ERROR(
-      cublasXtSgemm(handle, transa, transb, args->m[0], args->n[0], args->k[0],
-                    args->alpha, args->a[0], args->lda[0], args->b[0],
-                    args->ldb[0], args->beta, args->c[0], args->ldc[0]));
+  CHECK_CUBLAS_ERROR(cublasXtSgemm(
+      handle, transa, transb, args->m, args->n, args->k, &args->alpha, args->a,
+      args->lda, args->b, args->ldb, &args->beta, args->c, args->ldc));
 
   CHECK_CUDA_ERROR(cudaDeviceSynchronize());
 
