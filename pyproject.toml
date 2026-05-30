@@ -113,4 +113,8 @@ ignore = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-markers = ["smoke: Fast CI tests (<2min)", "deep: Slow GPU tests (<30min)"]
+markers = [
+    "smoke: Fast CI tests (<2min)",
+    "deep: Slow GPU tests (<30min)",
+    "benchmark: Microbenchmarks (opt out via -m 'not benchmark')",
+]
