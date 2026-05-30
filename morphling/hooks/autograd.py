@@ -31,6 +31,17 @@ _greenctx: Any = None
 _gemm_log: List[Dict[str, Any]] = []
 _greenctx_t0: float = 0.0
 _gemm_idx: int = 0
+# Decoupled from _greenctx so backends can request activation without logging
+# (or logging without activation). set_greenctx() flips this implicitly to
+# preserve historical behavior; callers can override afterwards.
+_gemm_log_enabled: bool = False
+
+
+def set_gemm_logging(enabled: bool) -> None:
+    """Enable or disable per-GEMM log entries (independent of greenctx)."""
+    global _gemm_log_enabled
+    _gemm_log_enabled = bool(enabled)
+
 
 HOOK_TYPES = [
     "linear",
@@ -101,10 +112,17 @@ def _log_gemm(
 
 
 def set_greenctx(greenctx: Any = None, reset_log: bool = True) -> None:
-    """Set the green context controller and optionally reset the GEMM log."""
+    """Set the green context controller and optionally reset the GEMM log.
+
+    Implicitly enables logging when ``greenctx`` is not ``None`` and disables
+    it otherwise, preserving the pre-#46 behavior. Call
+    :func:`set_gemm_logging` afterwards to override.
+    """
     global _greenctx
+    global _gemm_log_enabled
 
     _greenctx = greenctx
+    _gemm_log_enabled = greenctx is not None
     if _greenctx is not None and not hasattr(_greenctx, "deactivate"):
         backend = getattr(_greenctx, "backend", None)
         if backend is None:
@@ -170,7 +188,6 @@ class LinearFunction(torch.autograd.Function):
         # logger.debug(f"weight shape: {weight.shape}")
         # output = torch.as_tensor(np.matmul(input, weight))
 
-        # FIXME(#46): greenctx instrumentation is backend-specific.
         start_us: Optional[float] = None
         sm_count: Optional[int] = None
         gemm_idx: Optional[int] = None
@@ -184,16 +201,13 @@ class LinearFunction(torch.autograd.Function):
             finally:
                 if activated_sm_count is not None:
                     _greenctx.deactivate(activated_sm_count)
-            gemm_idx = _gemm_idx
-            _gemm_idx += 1
+            if _gemm_log_enabled:
+                gemm_idx = _gemm_idx
+                _gemm_idx += 1
         else:
             _backend.async_dispatch_matmul(input, weight.transpose(-2, -1))
         output = _backend.wait_matmul(0)
-        if (
-            _greenctx is not None
-            and start_us is not None
-            and gemm_idx is not None
-        ):
+        if _gemm_log_enabled and start_us is not None and gemm_idx is not None:
             m = int(input.shape[0])
             k = int(input.shape[1])
             n = int(weight.shape[0])
@@ -262,8 +276,9 @@ class LinearFunction(torch.autograd.Function):
                 finally:
                     if activated_sm_count is not None:
                         _greenctx.deactivate(activated_sm_count)
-                grad_input_gemm_idx = _gemm_idx
-                _gemm_idx += 1
+                if _gemm_log_enabled:
+                    grad_input_gemm_idx = _gemm_idx
+                    _gemm_idx += 1
             else:
                 _backend.async_dispatch_matmul(grad_output, weight)
         if ctx.needs_input_grad[1]:
@@ -289,8 +304,9 @@ class LinearFunction(torch.autograd.Function):
                 finally:
                     if activated_sm_count is not None:
                         _greenctx.deactivate(activated_sm_count)
-                grad_weight_gemm_idx = _gemm_idx
-                _gemm_idx += 1
+                if _gemm_log_enabled:
+                    grad_weight_gemm_idx = _gemm_idx
+                    _gemm_idx += 1
             else:
                 _backend.async_dispatch_matmul(
                     grad_output.transpose(-2, -1),
