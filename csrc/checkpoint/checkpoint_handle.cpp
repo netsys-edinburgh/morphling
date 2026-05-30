@@ -29,24 +29,34 @@ std::filesystem::path CheckpointHandle::GetFilePathByID(
 }
 
 void CheckpointHandle::ReadCheckpoint() {
-  int file_id = 0;  // FIXME(#49): single-file checkpoint assumption.
-  auto param_filename = GetFilePathByID(file_id);
   auto index_filename = prefix_ / std::string(ARCHER_IHDEX_NAME);
+  tensor_index_.Deserialize(index_filename.c_str());
 
-  LOG_DEBUG << "param_filename: " << param_filename.c_str();
-
-  // get param_filename file size
-  struct stat st;
-  if (stat(param_filename.c_str(), &st) == -1) {
-    LOG_FATAL << "Invalid prefix: " << param_filename.c_str()
-              << " does not exist";
+  // Sum per-file sizes from the tensor index so the consistency check
+  // tolerates multi-file checkpoints (#49). Each file_id is stat'd once.
+  std::unordered_map<uint32_t, size_t> expected_bytes_by_file;
+  for (const auto& [tensor_id, tensor_meta] : tensor_index_) {
+    expected_bytes_by_file[tensor_meta.file_id] += tensor_meta.size;
   }
-  auto file_size = st.st_size;
+
+  size_t total_on_disk = 0;
+  for (const auto& [file_id, expected_bytes] : expected_bytes_by_file) {
+    auto fname = GetFilePathByID(file_id);
+    struct stat st;
+    if (stat(fname.c_str(), &st) == -1) {
+      LOG_FATAL << "Missing param file: " << fname.c_str();
+    }
+    LOG_WARN_IF(static_cast<size_t>(st.st_size) < expected_bytes)
+        << "Param file " << fname.c_str() << " size " << st.st_size
+        << " < expected " << expected_bytes;
+    total_on_disk += static_cast<size_t>(st.st_size);
+  }
 
   auto [pin_mem_size, pin_mem_offsets] = ComputePinOffsets();
-
-  LOG_WARN_IF(pin_mem_size != file_size)
-      << "Pin memory size " << pin_mem_size << " != file size " << file_size;
+  LOG_WARN_IF(pin_mem_size != total_on_disk)
+      << "Pin memory size " << pin_mem_size << " != on-disk total "
+      << total_on_disk << " across " << expected_bytes_by_file.size()
+      << " param file(s)";
   // LOG_FATAL_IF(buffer_ != nullptr, "Buffer is not null, should only load
   // once");
 
@@ -56,8 +66,6 @@ void CheckpointHandle::ReadCheckpoint() {
   //       MemoryType::PIN_SHM);
   //   // buffer_ = allocator_->Allocate(pin_mem_size);
   // });
-
-  tensor_index_.Deserialize(index_filename.c_str());
 
   std::unordered_map<std::string, size_t> name_id_map;
   for (const auto& [param_name, param_meta] : param_meta_map_) {
@@ -74,7 +82,7 @@ void CheckpointHandle::ReadCheckpoint() {
     auto file_offset = tensor_meta.offset;
     auto num_bytes = tensor_meta.size;
 
-    param_filename = GetFilePathByID(file_id);
+    auto param_filename = GetFilePathByID(file_id);
 
     if (filenames.find(param_filename) == filenames.end()) {
       int fd = open(param_filename.c_str(), O_RDONLY);
