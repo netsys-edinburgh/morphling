@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run all C++ tests for DeviceEmulator
 # Usage: ./run_cpp_tests.sh [category]
-# Categories: all, unit, bench, cuda, memory, worker, zerocopy
+# Categories: all, unit, cuda, worker
 #
 # Note: Tests should be built beforehand (e.g., in Docker image).
 # This script runs the test executables directly.

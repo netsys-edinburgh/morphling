@@ -12,6 +12,7 @@ tests/cpp/
 │   ├── memory/    # Memory operation tests (sources only unless wired in CMake)
 │   ├── ml/        # ML framework tests (sources only unless wired in CMake)
 │   ├── network/   # Network/messaging tests (sources only unless wired in CMake)
+│   ├── backend/   # Backend scheduling/dispatch tests
 │   ├── worker/    # Worker/XtGemm tests
 │   └── zerocopy/  # Zero-copy buffer tests
 │
@@ -19,7 +20,7 @@ tests/cpp/
 │   ├── cuda/      # CUDA benchmarks
 │   └── zerocopy/  # Zero-copy benchmarks
 │
-└── integration/   # Integration tests (placeholder)
+└── integration/   # Integration tests
 ```
 
 > **Note:** Only targets explicitly listed in `tests/cpp/CMakeLists.txt` are
@@ -31,6 +32,7 @@ Default CMake behavior:
 
 - `ENABLE_CUDA_TESTS=ON` (CUDA/cuBLAS tests)
 - `ENABLE_XTGEMM_TESTS=OFF` (XtGemm worker tests + CUDA benchmarks)
+- `ENABLE_GREEN_CTX_TESTS=OFF` (green context runtime tests)
 - `ENABLE_ZEROCOPY_TESTS=OFF` (zerocopy tests + benchmarks)
 
 The Docker image enables **all** suites:
@@ -39,6 +41,7 @@ The Docker image enables **all** suites:
 cmake -S tests/cpp -B tests/cpp/build \
   -DENABLE_CUDA_TESTS=ON \
   -DENABLE_XTGEMM_TESTS=ON \
+  -DENABLE_GREEN_CTX_TESTS=ON \
   -DENABLE_ZEROCOPY_TESTS=ON
 cmake --build tests/cpp/build -j
 ```
@@ -46,8 +49,9 @@ cmake --build tests/cpp/build -j
 ### Prerequisites / Constraints
 
 - **CUDA tests**: require CUDA toolkit + runtime.
-- **XtGemm tests/benchmarks**: require CUDA driver API availability and
-  compatible GPU support (CUDA driver 12.5+ (green contexts supported on CC 8.x and above)).
+- **XtGemm/green-context tests and benchmarks**: require CUDA driver API
+  availability and compatible GPU support (CUDA driver 12.5+; green contexts
+  use 2-SM granularity on CC 8.x and 8-SM granularity on CC 9.0+).
 - **Zerocopy tests/benchmarks**: require protobuf generation, Torch, and CUDA
   for the pinned-pool test.
 
@@ -56,6 +60,11 @@ cmake --build tests/cpp/build -j
 ### Unit / Worker (GoogleTest)
 
 - `test_worker_base` (unit/worker)
+- `test_green_trace_parser` (unit/worker)
+
+### Unit / Backend (GoogleTest)
+
+- `test_dispatch_gate` (unit/backend)
 
 ### CUDA/cuBLAS Tests (GoogleTest)
 
@@ -66,6 +75,12 @@ cmake --build tests/cpp/build -j
 ### XtGemm Worker Tests (optional, GoogleTest)
 
 - `test_xtgemm_worker`
+- `test_green_context_runtime` (`ENABLE_GREEN_CTX_TESTS=ON`; requires CUDA
+  driver 12.5+)
+
+### Integration Tests (GoogleTest)
+
+- `test_barrier_integration`
 
 ### Zerocopy Tests (optional, GoogleTest)
 
@@ -79,6 +94,8 @@ cmake --build tests/cpp/build -j
 
 - `bench_xtgemm_worker`
 - `bench_green_ctx`
+- `bench_trace_switch`
+- `bench_pool_dispatch`
 - `bench_pool_allocation`
 - `bench_serialization`
 
