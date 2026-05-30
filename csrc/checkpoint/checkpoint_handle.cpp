@@ -105,10 +105,10 @@ void CheckpointHandle::ReadCheckpoint() {
         break;
       }
     }
-    LOG_FATAL_IF(
-        is_zero,
-        "Read all zeros, file: {}, offset: {}, size: {}, aligned_size: {}",
-        param_filename.c_str(), file_offset, num_bytes, aligned_bytes);
+    LOG_FATAL_IF(is_zero) << "Read all zeros, file: " << param_filename.c_str()
+                          << ", offset: " << file_offset
+                          << ", size: " << num_bytes
+                          << ", aligned_size: " << aligned_bytes;
     memcpy(buffer, temp_buffer, num_bytes);
 
     // prio_aio_handle_.Read(param_filename, buffer, false, num_bytes,

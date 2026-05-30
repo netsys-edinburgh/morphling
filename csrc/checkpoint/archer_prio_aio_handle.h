@@ -7,9 +7,14 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
+#include <string>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 #include "archer_aio_threadpool.h"
 #include "core/simple_object_pool.h"

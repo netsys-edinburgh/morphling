@@ -12,7 +12,12 @@ from transformers.configuration_utils import PretrainedConfig
 
 import morphling.runtime.patching as _patching
 import morphling.runtime.shm_mapping as _shm_mapping
-from morphling._C import ArcherTensorHandle, MemoryManagerClient, set_tensor_shm
+from morphling._C import ArcherTensorHandle, set_tensor_shm
+
+try:
+    from morphling._C import MemoryManagerClient
+except ImportError:
+    MemoryManagerClient = None
 from morphling.common import EmulatorConfig
 from morphling.runtime.checkpoint_loader import (
     discover_checkpoints,
@@ -26,7 +31,8 @@ from morphling.runtime.patching import (
 )
 from morphling.runtime.shm_mapping import map_params_to_shm
 
-_patching.MemoryManagerClient = MemoryManagerClient
+if MemoryManagerClient is not None:
+    _patching.MemoryManagerClient = MemoryManagerClient
 _patching.set_tensor_shm = set_tensor_shm
 _shm_mapping.set_tensor_shm = set_tensor_shm
 
@@ -254,6 +260,12 @@ class EmulationEngine(object):
                             self.param_meta_map.pop(name_without_prefix)
                     param.ar_id = self.param_meta_map.get(name, None)
 
+                if MemoryManagerClient is None:
+                    raise RuntimeError(
+                        "EmulationEngine.__enter__ requires the "
+                        "memory-manager server, which was removed during the "
+                        "open-source pass. See #53 follow-up."
+                    )
                 self.client = MemoryManagerClient()
                 param_shm_map = self.client.get_model_param()
                 print(f"param_shm_map: {param_shm_map}")

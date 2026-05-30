@@ -186,6 +186,8 @@ set(MORPHLING_EXT_SRC
   ${CORE_UTILS_SRC}
   ${BASE_SRC}
   ${TIMER_SRC}
+  ${CHECKPOINT_SRC}
+  "csrc/memory/caching_allocator.cpp"
   "csrc/memory/shared_memory.cpp"
   "csrc/python/checkpoint_py.cpp"
 )
