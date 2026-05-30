@@ -139,8 +139,8 @@ include_directories(
 )
 
 file(GLOB MEMORY_SRC "csrc/memory/*.cpp")
-# CORE_SRC split: _C only needs the lightweight utils subset;
-# _Msg needs the full core (including env_cfg which pulls in backend vtables)
+# CORE_SRC split: _C extension uses only lightweight utilities;
+# _Msg extension includes the full core, including env_cfg backend policy code.
 set(CORE_UTILS_SRC
   "csrc/core/cuda_utils.cpp"
   "csrc/core/logger.cpp"

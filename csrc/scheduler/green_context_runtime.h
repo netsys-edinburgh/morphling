@@ -118,8 +118,9 @@ class GreenContextRuntime {
 
   // ── Capability / Introspection ──────────────────────────
 
-  // Returns false if green contexts are not supported (e.g.,
-  // old CUDA driver < 12.5, or resource allocation failure).
+  // Returns false if green contexts are not supported (e.g., CUDA driver
+  // older than 12.5, GPU capability limitation, or resource allocation
+  // failure).
   bool IsSupported() const { return supported_; }
   std::string UnsupportedReason() const { return unsupported_reason_; }
 
