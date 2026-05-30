@@ -41,8 +41,8 @@ timeline.
      [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md).
    - Link any related issues (e.g., `closes #123`).
 
-If you fix a bug, add a regression test under `tests/python/unit/` or
-`tests/cpp/unit/` where possible.
+If you fix a bug, add a regression test under `tests/python/unit/` (Python) or
+`tests/cpp/unit/` (C++), following the test organization in `CLAUDE.md` §8.
 If you add a feature, include unit tests and update the relevant doc under
 `docs/`.
 
@@ -143,7 +143,7 @@ docs: clarify zero-copy buffer ownership in scatter_gather
 Signing off commits is recommended:
 
 ```bash
-git commit -s -m "feat: add SchedulingPolicy::ShortestWait"
+git commit -s -m "feat: add LoadBalancedSchedulingPolicy"
 ```
 
 ## Reporting Bugs
