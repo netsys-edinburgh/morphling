@@ -44,6 +44,14 @@ message DeviceProfileData {
     required uint64 dl_bw = 5;
     required uint64 ul_lat = 6;
     required uint64 dl_lat = 7;
+
+    // Server-measured fields (#45). Optional so legacy clients/servers
+    // round-trip without breakage; unset == "not measured".
+    optional uint64 measured_flops = 8;
+    optional bool   measured_flops_verified = 9;
+    optional uint64 measured_lat_ns = 10;
+    optional uint64 measured_ul_bw_bps = 11;
+    optional uint64 measured_dl_bw_bps = 12;
 }
 
 message ComputeGemmData {

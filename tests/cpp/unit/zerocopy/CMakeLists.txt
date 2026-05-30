@@ -62,6 +62,7 @@ add_zerocopy_test(test_aligned_buffer_pool)
 add_zerocopy_test(test_serialization_buffer)
 add_zerocopy_test(test_scatter_gather_buffer)
 add_zerocopy_test(test_matrix_partition)
+add_zerocopy_test(test_device_profile_roundtrip)
 
 # ============================================================================
 # CUDA Pinned Pool Test (uses CUDAToolkit from parent project)

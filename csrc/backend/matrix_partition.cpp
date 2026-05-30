@@ -697,6 +697,15 @@ std::string DeviceProfileData::DebugString() const {
   oss << "uuid: " << uuid << ", flops: " << flops << ", memory: " << memory
       << ", ul_bw: " << ul_bw << ", dl_bw: " << dl_bw << ", ul_lat: " << ul_lat
       << ", dl_lat: " << dl_lat;
+  if (measured_flops != 0 || measured_lat_ns != 0 || measured_ul_bw_bps != 0 ||
+      measured_dl_bw_bps != 0) {
+    oss << ", measured_flops: " << measured_flops
+        << ", measured_flops_verified: "
+        << (measured_flops_verified ? "true" : "false")
+        << ", measured_lat_ns: " << measured_lat_ns
+        << ", measured_ul_bw_bps: " << measured_ul_bw_bps
+        << ", measured_dl_bw_bps: " << measured_dl_bw_bps;
+  }
   return oss.str();
 }
 
@@ -732,6 +741,14 @@ SerializationBufferPtr DeviceProfileData::SerializeProto() const {
   profile_msg->set_dl_bw(dl_bw);
   profile_msg->set_ul_lat(ul_lat);
   profile_msg->set_dl_lat(dl_lat);
+
+  if (measured_flops != 0) profile_msg->set_measured_flops(measured_flops);
+  if (measured_flops_verified) profile_msg->set_measured_flops_verified(true);
+  if (measured_lat_ns != 0) profile_msg->set_measured_lat_ns(measured_lat_ns);
+  if (measured_ul_bw_bps != 0)
+    profile_msg->set_measured_ul_bw_bps(measured_ul_bw_bps);
+  if (measured_dl_bw_bps != 0)
+    profile_msg->set_measured_dl_bw_bps(measured_dl_bw_bps);
 
   // Serialize (no tensor data for DeviceProfileData)
   std::string proto_str = umsg.SerializeAsString();
@@ -788,6 +805,20 @@ void DeviceProfileData::DeserializeProto(const void* data, size_t size) {
   dl_bw = profile_msg.dl_bw();
   ul_lat = profile_msg.ul_lat();
   dl_lat = profile_msg.dl_lat();
+
+  measured_flops =
+      profile_msg.has_measured_flops() ? profile_msg.measured_flops() : 0ULL;
+  measured_flops_verified = profile_msg.has_measured_flops_verified()
+                                ? profile_msg.measured_flops_verified()
+                                : false;
+  measured_lat_ns =
+      profile_msg.has_measured_lat_ns() ? profile_msg.measured_lat_ns() : 0ULL;
+  measured_ul_bw_bps = profile_msg.has_measured_ul_bw_bps()
+                           ? profile_msg.measured_ul_bw_bps()
+                           : 0ULL;
+  measured_dl_bw_bps = profile_msg.has_measured_dl_bw_bps()
+                           ? profile_msg.measured_dl_bw_bps()
+                           : 0ULL;
 }
 
 // ============================================================================
