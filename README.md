@@ -37,8 +37,8 @@ edge training without a physical device fleet.
 
 - **Per-GEMM CUDA green-context switching** — trace-driven SM partitioning
   routed through autograd hooks, see [`docs/green-context.md`](docs/green-context.md).
-- **Worker pool** with pluggable scheduling policies (round-robin,
-  shortest-wait); GPU path via `XtGemmWorker` (cuBLASXt), CPU path via
+- **Worker pool** with pluggable scheduling policies (round-robin, greedy,
+  load-balanced); GPU path via `XtGemmWorker` (cuBLASXt), CPU path via
   `CpuWorker` (MKL).
 - **Zero-copy scatter-gather buffers** for inter-device data transfer over
   libevent (`evbuffer_add_reference` with `shared_ptr` cleanup).
