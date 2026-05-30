@@ -166,7 +166,8 @@ class LdpcTraceAdapter:
         """Detect SM count increases (potential violations).
 
         Returns:
-            DataFrame with columns: row_idx, prev_sm, curr_sm, switch_gap_ns.
+            DataFrame rows where curr_sm > prev_sm, with columns: row_idx,
+            prev_sm, curr_sm, switch_gap_ns.
         """
         return self._detect_deltas(increase=True)
 
@@ -174,7 +175,8 @@ class LdpcTraceAdapter:
         """Detect SM count decreases (potential inefficiencies).
 
         Returns:
-            DataFrame with columns: row_idx, prev_sm, curr_sm, switch_gap_ns.
+            DataFrame rows where curr_sm < prev_sm, with columns: row_idx,
+            prev_sm, curr_sm, switch_gap_ns.
         """
         return self._detect_deltas(increase=False)
 

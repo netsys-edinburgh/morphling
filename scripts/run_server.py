@@ -168,7 +168,6 @@ def main():
         )
         print("inputs:", inputs)
 
-        # Apply hooks for distributed computation (similar to run_devices.py line 236)
         if args.enable_hooks:
             print(
                 "✓ Distributed computation mode: apply_hooks('linear') ENABLED"
