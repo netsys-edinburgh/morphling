@@ -8,8 +8,11 @@ Usage:
     --backend proxy --enable-hooks
 """
 
+import atexit
+import configparser
 import os
 import subprocess
+import tempfile
 import time
 from typing import Any, cast
 
@@ -22,6 +25,7 @@ import morphling
 from morphling.entrypoint import DeviceConfigArguments, ModelConfigArguments
 from morphling.hooks import apply_hooks
 from scripts._runtime_common import (
+    _default_proxy_cfg_path,
     load_model_and_tokenizer,
     prepare_inputs,
     start_backend,
@@ -29,6 +33,36 @@ from scripts._runtime_common import (
 )
 
 torch.autograd.set_detect_anomaly(True)  # type: ignore[attr-defined]
+
+
+def _make_measurement_overlay_ini(base_cfg_path: str) -> str:
+    """Copy `base_cfg_path`, force [device_measurement] enable_* gates ON.
+
+    Why this exists (#55 step 8): the shipped `config/proxy/svr.ini`
+    explicitly sets `enable_latency=0` / `enable_bandwidth=0` /
+    `enable_flops=0`. The `PARSE_INT_ENVCFG` macro in
+    `csrc/core/env_cfg.cpp` uses the INI value when the key is present,
+    so the legacy `MORPHLING_MEASURE_*` env vars are a SILENT no-op
+    against the as-shipped config. To flip probes on without editing the
+    committed INI, we overlay the three enable gates in a temp file and
+    pass that as `--cfg`. The temp file is auto-deleted on process exit.
+    """
+    parser = configparser.ConfigParser()
+    parser.read(base_cfg_path)
+    if not parser.has_section("device_measurement"):
+        parser.add_section("device_measurement")
+    parser.set("device_measurement", "enable_latency", "1")
+    parser.set("device_measurement", "enable_bandwidth", "1")
+    parser.set("device_measurement", "enable_flops", "1")
+
+    fd, overlay_path = tempfile.mkstemp(
+        prefix="svr_measurement_", suffix=".ini"
+    )
+    with os.fdopen(fd, "w") as f:
+        parser.write(f)
+    atexit.register(lambda p=overlay_path: os.path.exists(p) and os.unlink(p))
+    return overlay_path
+
 
 # # if SIGINT is received, kill all the devices
 # def signal_handler(sig, frame):
@@ -47,13 +81,17 @@ if __name__ == "__main__":
     import sys
 
     _enable_hooks_flag_names = ("--enable-hooks", "--enable_hooks", "--hooks")
+    _measurement_flag_names = ("--measurement", "--measure")
     local_enable_hooks = False
+    local_enable_measurement = False
     # Build argv without our local flags so HfArgumentParser won't complain
     orig_argv = sys.argv
     filtered_argv = [orig_argv[0]]
     for a in orig_argv[1:]:
         if a in _enable_hooks_flag_names:
             local_enable_hooks = True
+        elif a in _measurement_flag_names:
+            local_enable_measurement = True
         else:
             filtered_argv.append(a)
 
@@ -67,6 +105,17 @@ if __name__ == "__main__":
 
     # Restore original argv
     sys.argv = orig_argv
+
+    if local_enable_measurement:
+        base_cfg = model_args.cfg or _default_proxy_cfg_path()
+        overlay = _make_measurement_overlay_ini(base_cfg)
+        model_args.cfg = overlay
+        print(
+            f"✓ --measurement enabled: probes ON via overlay cfg {overlay} "
+            f"(base: {base_cfg})",
+            flush=True,
+        )
+
     print(device_args, model_args, flush=True)
 
     os.environ["NUM_DEVICES"] = str(device_args.num_devices)

@@ -107,6 +107,15 @@ Edit the `[device_measurement]` section of
 with the corresponding `MORPHLING_MEASURE_*` env var. Precedence per knob
 is **INI value > env var > built-in default**.
 
+> **Note on env-var overrides.** Because the shipped INI explicitly sets
+> the three `enable_*` gates to `0`, the `MORPHLING_MEASURE_LAT` /
+> `MORPHLING_MEASURE_BW` / `MORPHLING_MEASURE_FLOPS` env vars are a
+> silent no-op when used against the as-shipped `svr.ini` — INI wins.
+> To flip probes on without editing the committed INI, either pass a
+> custom `--cfg` that omits the gates (env vars then take effect), or
+> use the `--measurement` flag on `scripts/run_devices.py` (see below),
+> which generates a temporary overlay INI for the duration of the run.
+
 | INI key                    | Env var                          | Default     | Purpose                                                                          |
 |----------------------------|----------------------------------|-------------|----------------------------------------------------------------------------------|
 | `enable_latency`           | `MORPHLING_MEASURE_LAT`          | `0`         | M1: echo RTT, reports `measured_lat_ns` as RTT/2.                                |
@@ -141,6 +150,52 @@ Device <id> measurement complete: ok=1 state=DONE
   measured_lat_ns=42100 measured_ul_bw_bps=950000000 measured_dl_bw_bps=950000000
   measured_flops=1430000000000 verified=1
 ```
+
+### Quick start with `--measurement`
+
+To run a smoke check with all three probes enabled, pass the
+`--measurement` flag to `scripts/run_devices.py`:
+
+```bash
+docker run --rm --gpus all --ulimit memlock=-1 device-emulator:latest \
+    stdbuf -oL python3 -u scripts/run_devices.py \
+        --num_devices 1 \
+        --model_name facebook/opt-125m \
+        --backend proxy \
+        --measurement
+```
+
+The flag is a Python-side shim: it copies the effective `--cfg` to a
+temp file, flips `enable_latency` / `enable_bandwidth` / `enable_flops`
+to `1`, and points the backend at the overlay. The temp file is removed
+on process exit. The base INI is left untouched.
+
+Two runtime knobs matter for getting clean output:
+
+- `--ulimit memlock=-1` on `docker run` removes the page-pinning quota.
+  The bandwidth probe defaults to a 4 MiB payload which exceeds the
+  default 8 MiB container memlock budget once the rest of the server's
+  pinned pools are accounted for; without it the listener throws
+  `AlignedBufferPool: pin_fn_ failed`.
+- `python3 -u` plus `stdbuf -oL` force unbuffered / line-buffered I/O.
+  Without these, the C++ logger's writes to `stdout` are aggregated
+  behind Python's default block-buffered FILE pointer and the
+  `Device <id> measurement complete: ...` INFO line is not flushed
+  until the worker loop is idle (which only happens after the forward /
+  backward pass).
+
+Expected INFO line (one per device, emitted after the M3 probe
+verifies):
+
+```
+Device 0 measurement complete: ok=1 state=DONE
+  measured_lat_ns=118572 measured_ul_bw_bps=225402564
+  measured_dl_bw_bps=225402564 measured_flops=397312537 verified=1
+```
+
+`verified=1` means the device-computed C matrix matched the OpenBLAS
+reference within `flops_tolerance`; this is the canonical "the device
+is honest about its FLOPS" signal.
 
 ### Reconciliation policy
 
