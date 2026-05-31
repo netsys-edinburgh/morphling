@@ -66,6 +66,11 @@ cmake --build tests/cpp/build -j
 
 - `test_dispatch_gate` (unit/backend)
 
+### Unit / Checkpoint (GoogleTest)
+
+- `test_checkpoint_multifile` (unit/checkpoint) — multi-file
+  `ReadCheckpoint` consistency check (#49)
+
 ### CUDA/cuBLAS Tests (GoogleTest)
 
 - `test_cublas_hostalloc_direct`
