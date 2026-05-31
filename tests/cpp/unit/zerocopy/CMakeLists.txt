@@ -10,6 +10,7 @@ set(ZEROCOPY_TEST_DEPS
   ${PROJECT_ROOT}/csrc/backend/scatter_gather_buffer.cpp
   ${PROJECT_ROOT}/csrc/backend/matrix_partition.cpp
   ${PROJECT_ROOT}/csrc/backend/device_measurement.cpp
+  ${PROJECT_ROOT}/csrc/backend/device_measurement_session.cpp
   ${PROJECT_ROOT}/csrc/core/generator.cpp
   ${PROJECT_ROOT}/csrc/timer/virtual_clock.cpp
 )
@@ -65,6 +66,7 @@ add_zerocopy_test(test_scatter_gather_buffer)
 add_zerocopy_test(test_matrix_partition)
 add_zerocopy_test(test_device_profile_roundtrip)
 add_zerocopy_test(test_device_measurement_service)
+add_zerocopy_test(test_device_measurement_session)
 
 # ============================================================================
 # CUDA Pinned Pool Test (uses CUDAToolkit from parent project)
