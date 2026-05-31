@@ -78,8 +78,10 @@ docker build -t device-emulator:latest .
 # or
 make docker-build
 
-# Run the full test suite
-docker run --rm --gpus all device-emulator:latest python3 -m pytest tests -v
+# Run the full test suite. `--ulimit memlock=-1` removes the page-pinning
+# quota required by the proxy server's pinned-buffer pools (see #59).
+docker run --rm --gpus all --ulimit memlock=-1 device-emulator:latest \
+    python3 -m pytest tests -v
 # or
 make docker-test
 ```

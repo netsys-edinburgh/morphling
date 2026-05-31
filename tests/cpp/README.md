@@ -154,6 +154,10 @@ docker run --rm --gpus=all --ulimit memlock=-1 --cap-add IPC_LOCK \
 Run individual binaries inside the container as needed:
 
 ```bash
-docker run --rm --gpus=all device-emulator:latest \
+docker run --rm --gpus=all --ulimit memlock=-1 device-emulator:latest \
   /app/tests/cpp/build/test_xtgemm_worker
 ```
+
+`--ulimit memlock=-1` is required by any binary that exercises the proxy
+server's pinned-buffer pools (zerocopy tests, measurement-session tests,
+xtgemm tests). See issue #59.

@@ -87,8 +87,14 @@ All tests run inside the Docker image (per [`CLAUDE.md`](CLAUDE.md) §1–2).
 ```bash
 make docker-test
 # or
-docker run --rm --gpus all device-emulator:latest python3 -m pytest tests -v
+docker run --rm --gpus all --ulimit memlock=-1 device-emulator:latest \
+    python3 -m pytest tests -v
 ```
+
+`--ulimit memlock=-1` is required: the proxy server's pinned-buffer pools
+and the #55 4 MiB bandwidth probe exceed the default 8 MiB container
+memlock budget. See [issue #59](https://github.com/drunkcoding/DeviceEmulator/issues/59)
+and [`docs/deployment.md`](docs/deployment.md#quick-start-with---measurement).
 
 The image builds **all** C++ test categories (unit, CUDA/cuBLAS,
 XtGemm/worker, zerocopy, benchmarks). See

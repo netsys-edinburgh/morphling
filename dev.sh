@@ -80,10 +80,15 @@ start_container_common() {
         gpu_args=(--gpus all)
     fi
 
+    # --ulimit memlock=-1 removes the page-pinning quota required by the
+    # proxy server's pinned-buffer pools (4 MiB bandwidth probe + general
+    # zerocopy traffic). Without it the listener crashes mid-flight with
+    # `AlignedBufferPool: pin_fn_ failed`. See issue #59.
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     docker run -d \
         --name "$CONTAINER_NAME" \
         "${gpu_args[@]}" \
+        --ulimit memlock=-1 \
         -p 39000:39000 \
         "$IMAGE_NAME" \
         tail -f /dev/null
@@ -104,10 +109,12 @@ quickstart() {
 
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
+    # --ulimit memlock=-1: required by proxy-server pinned buffer pools (#59).
     if [ "$use_gpu" = true ]; then
         docker run -d \
             --name "$CONTAINER_NAME" \
             --gpus all \
+            --ulimit memlock=-1 \
             -p 39000:39000 \
             "$IMAGE_NAME" \
             tail -f /dev/null
@@ -115,6 +122,7 @@ quickstart() {
         echo "Starting in CPU-only mode..."
         docker run -d \
             --name "$CONTAINER_NAME" \
+            --ulimit memlock=-1 \
             -p 39000:39000 \
             "$IMAGE_NAME" \
             tail -f /dev/null
