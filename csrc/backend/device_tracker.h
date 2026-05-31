@@ -21,6 +21,9 @@
 namespace morphling {
 namespace backend {
 
+class DeviceMeasurementSession;
+using DeviceMeasurementSessionPtr = std::shared_ptr<DeviceMeasurementSession>;
+
 struct CircuitBreakerConfig {
   bool enabled = false;
   int failure_threshold = 3;
@@ -174,6 +177,20 @@ class DevicePartitionTracker {
   uevent::ConnectionUeventPtr GetDeviceConnection(int64_t device_id) const;
   void RemoveDeviceConnection(int64_t device_id);
 
+  // Device measurement session (#55). Per-device M1->M2->M3 probe state
+  // machine owned by the tracker so probe responses can be routed by
+  // device_id from any worker loop. Lifetime is tied to the device's
+  // registration window: cleared on UnregisterDevice/RemoveMeasurementSession.
+  void SetMeasurementSession(int64_t device_id,
+                             const DeviceMeasurementSessionPtr& session);
+  DeviceMeasurementSessionPtr GetMeasurementSession(int64_t device_id) const;
+  void RemoveMeasurementSession(int64_t device_id);
+
+  // Merge measured_* fields into the stored device profile (#55 step 4).
+  // Leaves the 7 device-reported legacy fields untouched.
+  void UpdateMeasuredProfile(int64_t device_id,
+                             const DeviceProfileData& measured);
+
   // Debug and monitoring
   std::string DebugString() const;
   void DumpState() const;
@@ -211,6 +228,11 @@ class DevicePartitionTracker {
 
   // Connection management
   std::unordered_map<int64_t, uevent::ConnectionUeventPtr> device_conn_;
+
+  // Active probe sessions (#55), keyed by device_id. Cleared on
+  // UnregisterDevice / RemoveMeasurementSession.
+  std::unordered_map<int64_t, DeviceMeasurementSessionPtr>
+      measurement_sessions_;
 
   CircuitBreakerConfig circuit_breaker_config_;
 

@@ -11,6 +11,7 @@
 
 #include "core/env_cfg.h"
 #include "core/pytorch_defs.h"
+#include "device_measurement.h"
 #include "device_tracker.h"
 #include "morphling.pb.h"
 #include "network/uevent.h"
@@ -71,10 +72,22 @@ class ProxySvrHandle : public uevent::LoopHandle {
   void SendRegisterRequest(const uevent::ConnectionUeventPtr& conn);
   MessageHandlerSignature HandleRegisterResponse;
 
+  // Device-measurement probe response handlers (#55). Routed by device_id
+  // to the session stored on DEVICE_TRACKER.
+  MessageHandlerSignature HandleProbeLatencyResponse;
+  MessageHandlerSignature HandleProbeBandwidthResponse;
+  MessageHandlerSignature HandleProbeFlopsResponse;
+
  private:
   // Message decoding and dispatching
   void DecodeAndDispatch(const uevent::ConnectionUeventPtr& conn,
                          const void* payload, size_t size);
+
+  // Start a probe session for a freshly-registered device. No-op when all
+  // probe flags are disabled. On completion (or failure), pushes the
+  // device into the idle-partition scheduler.
+  void StartMeasurementOrDispatch(const uevent::ConnectionUeventPtr& conn,
+                                  int64_t device_id);
 
   // Message handlers following MessageHandler interface
   MessageHandlerSignature HandleMatMul;
@@ -91,6 +104,7 @@ class ProxySvrHandle : public uevent::LoopHandle {
 
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
+  DeviceMeasurementService measurement_;
   std::unordered_map<std::string, uint32_t> conn_inflight_;
   std::deque<std::function<void()>> task_queue_;
   std::unordered_map<std::string, SendMeta> send_meta_;

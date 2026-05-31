@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "core/logger.h"
+#include "device_measurement_session.h"
 
 namespace morphling {
 namespace backend {
@@ -230,6 +231,7 @@ void DevicePartitionTracker::PurgeDevice(int64_t device_id) {
     uuid_to_device_id_.erase(it->second->stable_uuid);
   }
   devices_map_.erase(device_id);
+  measurement_sessions_.erase(device_id);
 
   if (dispatch_gate_) {
     dispatch_gate_->NotifyDeviceLeft(device_id);
@@ -638,6 +640,47 @@ void DevicePartitionTracker::RemoveDeviceConnection(int64_t device_id) {
   LOG_DEBUG << "[DeviceTracker] Removed connection for device_id " << device_id;
 }
 
+void DevicePartitionTracker::SetMeasurementSession(
+    int64_t device_id, const DeviceMeasurementSessionPtr& session) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  measurement_sessions_[device_id] = session;
+}
+
+DeviceMeasurementSessionPtr DevicePartitionTracker::GetMeasurementSession(
+    int64_t device_id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = measurement_sessions_.find(device_id);
+  return (it != measurement_sessions_.end()) ? it->second : nullptr;
+}
+
+void DevicePartitionTracker::RemoveMeasurementSession(int64_t device_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  measurement_sessions_.erase(device_id);
+}
+
+void DevicePartitionTracker::UpdateMeasuredProfile(
+    int64_t device_id, const DeviceProfileData& measured) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = devices_map_.find(device_id);
+  if (it == devices_map_.end()) {
+    LOG_WARN << "[DeviceTracker] UpdateMeasuredProfile: unknown device "
+             << device_id;
+    return;
+  }
+  auto& p = it->second->profile;
+  p.measured_flops = measured.measured_flops;
+  p.measured_flops_verified = measured.measured_flops_verified;
+  p.measured_lat_ns = measured.measured_lat_ns;
+  p.measured_ul_bw_bps = measured.measured_ul_bw_bps;
+  p.measured_dl_bw_bps = measured.measured_dl_bw_bps;
+  LOG_INFO << "[DeviceTracker] Device " << device_id
+           << " measured profile updated: flops=" << p.measured_flops
+           << " verified=" << p.measured_flops_verified
+           << " lat_ns=" << p.measured_lat_ns
+           << " ul_bw_bps=" << p.measured_ul_bw_bps
+           << " dl_bw_bps=" << p.measured_dl_bw_bps;
+}
+
 std::string DevicePartitionTracker::DebugString() const {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -887,6 +930,7 @@ void DevicePartitionTracker::Reset() {
   devices_map_.clear();
   devices_set_.clear();
   device_conn_.clear();
+  measurement_sessions_.clear();
 }
 
 }  // namespace backend

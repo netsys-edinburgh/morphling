@@ -1,12 +1,16 @@
 #include "proxy_svr.h"
 
+#include <cblas.h>
+
 #include <chrono>
 
 #include "core/generator.h"
 #include "core/logger.h"
 #include "core/stats.h"
 #include "core/thread_affinity.h"
+#include "device_measurement_session.h"
 #include "device_tracker.h"
+#include "global_api.pb.h"
 #include "muduo_base/my_uuid.h"
 #include "network/eventloop_libevent.h"
 #include "network/listener_libevent.h"
@@ -38,9 +42,12 @@ static void PinThreadToNextAvailableCore() {
 /*********************************ProxySvrHandle***********************************/
 
 ProxySvrHandle::ProxySvrHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
-    : ctx_(ctx), loop_(loop) {
+    : ctx_(ctx), loop_(loop), measurement_() {
   SRV_STATS->Initialize();
-  // Scheduling policy is now in ctx_.sched_policy
+  LOG_INFO << "[ProxySvrHandle] device_measurement: lat="
+           << measurement_.LatencyEnabled()
+           << " bw=" << measurement_.BandwidthEnabled()
+           << " flops=" << measurement_.FlopsEnabled();
 }
 
 void ProxySvrHandle::ThreadInit(uevent::UeventLoop* loop) {
@@ -167,10 +174,63 @@ void ProxySvrHandle::DecodeAndDispatch(const ConnectionUeventPtr& conn,
       loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, this));
       break;
 
+    case morphling::global_api::PROBE_LATENCY_RESPONSE:
+      HandleProbeLatencyResponse(conn, payload, size);
+      break;
+
+    case morphling::global_api::PROBE_BANDWIDTH_RESPONSE:
+      HandleProbeBandwidthResponse(conn, payload, size);
+      break;
+
+    case morphling::global_api::PROBE_FLOPS_RESPONSE:
+      HandleProbeFlopsResponse(conn, payload, size);
+      break;
+
     default:
       LOG_ERROR << "Unknown message type: " << message_type;
       break;
   }
+}
+
+void ProxySvrHandle::HandleProbeLatencyResponse(const ConnectionUeventPtr& conn,
+                                                const void* payload,
+                                                size_t size) {
+  string client_addr = conn->GetPeerAddress().ToString();
+  int64_t device_id = DEVICE_TRACKER.GetDeviceIdByAddr(client_addr);
+  auto session = DEVICE_TRACKER.GetMeasurementSession(device_id);
+  if (!session) {
+    LOG_WARN << "PROBE_LATENCY_RESPONSE from " << client_addr
+             << " (device_id=" << device_id << ") without active session";
+    return;
+  }
+  session->OnProbeLatencyResponse(payload, size);
+}
+
+void ProxySvrHandle::HandleProbeBandwidthResponse(
+    const ConnectionUeventPtr& conn, const void* payload, size_t size) {
+  string client_addr = conn->GetPeerAddress().ToString();
+  int64_t device_id = DEVICE_TRACKER.GetDeviceIdByAddr(client_addr);
+  auto session = DEVICE_TRACKER.GetMeasurementSession(device_id);
+  if (!session) {
+    LOG_WARN << "PROBE_BANDWIDTH_RESPONSE from " << client_addr
+             << " (device_id=" << device_id << ") without active session";
+    return;
+  }
+  session->OnProbeBandwidthResponse(payload, size);
+}
+
+void ProxySvrHandle::HandleProbeFlopsResponse(const ConnectionUeventPtr& conn,
+                                              const void* payload,
+                                              size_t size) {
+  string client_addr = conn->GetPeerAddress().ToString();
+  int64_t device_id = DEVICE_TRACKER.GetDeviceIdByAddr(client_addr);
+  auto session = DEVICE_TRACKER.GetMeasurementSession(device_id);
+  if (!session) {
+    LOG_WARN << "PROBE_FLOPS_RESPONSE from " << client_addr
+             << " (device_id=" << device_id << ") without active session";
+    return;
+  }
+  session->OnProbeFlopsResponse(payload, size);
 }
 
 void ProxySvrHandle::HandleRegisterResponse(const ConnectionUeventPtr& conn,
@@ -190,14 +250,95 @@ void ProxySvrHandle::HandleRegisterResponse(const ConnectionUeventPtr& conn,
   // Store connection in tracker
   DEVICE_TRACKER.SetDeviceConnection(device_id, conn);
 
-  // Store device info
-  // device_info_[client_addr] = profile;
+  LOG_INFO << "Client " << client_addr
+           << " registered with device_id=" << device_id
+           << ", reported flops=" << profile.flops << " ul_bw=" << profile.ul_bw
+           << " dl_bw=" << profile.dl_bw;
+  LOG_DEBUG << "Profile: " << profile.DebugString();
 
-  LOG_DEBUG << "Client " << client_addr
-            << " registered with device_id=" << device_id << ": "
-            << profile.DebugString();
+  StartMeasurementOrDispatch(conn, device_id);
+}
 
-  loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, this));
+void ProxySvrHandle::StartMeasurementOrDispatch(const ConnectionUeventPtr& conn,
+                                                int64_t device_id) {
+  if (!measurement_.AnyEnabled()) {
+    loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, this));
+    return;
+  }
+
+  DeviceMeasurementSession::Config cfg;
+  cfg.enable_latency = measurement_.LatencyEnabled();
+  cfg.enable_bandwidth = measurement_.BandwidthEnabled();
+  cfg.enable_flops = measurement_.FlopsEnabled();
+  cfg.latency_payload_bytes = measurement_.LatencyPayloadBytes();
+  cfg.bandwidth_payload_bytes = measurement_.BandwidthPayloadBytes();
+  cfg.flops_matrix_dim = measurement_.FlopsMatrixDim();
+  cfg.probe_timeout_sec = measurement_.ProbeTimeoutSec();
+  cfg.flops_tolerance = measurement_.FlopsTolerance();
+  // Seed from the just-registered profile so verification matches what the
+  // codec stamped on the wire.
+  cfg.seed = DEVICE_TRACKER.GetDeviceLiveness(device_id).profile.uuid;
+
+  // Wire send: zero-copy with keepalive that pins the SerializationBuffer
+  // until libevent drains.
+  SendFn send_fn = [conn](SerializationBufferPtr buf) -> bool {
+    auto* keepalive = new SerializationBufferPtr(buf);
+    int rc = conn->SendDataZeroCopy(buf->GetBuffer(), buf->GetSize(),
+                                    SerializationBufferSendCleanup, keepalive);
+    if (rc < 0) {
+      delete keepalive;
+      return false;
+    }
+    return true;
+  };
+
+  // Per-probe timeout via libevent's RunAfter/CancelTimer. uevent::TimerId is
+  // a value type; stash it on the heap so callbacks can carry it through the
+  // uint64_t opaque-id slot.
+  UeventLoop* loop = conn->GetLoop();
+  TimerOps timer_ops;
+  timer_ops.Arm = [loop](double seconds, std::function<void()> cb) -> uint64_t {
+    auto* id = new uevent::TimerId(loop->RunAfter(seconds, std::move(cb)));
+    return reinterpret_cast<uint64_t>(id);
+  };
+  timer_ops.Cancel = [loop](uint64_t opaque) {
+    if (opaque == 0) return;
+    auto* id = reinterpret_cast<uevent::TimerId*>(opaque);
+    loop->CancelTimer(*id);
+    delete id;
+  };
+
+  // Reference GEMM: MKL sgemm on the libevent worker thread. 256x256x256
+  // f32 is ~5 ms on a single core; acceptable inline. For larger probe
+  // matrices we would need to offload, but cfg.flops_matrix_dim defaults
+  // to 256 and is bounded by the operator.
+  ReferenceGemmFn ref_gemm = [](const ReferenceGemmRequest& req,
+                                ReferenceGemmDoneFn done) {
+    auto c = std::make_shared<std::vector<float>>(static_cast<size_t>(req.m) *
+                                                  req.n);
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, req.m, req.n, req.k,
+                1.0f, req.a, req.k, req.b, req.n, 0.0f, c->data(), req.n);
+    done(true, c);
+  };
+
+  auto session = std::make_shared<DeviceMeasurementSession>(
+      device_id, cfg, std::move(send_fn), std::move(timer_ops),
+      std::move(ref_gemm));
+  DEVICE_TRACKER.SetMeasurementSession(device_id, session);
+
+  auto* self = this;
+  session->Start([self, device_id](const MeasurementResult& r) {
+    LOG_INFO << "Device " << device_id << " measurement complete: ok=" << r.ok
+             << " state=" << MeasurementStateName(r.terminal_state)
+             << " measured_lat_ns=" << r.measured_profile.measured_lat_ns
+             << " measured_ul_bw_bps=" << r.measured_profile.measured_ul_bw_bps
+             << " measured_dl_bw_bps=" << r.measured_profile.measured_dl_bw_bps
+             << " measured_flops=" << r.measured_profile.measured_flops
+             << " verified=" << r.measured_profile.measured_flops_verified;
+    DEVICE_TRACKER.UpdateMeasuredProfile(device_id, r.measured_profile);
+    DEVICE_TRACKER.RemoveMeasurementSession(device_id);
+    self->loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, self));
+  });
 }
 
 void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
@@ -502,6 +643,7 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
   // Step 3: Remove connection from maps
   // conn_map_.erase(conn_addr);
   if (device_id != -1) {
+    DEVICE_TRACKER.RemoveMeasurementSession(device_id);
     DEVICE_TRACKER.RemoveDeviceConnection(device_id);
     DEVICE_TRACKER.UnregisterDevice(device_id);
   }
