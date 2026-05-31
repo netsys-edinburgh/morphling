@@ -95,7 +95,14 @@ def main():
         "logical_time": 0,
     }
 
-    # FIXME(#45): server-side trust model for device-reported FLOPS/bandwidth/latency.
+    # NOTE(#45 trust model): the device-reported FLOPS / bandwidth / latency
+    # values below are *advisory*. When `MORPHLING_MEASURE_LAT` /
+    # `MORPHLING_MEASURE_BW` / `MORPHLING_MEASURE_FLOPS` are enabled on the
+    # server (see `docs/deployment.md` → "Server-measured device profile"),
+    # the proxy runs a probe trio (M1 latency, M2 bandwidth, M3 verifiable
+    # GEMM) against each registered device and records the measured numbers
+    # alongside the reported ones. Reconciliation policy (which value wins
+    # in scheduling) is deferred to a follow-up issue.
 
     from morphling.backend import AutoWorker
 
