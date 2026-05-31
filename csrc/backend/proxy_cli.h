@@ -118,6 +118,10 @@ class ProxyCliHandle : public uevent::LoopHandle {
   void HandlePartition(const uevent::ConnectionUeventPtr& conn,
                        const MatrixPartition& partition);
 
+  void HandleProbeFlops(const uevent::ConnectionUeventPtr& conn,
+                        uint64_t probe_id, uint32_t m, uint32_t n, uint32_t k,
+                        std::string matrix_a, std::string matrix_b);
+
  private:
   bool ShouldUseGpu() const;
 
@@ -179,6 +183,9 @@ class ProxyCliImpl : public std::enable_shared_from_this<ProxyCliImpl> {
   // Message handlers following MessageHandler interface
   MessageHandlerSignature HandleRegisterRequest;
   MessageHandlerSignature HandleMatMulRequest;
+  MessageHandlerSignature HandleProbeLatencyRequest;
+  MessageHandlerSignature HandleProbeBandwidthRequest;
+  MessageHandlerSignature HandleProbeFlopsRequest;
 
   void HandleMatMul(const uevent::ConnectionUeventPtr& conn,
                     MatrixPartition& partition);

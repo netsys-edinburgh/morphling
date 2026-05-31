@@ -1,19 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+#include <string>
 
 #include "server_base.h"
 
-// Coordinates server-side measurement of device-reported FLOPS, bandwidth,
-// and latency (#45). All probes default off; enabled via env vars at
-// construction time:
-//   MORPHLING_MEASURE_LAT   - server-measured round-trip latency
-//   MORPHLING_MEASURE_BW    - server-measured echo bandwidth
-//   MORPHLING_MEASURE_FLOPS - seeded challenge-GEMM with verification
-//
-// Step 2 ships the control surface only: Measure* returns false when the
-// corresponding flag is off and leaves the profile untouched. The actual
-// probe wire protocol (3 new opcodes) lands in step 3.
+namespace morphling {
+namespace backend {
+
 class DeviceMeasurementService {
  public:
   DeviceMeasurementService();
@@ -21,6 +16,15 @@ class DeviceMeasurementService {
   bool LatencyEnabled() const { return latency_enabled_; }
   bool BandwidthEnabled() const { return bandwidth_enabled_; }
   bool FlopsEnabled() const { return flops_enabled_; }
+  bool AnyEnabled() const {
+    return latency_enabled_ || bandwidth_enabled_ || flops_enabled_;
+  }
+
+  uint32_t LatencyPayloadBytes() const { return latency_payload_bytes_; }
+  uint32_t BandwidthPayloadBytes() const { return bandwidth_payload_bytes_; }
+  uint32_t FlopsMatrixDim() const { return flops_matrix_dim_; }
+  double ProbeTimeoutSec() const { return probe_timeout_sec_; }
+  double FlopsTolerance() const { return flops_tolerance_; }
 
   bool MeasureLatency(DeviceProfileData& profile);
   bool MeasureBandwidth(DeviceProfileData& profile);
@@ -30,4 +34,77 @@ class DeviceMeasurementService {
   bool latency_enabled_;
   bool bandwidth_enabled_;
   bool flops_enabled_;
+  uint32_t latency_payload_bytes_;
+  uint32_t bandwidth_payload_bytes_;
+  uint32_t flops_matrix_dim_;
+  double probe_timeout_sec_;
+  double flops_tolerance_;
 };
+
+// Build payloads (request bodies) for the three probes. Reused by tests.
+class ProbeMessageCodec {
+ public:
+  static SerializationBufferPtr SerializeLatencyRequest(uint64_t probe_id,
+                                                        const void* payload,
+                                                        size_t payload_size);
+  static SerializationBufferPtr SerializeLatencyResponse(uint64_t probe_id,
+                                                         const void* payload,
+                                                         size_t payload_size);
+  static SerializationBufferPtr SerializeBandwidthRequest(uint64_t probe_id,
+                                                          const void* payload,
+                                                          size_t payload_size);
+  static SerializationBufferPtr SerializeBandwidthResponse(uint64_t probe_id,
+                                                           const void* payload,
+                                                           size_t payload_size);
+  static SerializationBufferPtr SerializeFlopsRequest(uint64_t probe_id,
+                                                      uint64_t seed, uint32_t m,
+                                                      uint32_t n, uint32_t k,
+                                                      const float* matrix_a,
+                                                      const float* matrix_b);
+  static SerializationBufferPtr SerializeFlopsResponse(uint64_t probe_id,
+                                                       const float* matrix_c,
+                                                       size_t m, size_t n);
+
+  // Parse helpers: caller supplies pointers to framed UMessage wire bytes
+  // (starting with payload_size). The returned views own their byte buffers
+  // (moved out of the parsed protobuf) so they remain valid after the
+  // input bytes are drained.
+  struct EchoView {
+    uint64_t probe_id = 0;
+    std::string payload;
+  };
+  struct FlopsRequestView {
+    uint64_t probe_id = 0;
+    uint64_t seed = 0;
+    uint32_t m = 0, n = 0, k = 0;
+    std::string matrix_a;
+    std::string matrix_b;
+  };
+  struct FlopsResponseView {
+    uint64_t probe_id = 0;
+    std::string matrix_c;
+  };
+
+  static bool ParseLatencyRequest(const void* data, size_t size, EchoView& out);
+  static bool ParseLatencyResponse(const void* data, size_t size,
+                                   EchoView& out);
+  static bool ParseBandwidthRequest(const void* data, size_t size,
+                                    EchoView& out);
+  static bool ParseBandwidthResponse(const void* data, size_t size,
+                                     EchoView& out);
+  static bool ParseFlopsRequest(const void* data, size_t size,
+                                FlopsRequestView& out);
+  static bool ParseFlopsResponse(const void* data, size_t size,
+                                 FlopsResponseView& out);
+};
+
+}  // namespace backend
+}  // namespace morphling
+
+// ============================================================================
+// Compatibility alias for step-2 test (tests/cpp/unit/zerocopy/
+// test_device_measurement_service.cpp). The test still uses the unqualified
+// name `DeviceMeasurementService`; keep it available without forcing a
+// migration of that test alongside this header.
+// ============================================================================
+using DeviceMeasurementService = morphling::backend::DeviceMeasurementService;
