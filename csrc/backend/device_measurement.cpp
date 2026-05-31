@@ -100,6 +100,16 @@ DeviceMeasurementService::DeviceMeasurementService()
       probe_timeout_sec_(ReadDoubleEnv("MORPHLING_MEASURE_TIMEOUT_S", 5.0)),
       flops_tolerance_(ReadDoubleEnv("MORPHLING_MEASURE_FLOPS_TOL", 1e-3)) {}
 
+DeviceMeasurementService::DeviceMeasurementService(const Config& cfg)
+    : latency_enabled_(cfg.latency_enabled),
+      bandwidth_enabled_(cfg.bandwidth_enabled),
+      flops_enabled_(cfg.flops_enabled),
+      latency_payload_bytes_(cfg.latency_payload_bytes),
+      bandwidth_payload_bytes_(cfg.bandwidth_payload_bytes),
+      flops_matrix_dim_(cfg.flops_matrix_dim),
+      probe_timeout_sec_(cfg.probe_timeout_sec),
+      flops_tolerance_(cfg.flops_tolerance) {}
+
 bool DeviceMeasurementService::MeasureLatency(DeviceProfileData& /*profile*/) {
   return false;
 }

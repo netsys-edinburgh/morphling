@@ -42,7 +42,18 @@ static void PinThreadToNextAvailableCore() {
 /*********************************ProxySvrHandle***********************************/
 
 ProxySvrHandle::ProxySvrHandle(ProxyEnvCfg& ctx, UeventLoop* loop)
-    : ctx_(ctx), loop_(loop), measurement_() {
+    : ctx_(ctx),
+      loop_(loop),
+      measurement_(DeviceMeasurementService::Config{
+          ctx.measure_latency,
+          ctx.measure_bandwidth,
+          ctx.measure_flops,
+          static_cast<uint32_t>(ctx.measure_latency_payload_bytes),
+          static_cast<uint32_t>(ctx.measure_bandwidth_payload_bytes),
+          static_cast<uint32_t>(ctx.measure_flops_matrix_dim),
+          ctx.measure_probe_timeout_sec,
+          ctx.measure_flops_tolerance,
+      }) {
   SRV_STATS->Initialize();
   LOG_INFO << "[ProxySvrHandle] device_measurement: lat="
            << measurement_.LatencyEnabled()

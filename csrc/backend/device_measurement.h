@@ -11,7 +11,22 @@ namespace backend {
 
 class DeviceMeasurementService {
  public:
+  // Default ctor reads MORPHLING_MEASURE_* env vars (legacy unit-test path).
   DeviceMeasurementService();
+
+  // Explicit configuration (used by production wiring in proxy_svr; reads
+  // INI values via ProxyEnvCfg).
+  struct Config {
+    bool latency_enabled = false;
+    bool bandwidth_enabled = false;
+    bool flops_enabled = false;
+    uint32_t latency_payload_bytes = 64;
+    uint32_t bandwidth_payload_bytes = 4u * 1024u * 1024u;
+    uint32_t flops_matrix_dim = 256;
+    double probe_timeout_sec = 5.0;
+    double flops_tolerance = 1e-3;
+  };
+  explicit DeviceMeasurementService(const Config& cfg);
 
   bool LatencyEnabled() const { return latency_enabled_; }
   bool BandwidthEnabled() const { return bandwidth_enabled_; }

@@ -63,6 +63,19 @@ struct ProxyEnvCfg {
   int64_t barrier_timeout_ms = 0;  // 0 = infinite
   int64_t max_queue_size = 1024;
 
+  // Device measurement probes (#55). Booleans gate M1 (latency),
+  // M2 (bandwidth), M3 (FLOPS). Per-probe knobs control payload sizes,
+  // GEMM matrix dim, request timeout, and FLOPS verification tolerance.
+  // Precedence: INI > env var (MORPHLING_MEASURE_*) > default.
+  bool measure_latency = false;
+  bool measure_bandwidth = false;
+  bool measure_flops = false;
+  int64_t measure_latency_payload_bytes = 64;
+  int64_t measure_bandwidth_payload_bytes = 4 * 1024 * 1024;
+  int64_t measure_flops_matrix_dim = 256;
+  double measure_probe_timeout_sec = 5.0;
+  double measure_flops_tolerance = 1e-3;
+
   // Get scheduling policy with type-based reinterpretation
   template <typename T>
   T* GetSchedPolicy() {

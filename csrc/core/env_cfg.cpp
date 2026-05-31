@@ -1,5 +1,8 @@
 #include "env_cfg.h"
 
+#include <cstdlib>
+#include <cstring>
+
 #include "backend/sched_policy.h"
 #include "muduo_base/ini_config.h"
 #include "muduo_base/logging.h"
@@ -132,6 +135,74 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
   // barrier_count=0 means use num_device from [worker] section
   if (barrier_count == 0) {
     barrier_count = num_device;
+  }
+
+  // Device measurement (#55). Precedence: INI value wins if present;
+  // otherwise fall back to MORPHLING_MEASURE_* env var; otherwise default.
+  auto env_bool_or = [](const char* name, bool fallback) -> bool {
+    const char* v = std::getenv(name);
+    if (v == nullptr || v[0] == '\0') return fallback;
+    if (std::strcmp(v, "0") == 0 || std::strcmp(v, "false") == 0 ||
+        std::strcmp(v, "False") == 0 || std::strcmp(v, "FALSE") == 0) {
+      return false;
+    }
+    return true;
+  };
+  auto env_int_or = [](const char* name, int64_t fallback) -> int64_t {
+    const char* v = std::getenv(name);
+    if (v == nullptr || v[0] == '\0') return fallback;
+    return static_cast<int64_t>(std::strtoll(v, nullptr, 10));
+  };
+  auto env_double_or = [](const char* name, double fallback) -> double {
+    const char* v = std::getenv(name);
+    if (v == nullptr || v[0] == '\0') return fallback;
+    return std::strtod(v, nullptr);
+  };
+
+  int measure_lat_int = 0;
+  PARSE_INT_ENVCFG(parser, "device_measurement", "enable_latency", false,
+                   env_bool_or("MORPHLING_MEASURE_LAT", false) ? 1 : 0,
+                   measure_lat_int);
+  measure_latency = (measure_lat_int != 0);
+
+  int measure_bw_int = 0;
+  PARSE_INT_ENVCFG(parser, "device_measurement", "enable_bandwidth", false,
+                   env_bool_or("MORPHLING_MEASURE_BW", false) ? 1 : 0,
+                   measure_bw_int);
+  measure_bandwidth = (measure_bw_int != 0);
+
+  int measure_flops_int = 0;
+  PARSE_INT_ENVCFG(parser, "device_measurement", "enable_flops", false,
+                   env_bool_or("MORPHLING_MEASURE_FLOPS", false) ? 1 : 0,
+                   measure_flops_int);
+  measure_flops = (measure_flops_int != 0);
+
+  PARSE_INT_ENVCFG(parser, "device_measurement", "latency_payload_bytes", false,
+                   env_int_or("MORPHLING_MEASURE_LAT_BYTES", 64),
+                   measure_latency_payload_bytes);
+  PARSE_INT_ENVCFG(parser, "device_measurement", "bandwidth_payload_bytes",
+                   false,
+                   env_int_or("MORPHLING_MEASURE_BW_BYTES", 4 * 1024 * 1024),
+                   measure_bandwidth_payload_bytes);
+  PARSE_INT_ENVCFG(parser, "device_measurement", "flops_matrix_dim", false,
+                   env_int_or("MORPHLING_MEASURE_FLOPS_DIM", 256),
+                   measure_flops_matrix_dim);
+
+  if (parser.Count("device_measurement", "probe_timeout_sec") > 0) {
+    measure_probe_timeout_sec = std::strtod(
+        parser.GetValue("device_measurement", "probe_timeout_sec").c_str(),
+        nullptr);
+  } else {
+    measure_probe_timeout_sec =
+        env_double_or("MORPHLING_MEASURE_TIMEOUT_S", 5.0);
+  }
+  if (parser.Count("device_measurement", "flops_tolerance") > 0) {
+    measure_flops_tolerance = std::strtod(
+        parser.GetValue("device_measurement", "flops_tolerance").c_str(),
+        nullptr);
+  } else {
+    measure_flops_tolerance =
+        env_double_or("MORPHLING_MEASURE_FLOPS_TOL", 1e-3);
   }
 
   base::Logger::setLogLevel(log_level);
