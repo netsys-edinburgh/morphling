@@ -55,6 +55,7 @@ discover_tests() {
 
 run_tests_from() {
     local tests
+    local rc=0
     tests="$(discover_tests "$@")"
     if [ -z "${tests}" ]; then
         echo "(no matching test binaries found)"
@@ -62,8 +63,12 @@ run_tests_from() {
     fi
     while IFS= read -r test; do
         echo "Running $(basename "${test}") (${test#${BUILD_DIR}/})..."
-        "${test}" || true
+        if ! "${test}"; then
+            echo "FAIL: $(basename "${test}") exited non-zero"
+            rc=1
+        fi
     done <<<"${tests}"
+    return ${rc}
 }
 
 echo "========================================"
