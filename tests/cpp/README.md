@@ -10,7 +10,6 @@ tests/cpp/
 ├── unit/           # GoogleTest sources
 │   ├── cuda/      # CUDA/cuBLAS tests
 │   ├── memory/    # Memory operation tests (sources only unless wired in CMake)
-│   ├── ml/        # ML framework tests (sources only unless wired in CMake)
 │   ├── network/   # Network/messaging tests (sources only unless wired in CMake)
 │   ├── backend/   # Backend scheduling/dispatch tests
 │   ├── worker/    # Worker/XtGemm tests
