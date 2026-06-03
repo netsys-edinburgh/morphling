@@ -25,8 +25,11 @@ jobs:
       - name: Run CPU smoke tests
         # Discovery is marker-driven. Any test marked @pytest.mark.smoke
         # (function or module-level pytestmark) is picked up automatically.
-        # The --ignore list documents paths that need GPU or the morphling
-        # C extension — both unavailable on hosted runners.
+        # The --ignore list covers paths that either need GPU / the morphling
+        # C extension, or import heavy deps (pandas, psutil, tqdm) at module
+        # scope — pytest imports every module during collection before it can
+        # read markers, so an unsatisfied import aborts the run even when the
+        # file would be deselected.
         run: >-
           pytest tests/python
           -m smoke
@@ -39,6 +42,11 @@ jobs:
           --ignore=tests/python/unit/test_gemm_shape_logging.py
           --ignore=tests/python/unit/test_checkpoint_multifile_smoke.py
           --ignore=tests/python/unit/test_rs_code.py
+          --ignore=tests/python/unit/test_ldpc_adapter.py
+          --ignore=tests/python/unit/test_matrix_sum.py
+          --ignore=tests/python/unit/test_pytorch_mempool.py
+          --ignore=tests/python/unit/test_tenseal.py
+          --ignore=tests/python/unit/test_torch_cpu.py
           --ignore=tests/python/integration/test_greenctx_training.py
           --timeout=120 -v --tb=short
 
@@ -53,9 +61,12 @@ jobs:
           python-version: '3.10'
       - name: Install test dependencies
         # Entrypoint tests stub out torch / morphling._C / huggingface_hub
-        # via monkeypatch (see tests/python/unit/entrypoint/test_*.py).
-        # Only pytest is required.
-        run: pip install pytest pytest-timeout
+        # via monkeypatch, but the repo-root conftest.py registers
+        # tests.python.testutils.determinism as a global pytest plugin, which
+        # imports numpy + torch at module scope. Those must be present for
+        # collection to succeed even though the entrypoint tests don't use
+        # them directly.
+        run: pip install pytest pytest-timeout numpy torch
       - name: Run entrypoint tests
         run: >-
           pytest tests/python/unit/entrypoint
