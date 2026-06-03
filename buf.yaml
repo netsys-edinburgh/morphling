@@ -1,0 +1,14 @@
+version: v1
+name: buf.build/morphling/proto
+breaking:
+  use:
+    - FILE
+deps: []
+lint:
+  use:
+    - DEFAULT
+  except:
+    - PACKAGE_VERSION_SUFFIX
+    - FIELD_LOWER_SNAKE_CASE
+    - PACKAGE_DIRECTORY_MATCH
+  ignore_unstable_packages: true

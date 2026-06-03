@@ -1,0 +1,42 @@
+name: Proto Compatibility
+
+on:
+  pull_request:
+    branches: ['**']
+    paths:
+      - 'proto/**'
+      - '.github/workflows/proto-breaking.yml'
+      - 'buf.yaml'
+  push:
+    branches: [main, dev]
+    paths:
+      - 'proto/**'
+      - '.github/workflows/proto-breaking.yml'
+      - 'buf.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  buf:
+    name: Lint + breaking-change check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: '1.34.0'
+
+      - name: Lint protos
+        run: buf lint
+
+      - name: Check breaking changes vs base branch
+        if: github.event_name == 'pull_request'
+        run: |
+          BASE="${{ github.event.pull_request.base.ref }}"
+          git fetch origin "${BASE}" --depth=1
+          buf breaking --against ".git#branch=origin/${BASE}"
