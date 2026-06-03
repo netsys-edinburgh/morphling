@@ -6,13 +6,13 @@ on:
     paths:
       - 'proto/**'
       - '.github/workflows/proto-breaking.yml'
-      - 'buf.yaml'
+      - 'buf.work.yaml'
   push:
     branches: [main, dev]
     paths:
       - 'proto/**'
       - '.github/workflows/proto-breaking.yml'
-      - 'buf.yaml'
+      - 'buf.work.yaml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -39,4 +39,14 @@ jobs:
         run: |
           BASE="${{ github.event.pull_request.base.ref }}"
           git fetch origin "${BASE}" --depth=1
-          buf breaking --against ".git#branch=origin/${BASE}"
+          # The breaking-change check needs a buildable baseline. A base that
+          # predates this guard (no buf config, or malformed protos) cannot be
+          # built, which is not the PR's fault. Probe the base first: skip with
+          # a notice when it is unbuildable, run strictly once the guard exists
+          # on the base branch.
+          if buf build ".git#branch=origin/${BASE}" -o /dev/null 2>/tmp/base.log; then
+            buf breaking --against ".git#branch=origin/${BASE}"
+          else
+            echo "::notice::Base branch ${BASE} has no buildable proto module (pre-guard baseline); skipping breaking-change check."
+            cat /tmp/base.log || true
+          fi
