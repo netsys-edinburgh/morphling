@@ -1,4 +1,4 @@
-name: Numerical Consistency Tests
+name: Python Smoke Tests (CPU)
 
 on:
   push:
@@ -11,28 +11,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  smoke-tests:
+  cpu-smoke:
+    name: pytest -m smoke (CPU)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10'
       - name: Install test dependencies
         run: pip install pytest pytest-timeout torch numpy
-      - name: Run smoke tests
-        # Scope to only numerical-consistency test files to avoid collection
-        # errors from pre-existing tests that require uninstalled dependencies
-        # (transformers, pandas, psutil, morphling C extensions, etc.).
+      - name: Run CPU smoke tests
+        # Discovery is marker-driven. Any test marked @pytest.mark.smoke
+        # (function or module-level pytestmark) is picked up automatically.
+        # The --ignore list documents paths that need GPU or the morphling
+        # C extension — both unavailable on hosted runners.
         run: >-
-          pytest
-          tests/python/unit/test_axis1_emulated_vs_real.py
-          tests/python/unit/test_axis2_dispatch_correctness.py
-          tests/python/unit/test_axis3_determinism.py
-          tests/python/unit/test_determinism_utils.py
-          tests/python/unit/test_numerical_utils.py
-          tests/python/unit/test_golden_generation.py
-          tests/python/unit/test_deep_verification_script.py
-          tests/python/integration/test_convergence_regression.py
-          -m smoke --timeout=120 -v --tb=short
+          pytest tests/python
+          -m smoke
+          --ignore=tests/python/unit/hooks
+          --ignore=tests/python/unit/morphling
+          --ignore=tests/python/unit/test_c_extension_bindings.py
+          --ignore=tests/python/unit/test_loaded_lib.py
+          --ignore=tests/python/unit/test_pytorch_train.py
+          --ignore=tests/python/unit/test_param_offload.py
+          --ignore=tests/python/unit/test_gemm_shape_logging.py
+          --ignore=tests/python/unit/test_checkpoint_multifile_smoke.py
+          --ignore=tests/python/unit/test_rs_code.py
+          --ignore=tests/python/integration/test_greenctx_training.py
+          --timeout=120 -v --tb=short
+
+  cpu-entrypoint:
+    name: CLI entrypoint tests (CPU)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install test dependencies
+        # Entrypoint tests stub out torch / morphling._C / huggingface_hub
+        # via monkeypatch (see tests/python/unit/entrypoint/test_*.py).
+        # Only pytest is required.
+        run: pip install pytest pytest-timeout
+      - name: Run entrypoint tests
+        run: >-
+          pytest tests/python/unit/entrypoint
+          --timeout=60 -v --tb=short
