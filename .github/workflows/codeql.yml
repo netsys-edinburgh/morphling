@@ -1,0 +1,58 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: ['**']
+  schedule:
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze ${{ matrix.language }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['python', 'cpp']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          paths-ignore: |
+            external/**
+            tests/cpp/build/**
+
+      - name: Build (C++)
+        if: matrix.language == 'cpp'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libssl-dev libfmt-dev \
+            libevent-dev uuid-dev
+          cmake -S tests/cpp -B build-codeql \
+            -DENABLE_CUDA_TESTS=OFF \
+            -DENABLE_XTGEMM_TESTS=OFF \
+            -DENABLE_GREEN_CTX_TESTS=OFF \
+            -DENABLE_ZEROCOPY_TESTS=OFF \
+            -DENABLE_CHECKPOINT_TESTS=OFF
+          cmake --build build-codeql -j
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
