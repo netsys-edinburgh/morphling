@@ -11,6 +11,8 @@ from tests.python.testutils.numerical import (
     ulp_distance,
 )
 
+pytestmark = pytest.mark.smoke
+
 
 def test_compare_tensors_matching():
     actual = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)

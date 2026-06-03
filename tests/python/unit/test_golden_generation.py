@@ -7,9 +7,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
 
+import pytest
 import torch
 
 from scripts.generate_golden_references import generate_golden_references
+
+pytestmark = pytest.mark.smoke
 
 
 class TinyTokenizer:

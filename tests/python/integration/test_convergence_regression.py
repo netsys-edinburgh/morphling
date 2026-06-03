@@ -17,6 +17,8 @@ from tests.python.testutils.numerical import (
     compare_loss_trajectories,
 )
 
+pytestmark = pytest.mark.smoke
+
 
 def _set_torch_seed(seed: int) -> None:
     manual_seed = cast(Callable[[int], torch.Generator], torch.manual_seed)

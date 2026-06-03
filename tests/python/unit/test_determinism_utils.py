@@ -1,9 +1,12 @@
+import pytest
 import torch
 
 from tests.python.testutils.determinism import (
     deterministic_context,
     set_all_seeds,
 )
+
+pytestmark = pytest.mark.smoke
 
 
 def _cuda_same_seed_same_output() -> None:

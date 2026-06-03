@@ -9,6 +9,8 @@ import pytest
 
 from scripts import deep_numerical_verification as script
 
+pytestmark = pytest.mark.smoke
+
 
 def test_script_cli_help() -> None:
     completed = subprocess.run(
