@@ -197,13 +197,51 @@ Device 0 measurement complete: ok=1 state=DONE
 reference within `flops_tolerance`; this is the canonical "the device
 is honest about its FLOPS" signal.
 
+### Profile delta log (issue #60 prep)
+
+Every time a device's measured profile is updated, the server appends a
+single `PROFILE_DELTA` row to `logs/perf_server.log`. This is
+**observability only** — no scheduling or reconciliation decision is made
+from it; the virtual-time model still reads the device-reported fields
+verbatim. The row exists so the measured-vs-reported distribution can be
+collected from a real deployment before a reconciliation policy is chosen.
+
+Schema (also written as a `# PROFILE_DELTA format:` header in the log):
+
+```
+PROFILE_DELTA,timestamp_us,device_id,uuid,
+  flops_reported,flops_measured,flops_verified,flops_ratio,
+  ul_bw_reported,ul_bw_measured,ul_bw_ratio,
+  dl_bw_reported,dl_bw_measured,dl_bw_ratio,
+  ul_lat_reported_us,dl_lat_reported_us,measured_lat_ns
+```
+
+- `*_ratio = measured / reported`, or `-1` when the reported field is `0`
+  (no baseline to compare against).
+- **Latency has no ratio column on purpose.** Reported latency is in
+  **microseconds** (`ul_lat`/`dl_lat`), while `measured_lat_ns` is in
+  **nanoseconds** — a naive ratio would bake in a 1000x error. The raw
+  columns are emitted side by side; normalize at analysis time.
+- Rows only appear when measurement is enabled. With the shipped
+  defaults (all probes off) no `PROFILE_DELTA` rows are written.
+
+To collect the data #60 needs:
+
+```bash
+grep '^PROFILE_DELTA' logs/perf_server.log
+```
+
+then look at the distribution of the `*_ratio` columns per field per
+device.
+
 ### Reconciliation policy
 
 Out of scope for #55. The current build stores both reported and
 measured values side-by-side; downstream consumers (schedulers,
-analytics) can pick either. A follow-up issue will decide whether
+analytics) can pick either. A follow-up issue (#60) will decide whether
 `flops` exposed to schedulers should be `min(reported, measured)`,
-`measured`, or a weighted blend, once enough measurement data exists.
+`measured`, or a weighted blend, once enough measurement data exists —
+see the profile delta log above for collecting that data.
 
 ## Notes
 
