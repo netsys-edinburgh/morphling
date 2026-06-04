@@ -12,9 +12,7 @@ This directory is reserved for figures referenced from
   `.gitignore`).
 
 The repository previously tracked unreferenced figures from an unrelated
-LDPC experiment; those are now removed from version control. Local copies
-are kept in `~/morphling-figures-backup/<timestamp>/tracked/` for the
-maintainer.
+LDPC experiment; those are now removed from version control.
 
 ## Regenerating figures
 

@@ -1,12 +1,11 @@
 # PRD — Open-source readiness for DeviceEmulator (Morphling)
 
-**Reference:** [`batchgen-project/batchgen`](https://github.com/batchgen-project/batchgen) (local clone: `~/batchgen`)
+**Reference:** [`batchgen-project/batchgen`](https://github.com/batchgen-project/batchgen)
 **Context:** This release accompanies the **EdgeSys '26** paper (camera-ready,
 going public). Treat the repo as the canonical companion code; not a research
 artifact requiring formal Artifact Evaluation, but it must look like a paper's
 code release: real authors, paper citation, figures the paper references.
-**Status:** Draft v2 — incorporates user answers on EdgeSys scope.
-**Owner:** Bessus
+**Status:** Draft v2 — incorporates maintainer answers on EdgeSys scope.
 
 ---
 
@@ -94,7 +93,7 @@ than migrate it).
 
 | Path | Source/template |
 |------|-----------------|
-| `CONTRIBUTING.md` | Adapt from `~/batchgen/CONTRIBUTING.md`. Keep: merge policy, Angular commit format, pre-commit setup. Adjust: project name, dev environment uses `docker build` + `docker run pytest` per `CLAUDE.md` §1–2 (not `pip install -r requirements-lint.txt` directly), reference to `tests/cpp/README.md` for C++ tests. |
+| `CONTRIBUTING.md` | Adapt from the BatchGen `CONTRIBUTING.md`. Keep: merge policy, Angular commit format, pre-commit setup. Adjust: project name, dev environment uses `docker build` + `docker run pytest` per `CLAUDE.md` §1–2 (not `pip install -r requirements-lint.txt` directly), reference to `tests/cpp/README.md` for C++ tests. |
 | `.github/CODEOWNERS` | `* @drunkcoding` as default owner. |
 | `.github/PULL_REQUEST_TEMPLATE.md` | Adapt from batchgen; checklist references our `CONTRIBUTING.md`, the Docker-only test policy, and "rebuild image after code change" rule. |
 | `.github/ISSUE_TEMPLATE/bug_report.yml` | Adapt from batchgen; ask for GPU model, CUDA version, Docker image hash, `nvidia-smi` output, reproducible command. |

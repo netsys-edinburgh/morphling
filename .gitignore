@@ -17,6 +17,9 @@ node_modules
 .sisyphus/
 .omo/
 logs/
+
+# internal-only docs (private experiment inventories, not for public release)
+docs/internal/
 results/
 
 # Experiment / evaluation figure outputs (kept locally, not released)
@@ -431,7 +434,6 @@ celerybeat.pid
 # Environments
 .env
 .env.*
-!.taskmaster/.env.example
 .venv
 env/
 venv/
