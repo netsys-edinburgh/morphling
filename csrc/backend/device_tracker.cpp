@@ -7,6 +7,7 @@
 
 #include "core/logger.h"
 #include "device_measurement_session.h"
+#include "profile_delta_format.h"
 
 namespace morphling {
 namespace backend {
@@ -679,6 +680,8 @@ void DevicePartitionTracker::UpdateMeasuredProfile(
            << " lat_ns=" << p.measured_lat_ns
            << " ul_bw_bps=" << p.measured_ul_bw_bps
            << " dl_bw_bps=" << p.measured_dl_bw_bps;
+
+  LogProfileDelta(device_id, p);
 }
 
 std::string DevicePartitionTracker::DebugString() const {
@@ -725,7 +728,14 @@ void DevicePartitionTracker::InitPerfLog(const std::string& log_path) {
   const char* header =
       "timestamp_us,device_id,direction,bytes,throughput_b_s,"
       "epoch_start_us,epoch_end_us,packet_duration_us\n";
+  const char* profile_delta_header =
+      "# PROFILE_DELTA format: "
+      "PROFILE_DELTA,timestamp_us,device_id,uuid,flops_reported,flops_measured,"
+      "flops_verified,flops_ratio,ul_bw_reported,ul_bw_measured,ul_bw_ratio,"
+      "dl_bw_reported,dl_bw_measured,dl_bw_ratio,ul_lat_reported_us,"
+      "dl_lat_reported_us,measured_lat_ns\n";
   perf_log_file_->append(header, strlen(header));
+  perf_log_file_->append(profile_delta_header, strlen(profile_delta_header));
   perf_log_file_->flush();
 
   LOG_INFO << "[DeviceTracker] Performance log initialized at: " << log_path;
@@ -772,9 +782,18 @@ void DevicePartitionTracker::InitSeparatePerfLog(const std::string& log_dir,
       "# Throughput format: "
       "timestamp_us,device_id,gemm_id,direction,bytes,throughput_b_s,epoch_"
       "start_us,epoch_end_us,packet_duration_us\n";
+  std::string profile_delta_header =
+      "# PROFILE_DELTA format: "
+      "PROFILE_DELTA,timestamp_us,device_id,uuid,flops_reported,flops_measured,"
+      "flops_verified,flops_ratio,ul_bw_reported,ul_bw_measured,ul_bw_ratio,"
+      "dl_bw_reported,dl_bw_measured,dl_bw_ratio,ul_lat_reported_us,"
+      "dl_lat_reported_us,measured_lat_ns (ratio=-1 means no reported "
+      "baseline; latency has no ratio: reported is us, measured is ns)\n";
 
   perf_log_file_->append(vtime_header.c_str(), vtime_header.length());
   perf_log_file_->append(throughput_header.c_str(), throughput_header.length());
+  perf_log_file_->append(profile_delta_header.c_str(),
+                         profile_delta_header.length());
 
   // Write a comment line indicating this is a separate log
   std::string comment = "# Separate performance log for " + entity_type;
@@ -829,6 +848,24 @@ void DevicePartitionTracker::LogThroughputToFile(
                epoch_start_us, epoch_end_us, packet_duration_us);
   if (len > 0 && len < (int)sizeof(buf)) {
     perf_log_file_->append(buf, len);
+  }
+}
+
+void DevicePartitionTracker::LogProfileDelta(int64_t device_id,
+                                             const DeviceProfileData& p) const {
+  if (!perf_log_file_) {
+    return;
+  }
+
+  auto now = std::chrono::system_clock::now();
+  uint64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                        now.time_since_epoch())
+                        .count();
+
+  std::string row = FormatProfileDeltaRow(now_us, device_id, p);
+  if (!row.empty()) {
+    row.push_back('\n');
+    perf_log_file_->append(row.c_str(), row.length());
   }
 }
 

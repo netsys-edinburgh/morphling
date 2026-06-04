@@ -158,6 +158,10 @@ class DevicePartitionTracker {
                            const std::string& phase, const std::string& event,
                            uint64_t vt_start_us, uint64_t vt_end_us) const;
 
+  // Logs a PROFILE_DELTA row (reported vs measured, #60). Observability
+  // only; makes no reconciliation decision.
+  void LogProfileDelta(int64_t device_id, const DeviceProfileData& p) const;
+
   void FlushPerfLog() const;
 
   void InitPerfLog(const std::string& log_path = "./perf.log");
