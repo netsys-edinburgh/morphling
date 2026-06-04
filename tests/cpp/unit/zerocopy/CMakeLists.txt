@@ -65,6 +65,7 @@ add_zerocopy_test(test_serialization_buffer)
 add_zerocopy_test(test_scatter_gather_buffer)
 add_zerocopy_test(test_matrix_partition)
 add_zerocopy_test(test_device_profile_roundtrip)
+add_zerocopy_test(test_profile_delta_log)
 add_zerocopy_test(test_device_measurement_service)
 add_zerocopy_test(test_device_measurement_session)
 
