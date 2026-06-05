@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   cpu-smoke:
-    name: pytest -m smoke (CPU)
+    name: smoke-tests
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
