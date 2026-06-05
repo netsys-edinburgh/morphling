@@ -1,77 +1,53 @@
-# GEMM ID Log Diagnostics and Fixes
+# Performance Log Formats
 
-## Summary
+Morphling's proxy server and devices each emit a **separate performance
+log** via `DevicePartitionTracker::InitSeparatePerfLog`
+([`csrc/backend/device_tracker.cpp`](../csrc/backend/device_tracker.cpp)).
+These logs capture per-GEMM virtual-time events, network throughput, and
+(optionally) measured-vs-reported device profiles. This document is the
+canonical reference for those on-disk formats.
 
-Based on the provided logs, there are several issues to address. This document
-captures the root causes, fixes, and verification steps.
+## Where the logs live
 
-## Root Causes
+- Server: `logs/perf_server.log`
+- Device *N*: `logs/perf_device_<N>.log`
 
-### 1. `gemm_id` is always 0 (most severe)
+The directory is relative to the process working directory (the runtime
+passes `./logs`). The underlying `base::LogFile` rolls files at 512 MiB
+and appends a `.<date>-<host>-<pid>.log` suffix, so on disk a single
+logical log may appear as e.g. `perf_server.log.20260605-111207.host.118.log`.
+Every file opens with comment headers (lines beginning with `#`)
+describing each record format.
 
-**Cause:** The code includes the correct `gemm_id` implementation, but the
-binary running in your environment was not rebuilt after those changes.
+## `gemm_id`
 
-Evidence in code:
+`gemm_id` is a **global GEMM operation counter** assigned at dispatch
+time. In [`csrc/backend/proxy_svr.cpp`](../csrc/backend/proxy_svr.cpp) it is
+sourced from the atomic `gemm_id_count_` (`proxy_svr.h`), stamped onto
+every `MatrixPartition` in `DispatchMatMulAsync` (`partition->gemm_id =
+gemm_id_count_`), and incremented after each dispatch. It appears in both
+the VTIME and Throughput records so events can be grouped by the GEMM that
+produced them; it starts at 0 and increases by one per `DispatchMatMulAsync`.
 
-- `gemm_id` exists in `MatrixPartition`.
-- `gemm_id_count_` is an atomic counter in `ProxySvrImpl`.
-- `DispatchMatMulAsync()` assigns `partition->gemm_id = gemm_id_count_`.
-- `gemm_id_count_` is incremented after each dispatch.
-
-**Fix:** Rebuild and redeploy the project:
-
-```bash
-rm -rf build
-mkdir build
-cd build
-cmake ..
-make -j$(nproc)
-```
-
-### 2. Log files missing header comments
-
-**Cause:** Log files did not include a header that describes the format, but
-`merge_perf_logs.py` expects it.
-
-**Fix implemented:** `InitSeparatePerfLog()` now writes the header comments:
-
-```
-# VTIME format: VTIME,timestamp_us,device_id,gemm_id,phase,event,vt_start_us,vt_end_us,vt_duration_us
-# Throughput format: timestamp_us,device_id,gemm_id,direction,bytes,throughput_b_s,epoch_start_us,epoch_end_us,packet_duration_us
-```
-
-### 3. `merge_perf_logs.py` syntax error
-
-**Cause:** An extra backtick existed near line 24.
-
-**Fix implemented:**
-
-- Removed the stray character.
-- Updated comments to include the `gemm_id` field.
-- Improved header parsing.
-
-## Log Formats
-
-### VTIME format
+## VTIME format
 
 ```
 VTIME,timestamp_us,device_id,gemm_id,phase,event,vt_start_us,vt_end_us,vt_duration_us
 ```
 
-Fields:
+| Field            | Meaning                                                    |
+|------------------|------------------------------------------------------------|
+| `VTIME`          | Record type tag                                            |
+| `timestamp_us`   | System (wall-clock) timestamp, microseconds                |
+| `device_id`      | Device ID (0, 1, 2, ...)                                    |
+| `gemm_id`        | Global GEMM operation ID (see above)                       |
+| `phase`          | `COMPUTE`, `RECEIVE`, or `SEND`                            |
+| `event`          | `START` or `END`                                           |
+| `vt_start_us`    | Virtual-time start, microseconds                           |
+| `vt_end_us`      | Virtual-time end, microseconds                             |
+| `vt_duration_us` | Virtual-time duration, microseconds (`vt_end - vt_start`)  |
 
-- `VTIME`: event type
-- `timestamp_us`: system timestamp (microseconds)
-- `device_id`: device ID (0, 1, 2, ...)
-- `gemm_id`: global GEMM operation ID (increments per `DispatchMatMulAsync`)
-- `phase`: `COMPUTE`, `RECEIVE`, `SEND`
-- `event`: `START`, `END`
-- `vt_start_us`: virtual time start (microseconds)
-- `vt_end_us`: virtual time end (microseconds)
-- `vt_duration_us`: virtual time duration (microseconds)
-
-Example:
+Emitted by `DevicePartitionTracker::LogVirtualTimeEvent`. Example:
 
 ```
 VTIME,1765380077213829,2,0,SEND,END,10098658,10100432,1774
@@ -79,71 +55,83 @@ VTIME,1765380077218046,2,0,COMPUTE,START,3024656,3024656,0
 VTIME,1765380077218874,2,0,COMPUTE,END,3024656,3025486,830
 ```
 
-### Throughput format
+## Throughput format
 
 ```
 timestamp_us,device_id,gemm_id,direction,bytes,throughput_b_s,epoch_start_us,epoch_end_us,packet_duration_us
 ```
 
-Fields:
+| Field                | Meaning                                          |
+|----------------------|--------------------------------------------------|
+| `timestamp_us`       | System (wall-clock) timestamp, microseconds      |
+| `device_id`          | Device ID                                        |
+| `gemm_id`            | Global GEMM operation ID                         |
+| `direction`          | `UPLOAD` or `DOWNLOAD`                            |
+| `bytes`              | Bytes transferred                                |
+| `throughput_b_s`     | Throughput, bytes per second                     |
+| `epoch_start_us`     | Transfer start, microseconds                     |
+| `epoch_end_us`       | Transfer end, microseconds                       |
+| `packet_duration_us` | Packet duration, microseconds                    |
 
-- `timestamp_us`: system timestamp (microseconds)
-- `device_id`: device ID
-- `gemm_id`: global GEMM operation ID
-- `direction`: `UPLOAD`, `DOWNLOAD`
-- `bytes`: bytes transferred
-- `throughput_b_s`: throughput in bytes per second
-- `epoch_start_us`: transfer start time (microseconds)
-- `epoch_end_us`: transfer end time (microseconds)
-- `packet_duration_us`: packet duration (microseconds)
-
-Example:
+Emitted by `DevicePartitionTracker::LogThroughputToFile`. Example:
 
 ```
 1765380077219527,2,0,DOWNLOAD,131153,70022.96,1765380077219482,1765380077219482,0
 1765380077335074,2,1,DOWNLOAD,131154,131878.83,1765380077219482,1765380077335065,115583
 ```
 
-## Files Updated (summary)
+## PROFILE_DELTA format (optional, issue #60)
 
-C++:
+Only written when server-side device measurement is enabled (see
+[`docs/deployment.md`](deployment.md#server-measured-device-profile-issue-55)).
+Each row records measured-vs-reported device profile fields; it is
+observability-only and drives no scheduling decision.
 
-- `csrc/backend/proxy_svr.cc`: log `gemm_id` in DEBUG/INFO output.
-- `csrc/backend/device_tracker.cc`: add log header comments.
-- `morphling/ops/csrc/backend/device_tracker.cc`: keep header in sync.
-
-Python:
-
-- `scripts/merge_perf_logs.py`: fix syntax, update comments, improve header parsing.
-
-## Verification Steps
-
-1. Rebuild and redeploy.
-2. Run a GEMM and check the logs:
-
-```bash
-head -20 logs/perf_server.log
-head -20 logs/perf_device_0.log
+```
+PROFILE_DELTA,timestamp_us,device_id,uuid,
+  flops_reported,flops_measured,flops_verified,flops_ratio,
+  ul_bw_reported,ul_bw_measured,ul_bw_ratio,
+  dl_bw_reported,dl_bw_measured,dl_bw_ratio,
+  ul_lat_reported_us,dl_lat_reported_us,measured_lat_ns
 ```
 
-Expected:
+- `*_ratio = measured / reported`, or `-1` when the reported field is `0`.
+- Latency has **no** ratio column: reported latency is in microseconds
+  while `measured_lat_ns` is in nanoseconds. Normalize at analysis time.
 
-- The first two lines are format comments.
-- `gemm_id` increments from 0 in both VTIME and throughput logs.
+Emitted by `DevicePartitionTracker::LogProfileDelta` /
+`FormatProfileDeltaRow`
+([`csrc/backend/profile_delta_format.h`](../csrc/backend/profile_delta_format.h)).
 
-3. Run the merge script:
+## Merging logs
+
+[`scripts/merge_perf_logs.py`](../scripts/merge_perf_logs.py) merges all
+`perf_*.log` files in a directory into a single timestamp-sorted log,
+preserving the `#` format headers:
 
 ```bash
 python3 scripts/merge_perf_logs.py logs/ logs/perf_merged.log
 ```
 
-You should see counts for VTIME and throughput events and the header comments
-parsed correctly.
+It prints VTIME / Throughput / header counts and writes the sorted output.
+The pipeline (header preservation, `gemm_id` field positions, timestamp
+ordering) is covered by
+[`tests/python/unit/test_merge_perf_logs.py`](../tests/python/unit/test_merge_perf_logs.py).
 
-## Next Steps
+After merging, downstream sync analysis uses
+[`scripts/sync_virtual_time.py`](../scripts/sync_virtual_time.py) and
+[`scripts/analyze_sync.py`](../scripts/analyze_sync.py); see
+[`docs/EARLIEST_vs_LATEST.md`](EARLIEST_vs_LATEST.md).
 
-1. Rebuild.
-2. Deploy and run.
-3. Verify log headers and `gemm_id` increments.
-4. Run `merge_perf_logs.py` to validate merged output.
-5. Proceed with multi-device sync analysis.
+## Source of truth
+
+| Record         | Header written by              | Row written by                              |
+|----------------|--------------------------------|---------------------------------------------|
+| VTIME          | `InitSeparatePerfLog`          | `LogVirtualTimeEvent`                        |
+| Throughput     | `InitSeparatePerfLog`          | `LogThroughputToFile`                        |
+| PROFILE_DELTA  | `InitSeparatePerfLog`          | `LogProfileDelta` / `FormatProfileDeltaRow`  |
+
+All in [`csrc/backend/device_tracker.cpp`](../csrc/backend/device_tracker.cpp)
+(plus `profile_delta_format.h`). If you change a wire format, update the
+header string, the row emitter, the merge script, and the table above
+together.

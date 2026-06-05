@@ -125,8 +125,8 @@ pre-commit setup, Docker-only test policy, and Angular-style commit format.
   deployments.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — common errors and
   fixes.
-- [`docs/GEMM_ID_ISSUES.md`](docs/GEMM_ID_ISSUES.md) — GEMM identification
-  internals.
+- [`docs/GEMM_ID_ISSUES.md`](docs/GEMM_ID_ISSUES.md) — performance log
+  formats (VTIME, throughput, PROFILE_DELTA) and the `gemm_id` field.
 - [`docs/EARLIEST_vs_LATEST.md`](docs/EARLIEST_vs_LATEST.md) — scheduling
   policy notes.
 - [`tests/cpp/README.md`](tests/cpp/README.md) — C++ test catalogue.
