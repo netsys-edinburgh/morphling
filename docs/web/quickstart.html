@@ -140,7 +140,12 @@
     <h2 id="launch">2. Launch the emulator</h2>
 <pre><code>morphling_emulator --ckpt_path <span class="tok-n">&lt;ckpt-path&gt;</span></code></pre>
 
-    <p>That's it. The emulator boots a single virtual device.</p>
+    <p>This starts the proxy backend server, which loads the checkpoint and
+    listens for device connections (default <code>0.0.0.0:39000</code>). It runs
+    until you stop it with <kbd>Ctrl-C</kbd>. Override the bind address with
+    <code>--listen_ip</code> / <code>--listen_port</code>. Point one or more
+    devices at it to drive emulated training (see
+    <a href="deployment.html">Deployment</a>).</p>
 
     <h2 id="multi">3. Multi-device runs</h2>
     <p>For virtual fleets and physical-device deployments behind an Nginx

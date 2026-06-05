@@ -76,6 +76,13 @@ morphling_cmd save --model "facebook/opt-125m" --output <ckpt-path>
 morphling_emulator --ckpt_path <ckpt-path>
 ```
 
+`morphling_cmd save` converts a HuggingFace model into the emulator's
+checkpoint layout. `morphling_emulator` then starts the proxy backend
+server, which loads that checkpoint and listens for device connections
+(default `0.0.0.0:39000`, override with `--listen_ip` / `--listen_port`);
+it runs until interrupted with `Ctrl-C`. Point one or more devices at it
+to drive emulated training.
+
 Multi-device deployments (virtual fleet on one host, or physical edge
 devices behind an Nginx stream proxy) are documented in
 [`docs/deployment.md`](docs/deployment.md).
