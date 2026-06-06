@@ -11,15 +11,6 @@ Both align device timelines, but they shift the global timestamp differently.
 Choose based on whether you care about performance comparison or worst-case
 system behavior.
 
-## Data Overview
-
-From the provided logs (97 GEMM operations):
-
-- `EARLIEST` baseline device: Device 2 (96/97, fastest).
-- `LATEST` baseline device: Device 0 (95/97, slowest).
-- Mean virtual time shift: 109,763 us (about 110 ms).
-- Min shift: 0 us. Max shift: 123,886 us.
-
 ## Strategy Comparison
 
 | Dimension | EARLIEST | LATEST |
@@ -29,32 +20,34 @@ From the provided logs (97 GEMM operations):
 | Time shift direction | Backward (smaller timestamps) | Forward (larger timestamps) |
 | Typical shift size | Smaller (conservative) | Larger (aggressive) |
 
-## Example: GEMM 0
+## Worked example (illustrative)
 
-Original data:
-
-```
-Device 0: vt_start = 2,326,719 us (slowest)
-Device 1: vt_start = 2,298,721 us
-Device 2: vt_start = 2,215,361 us (fastest)
-
-Spread = 111,358 us
-```
-
-EARLIEST (baseline = 2,215,361 us):
+Suppose three devices start the same GEMM at these virtual times:
 
 ```
-Device 0: 2,326,719 - 111,358 = 2,215,361 us
-Device 1: 2,298,721 - 83,360  = 2,215,361 us
-Device 2: 2,215,361 + 0       = 2,215,361 us
+Device 0: vt_start = 1,100 us (slowest)
+Device 1: vt_start = 1,060 us
+Device 2: vt_start = 1,000 us (fastest)
+
+Spread = 100 us
 ```
 
-LATEST (baseline = 2,326,719 us):
+EARLIEST (baseline = `min` = 1,000 us) pulls every device back to the
+fastest start:
 
 ```
-Device 0: 2,326,719 + 0        = 2,326,719 us
-Device 1: 2,298,721 + 27,998   = 2,326,719 us
-Device 2: 2,215,361 + 111,358  = 2,326,719 us
+Device 0: 1,100 - 100 = 1,000 us
+Device 1: 1,060 -  60 = 1,000 us
+Device 2: 1,000 -   0 = 1,000 us
+```
+
+LATEST (baseline = `max` = 1,100 us) advances every device to the slowest
+start:
+
+```
+Device 0: 1,100 +   0 = 1,100 us
+Device 1: 1,060 +  40 = 1,100 us
+Device 2: 1,000 + 100 = 1,100 us
 ```
 
 ## Key Differences
