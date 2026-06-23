@@ -9,5 +9,5 @@ pandas
 protobuf>=4.21.6,<7
 psutil
 pytest-timeout
-safetensors>=0.7.0
+safetensors>=0.8.0
 transformers
