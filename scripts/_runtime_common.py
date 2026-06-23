@@ -19,7 +19,7 @@ def load_model_and_tokenizer(
 ) -> tuple[Any, Any]:
     model = cast(
         Any,
-        AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=dtype),
+        AutoModelForCausalLM.from_pretrained(model_name, dtype=dtype),
     )
     model.eval()
     tokenizer = cast(Any, AutoTokenizer.from_pretrained(model_name))
