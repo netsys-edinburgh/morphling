@@ -1,7 +1,7 @@
 accelerate
 cmake
 grpcio>=1.60.0
-grpcio-tools>=1.60.0
+grpcio-tools>=1.81.1
 matplotlib
 ninja
 numpy
