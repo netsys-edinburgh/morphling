@@ -51,7 +51,7 @@ Paper = "https://doi.org/10.1145/3812836.3814779"
 test = [
     "pytest",
     "accelerate>=0.27.2",
-    "transformers>=4.37.2",
+    "transformers>=5.12.1",
     "parameterized",
 ]
 
