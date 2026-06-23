@@ -68,7 +68,7 @@ def _load_real_model_and_tokenizer(
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     model = AutoModelForCausalLM.from_pretrained(
-        model_name, torch_dtype=torch.float32
+        model_name, dtype=torch.float32
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     return model, tokenizer
