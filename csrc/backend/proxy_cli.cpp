@@ -11,6 +11,7 @@
 #include "core/generator.h"
 #include "core/logger.h"
 #include "core/stats.h"
+#include "device_measurement.h"
 #include "device_tracker.h"
 #include "muduo_base/my_uuid.h"
 #include "network/eventloop_libevent.h"
@@ -270,20 +271,19 @@ std::shared_ptr<GemmArgs> ProxyCliHandle::BuildGemmArgs(
     const float* col_ptr, int64_t col_size, const float* row_ptr,
     int64_t row_size, int64_t h_dim, float* out_ptr) {
   auto args = std::make_shared<GemmArgs>();
-  args->group_size = 1;
-  args->transa[0] = 'T';
-  args->transb[0] = 'N';
-  args->m[0] = static_cast<int>(col_size);
-  args->n[0] = static_cast<int>(row_size);
-  args->k[0] = static_cast<int>(h_dim);
-  args->alpha[0] = 1.0f;
-  args->beta[0] = 0.0f;
-  args->a[0] = col_ptr;
-  args->lda[0] = static_cast<int>(h_dim);
-  args->b[0] = row_ptr;
-  args->ldb[0] = static_cast<int>(h_dim);
-  args->c[0] = out_ptr;
-  args->ldc[0] = static_cast<int>(col_size);
+  args->transa = 'T';
+  args->transb = 'N';
+  args->m = static_cast<int>(col_size);
+  args->n = static_cast<int>(row_size);
+  args->k = static_cast<int>(h_dim);
+  args->alpha = 1.0f;
+  args->beta = 0.0f;
+  args->a = col_ptr;
+  args->lda = static_cast<int>(h_dim);
+  args->b = row_ptr;
+  args->ldb = static_cast<int>(h_dim);
+  args->c = out_ptr;
+  args->ldc = static_cast<int>(col_size);
   return args;
 }
 
@@ -389,6 +389,59 @@ void ProxyCliHandle::OnComputeComplete(
   }
 }
 
+void ProxyCliHandle::HandleProbeFlops(const ConnectionUeventPtr& conn,
+                                      uint64_t probe_id, uint32_t m, uint32_t n,
+                                      uint32_t k, std::string matrix_a,
+                                      std::string matrix_b) {
+  size_t c_elems = static_cast<size_t>(m) * n;
+  auto matrix_c = std::make_shared<std::vector<float>>(c_elems);
+  auto a_owner = std::make_shared<std::string>(std::move(matrix_a));
+  auto b_owner = std::make_shared<std::string>(std::move(matrix_b));
+
+  auto args = std::make_shared<GemmArgs>();
+  args->transa = 'N';
+  args->transb = 'N';
+  args->m = static_cast<int>(n);
+  args->n = static_cast<int>(m);
+  args->k = static_cast<int>(k);
+  args->alpha = 1.0f;
+  args->beta = 0.0f;
+  args->a = reinterpret_cast<const float*>(b_owner->data());
+  args->lda = static_cast<int>(n);
+  args->b = reinterpret_cast<const float*>(a_owner->data());
+  args->ldb = static_cast<int>(k);
+  args->c = matrix_c->data();
+  args->ldc = static_cast<int>(n);
+
+  std::string task_id = "probe_flops_" + std::to_string(probe_id);
+
+  auto callback = [conn, probe_id, matrix_c, a_owner, b_owner, m,
+                   n](const std::string&) {
+    auto* loop = conn->GetLoop();
+    loop->RunInLoop([conn, probe_id, matrix_c, m, n]() {
+      auto rsp = morphling::backend::ProbeMessageCodec::SerializeFlopsResponse(
+          probe_id, matrix_c->data(), m, n);
+      auto* ref = new SerializationBufferPtr(rsp);
+      int ret = conn->SendDataZeroCopy(rsp->GetBuffer(), rsp->GetSize(),
+                                       SerializationBufferSendCleanup, ref);
+      if (ret < 0) {
+        LOG_ERROR << "Failed to send PROBE_FLOPS_RESPONSE";
+        delete ref;
+      }
+    });
+  };
+
+  LOG_DEBUG << "HandleProbeFlops: probe_id=" << probe_id << " m=" << m
+            << " n=" << n << " k=" << k;
+  if (gpu_pool_) {
+    gpu_pool_->EnqueueGemm(task_id, args, std::move(callback));
+  } else if (cpu_pool_) {
+    cpu_pool_->EnqueueGemm(task_id, args, std::move(callback));
+  } else {
+    LOG_ERROR << "PROBE_FLOPS_REQUEST: no worker pool available";
+  }
+}
+
 void ProxyCliHandle::ConnectionSuccessCb(const ConnectionUeventPtr& conn) {
   string client_addr = conn->GetPeerAddress().ToString();
   LOG_INFO << "connected to " << client_addr;
@@ -404,7 +457,7 @@ void ProxyCliHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 ProxyCliImpl::ProxyCliImpl(ProxyEnvCfg& ctx, int64_t device_id)
     : ctx_(ctx),
       connector_(nullptr),
-      cached_tensors_(GB / 16, [](const TensorKey&, const CachedTensor& t) {
+      cached_tensors_(GB * 8, [](const TensorKey&, const CachedTensor& t) {
         if (t.data) {
           LOG_DEBUG << "Evicting cached tensor, freeing memory: " << t.data;
 #ifdef CACHEDTENSOR_CUDA_MALLOC_MANAGED
@@ -528,6 +581,18 @@ void ProxyCliImpl::DecodeAndDispatch(const ConnectionUeventPtr& conn,
       HandleMatMulRequest(conn, payload, size);
       break;
 
+    case morphling::global_api::PROBE_LATENCY_REQUEST:
+      HandleProbeLatencyRequest(conn, payload, size);
+      break;
+
+    case morphling::global_api::PROBE_BANDWIDTH_REQUEST:
+      HandleProbeBandwidthRequest(conn, payload, size);
+      break;
+
+    case morphling::global_api::PROBE_FLOPS_REQUEST:
+      HandleProbeFlopsRequest(conn, payload, size);
+      break;
+
     default:
       LOG_FATAL << "Unknown message type: " << message_type;
       break;
@@ -549,14 +614,19 @@ void ProxyCliImpl::HandleRegisterRequest(const ConnectionUeventPtr& conn,
 void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
   LOG_DEBUG << "Sending device profile data to server";
 
+  auto env_or = [](const char* name, uint64_t fallback) -> uint64_t {
+    const char* v = std::getenv(name);
+    return (v && v[0]) ? std::strtoull(v, nullptr, 10) : fallback;
+  };
+
   DeviceProfileData profile;
   profile.uuid = GenUUID64();
-  profile.flops = 100000000000ull;              // 100 GFLOPS - placeholder
-  profile.memory = 16ull * 1024 * 1024 * 1024;  // 16GB - placeholder
-  profile.ul_bw = 10ull * 1024 * 1024 * 1024;   // 10 Gbps
-  profile.dl_bw = 10ull * 1024 * 1024 * 1024;   // 10 Gbps
-  profile.ul_lat = 1000;                        // 1ms
-  profile.dl_lat = 1000;                        // 1ms
+  profile.flops = env_or("MORPHLING_FLOPS", 100000000000ull);
+  profile.memory = env_or("MORPHLING_MEMORY", 16ull * 1024 * 1024 * 1024);
+  profile.ul_bw = env_or("MORPHLING_UL_BW", 10ull * 1024 * 1024 * 1024);
+  profile.dl_bw = env_or("MORPHLING_DL_BW", 10ull * 1024 * 1024 * 1024);
+  profile.ul_lat = env_or("MORPHLING_UL_LAT", 1000);
+  profile.dl_lat = env_or("MORPHLING_DL_LAT", 1000);
 
   auto buffer = profile.Serialize();
   // Zero-copy send: buffer ref-count prevents deallocation until libevent done
@@ -575,6 +645,92 @@ void ProxyCliImpl::SendRegisterResponse(const ConnectionUeventPtr& conn) {
                    static_cast<const unsigned char*>(buffer->GetBuffer()),
                    buffer->GetSize())
             << "";
+}
+
+// ============================================================================
+// Probe handlers (#55 step 3b): device-side echo (M1/M2) + GEMM (M3).
+// All three respond synchronously on the libevent thread; M3 offloads the
+// GEMM to the existing pool and re-enters the loop via RunInLoop to send
+// the response.
+// ============================================================================
+
+namespace {
+
+void SendProbeResponse(const ConnectionUeventPtr& conn,
+                       SerializationBufferPtr buffer) {
+  auto* ref = new SerializationBufferPtr(buffer);
+  int ret = conn->SendDataZeroCopy(buffer->GetBuffer(), buffer->GetSize(),
+                                   SerializationBufferSendCleanup, ref);
+  if (ret < 0) {
+    LOG_ERROR << "Failed to send probe response";
+    delete ref;
+  }
+}
+
+}  // namespace
+
+void ProxyCliImpl::HandleProbeLatencyRequest(const ConnectionUeventPtr& conn,
+                                             const void* payload, size_t size) {
+  morphling::backend::ProbeMessageCodec::EchoView view;
+  if (!morphling::backend::ProbeMessageCodec::ParseLatencyRequest(payload, size,
+                                                                  view)) {
+    LOG_ERROR << "Failed to parse PROBE_LATENCY_REQUEST";
+    return;
+  }
+  LOG_DEBUG << "PROBE_LATENCY_REQUEST probe_id=" << view.probe_id
+            << " payload_bytes=" << view.payload.size();
+  auto rsp = morphling::backend::ProbeMessageCodec::SerializeLatencyResponse(
+      view.probe_id, view.payload.data(), view.payload.size());
+  SendProbeResponse(conn, rsp);
+}
+
+void ProxyCliImpl::HandleProbeBandwidthRequest(const ConnectionUeventPtr& conn,
+                                               const void* payload,
+                                               size_t size) {
+  morphling::backend::ProbeMessageCodec::EchoView view;
+  if (!morphling::backend::ProbeMessageCodec::ParseBandwidthRequest(
+          payload, size, view)) {
+    LOG_ERROR << "Failed to parse PROBE_BANDWIDTH_REQUEST";
+    return;
+  }
+  LOG_DEBUG << "PROBE_BANDWIDTH_REQUEST probe_id=" << view.probe_id
+            << " payload_bytes=" << view.payload.size();
+  auto rsp = morphling::backend::ProbeMessageCodec::SerializeBandwidthResponse(
+      view.probe_id, view.payload.data(), view.payload.size());
+  SendProbeResponse(conn, rsp);
+}
+
+void ProxyCliImpl::HandleProbeFlopsRequest(const ConnectionUeventPtr& conn,
+                                           const void* payload, size_t size) {
+  morphling::backend::ProbeMessageCodec::FlopsRequestView view;
+  if (!morphling::backend::ProbeMessageCodec::ParseFlopsRequest(payload, size,
+                                                                view)) {
+    LOG_ERROR << "Failed to parse PROBE_FLOPS_REQUEST";
+    return;
+  }
+
+  uint32_t m = view.m, n = view.n, k = view.k;
+  if (m == 0 || n == 0 || k == 0) {
+    LOG_ERROR << "PROBE_FLOPS_REQUEST has zero dimension m=" << m << " n=" << n
+              << " k=" << k;
+    return;
+  }
+  size_t expected_a = static_cast<size_t>(m) * k * sizeof(float);
+  size_t expected_b = static_cast<size_t>(k) * n * sizeof(float);
+  if (view.matrix_a.size() != expected_a ||
+      view.matrix_b.size() != expected_b) {
+    LOG_ERROR << "PROBE_FLOPS_REQUEST matrix size mismatch:"
+              << " got_a=" << view.matrix_a.size() << " expected=" << expected_a
+              << " got_b=" << view.matrix_b.size()
+              << " expected=" << expected_b;
+    return;
+  }
+
+  auto* loop = conn->GetLoop();
+  auto* handle = reinterpret_cast<ProxyCliHandle*>(loop->GetLoopHandle());
+  loop->RunInLoop(std::bind(&ProxyCliHandle::HandleProbeFlops, handle, conn,
+                            view.probe_id, m, n, k, std::move(view.matrix_a),
+                            std::move(view.matrix_b)));
 }
 
 void ProxyCliImpl::HandleMatMulRequest(const ConnectionUeventPtr& conn,
@@ -898,7 +1054,7 @@ void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
   // Create worker pools based on config + hardware availability
   if (want_gpu && has_gpu) {
     int workers_per_gpu = 1;  // one green-context partition per GPU
-    size_t buffer_size = 256ull * 1024 * 1024;  // 256 MB per worker
+    size_t buffer_size = 1024ull * 1024 * 1024;  // 1 GB per worker
     gpu_pool_ = std::make_unique<XtGemmWorkerPool>(
         workers_per_gpu, buffer_size, WorkerSchedulingPolicy::kRoundRobinGemm);
     LOG_INFO << "GPU worker pool created: " << workers_per_gpu

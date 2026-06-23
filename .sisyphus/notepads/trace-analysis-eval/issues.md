@@ -1,5 +1,0 @@
-- Local environment initially lacked `pytest`, so test execution required installing `pytest` into user site packages.
-- Direct import of `morphling.runtime.*` failed in tests due to missing `torch` from top-level `morphling` import chain; resolved with local bootstrap in test file.
-- Worktree did not contain `data/ldpc_trace_{with,without}_ctrl.csv`; tests include fallback resolution to sibling repository path for local execution.
-- `python3 scripts/plot_real_traces.py --help` initially failed because `from morphling.runtime...` triggered top-level `morphling` imports requiring missing `torch`; switched to direct module loading via file path.
-- Real trace CSVs were not available in this worktree during validation, so QA execution used temporary synthetic traces under `/tmp/ldpc_trace_qas` to validate CLI and output contracts.

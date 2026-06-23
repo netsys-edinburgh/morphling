@@ -14,7 +14,7 @@ echo "=== Morphling Development Build Script ==="
 # 检查是否在容器内
 if [ ! -f /.dockerenv ]; then
     echo "Warning: This script is designed to run inside Docker container"
-    echo "Run: docker-compose exec device-emulator bash scripts/dev_build.sh"
+    echo "Run: ./dev.sh rebuild"
     exit 1
 fi
 

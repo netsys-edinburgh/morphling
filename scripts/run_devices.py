@@ -8,24 +8,61 @@ Usage:
     --backend proxy --enable-hooks
 """
 
-import asyncio
+import atexit
+import configparser
 import os
 import subprocess
+import tempfile
 import time
-from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, cast
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser
+from transformers import HfArgumentParser
 
 import morphling
 
 # from morphling import set_backend
-from morphling.backend import AutoBackend
 from morphling.entrypoint import DeviceConfigArguments, ModelConfigArguments
 from morphling.hooks import apply_hooks
+from scripts._runtime_common import (
+    _default_proxy_cfg_path,
+    load_model_and_tokenizer,
+    prepare_inputs,
+    start_backend,
+    wait_for_connections,
+)
 
 torch.autograd.set_detect_anomaly(True)  # type: ignore[attr-defined]
+
+
+def _make_measurement_overlay_ini(base_cfg_path: str) -> str:
+    """Copy `base_cfg_path`, force [device_measurement] enable_* gates ON.
+
+    Why this exists (#55 step 8): the shipped `config/proxy/svr.ini`
+    explicitly sets `enable_latency=0` / `enable_bandwidth=0` /
+    `enable_flops=0`. The `PARSE_INT_ENVCFG` macro in
+    `csrc/core/env_cfg.cpp` uses the INI value when the key is present,
+    so the legacy `MORPHLING_MEASURE_*` env vars are a SILENT no-op
+    against the as-shipped config. To flip probes on without editing the
+    committed INI, we overlay the three enable gates in a temp file and
+    pass that as `--cfg`. The temp file is auto-deleted on process exit.
+    """
+    parser = configparser.ConfigParser()
+    parser.read(base_cfg_path)
+    if not parser.has_section("device_measurement"):
+        parser.add_section("device_measurement")
+    parser.set("device_measurement", "enable_latency", "1")
+    parser.set("device_measurement", "enable_bandwidth", "1")
+    parser.set("device_measurement", "enable_flops", "1")
+
+    fd, overlay_path = tempfile.mkstemp(
+        prefix="svr_measurement_", suffix=".ini"
+    )
+    with os.fdopen(fd, "w") as f:
+        parser.write(f)
+    atexit.register(lambda p=overlay_path: os.path.exists(p) and os.unlink(p))
+    return overlay_path
+
 
 # # if SIGINT is received, kill all the devices
 # def signal_handler(sig, frame):
@@ -44,113 +81,68 @@ if __name__ == "__main__":
     import sys
 
     _enable_hooks_flag_names = ("--enable-hooks", "--enable_hooks", "--hooks")
+    _measurement_flag_names = ("--measurement", "--measure")
     local_enable_hooks = False
+    local_enable_measurement = False
     # Build argv without our local flags so HfArgumentParser won't complain
     orig_argv = sys.argv
     filtered_argv = [orig_argv[0]]
     for a in orig_argv[1:]:
         if a in _enable_hooks_flag_names:
             local_enable_hooks = True
+        elif a in _measurement_flag_names:
+            local_enable_measurement = True
         else:
             filtered_argv.append(a)
 
     # Temporarily replace sys.argv for HfArgumentParser
     sys.argv = filtered_argv
 
-    parser = HfArgumentParser((DeviceConfigArguments, ModelConfigArguments))
+    parser = HfArgumentParser(
+        cast(Any, (DeviceConfigArguments, ModelConfigArguments))
+    )
     device_args, model_args = parser.parse_args_into_dataclasses()
 
     # Restore original argv
     sys.argv = orig_argv
+
+    if local_enable_measurement:
+        base_cfg = model_args.cfg or _default_proxy_cfg_path()
+        overlay = _make_measurement_overlay_ini(base_cfg)
+        model_args.cfg = overlay
+        print(
+            f"✓ --measurement enabled: probes ON via overlay cfg {overlay} "
+            f"(base: {base_cfg})",
+            flush=True,
+        )
+
     print(device_args, model_args, flush=True)
 
     os.environ["NUM_DEVICES"] = str(device_args.num_devices)
     num_gpus = torch.cuda.device_count()
-
-    # read the output of the bash script
     this_file_path = os.path.dirname(os.path.realpath(__file__))
-    output = subprocess.run(
-        ["bash", f"{this_file_path}/env_init.sh"], stdout=subprocess.PIPE
+
+    subprocess.run(
+        ["pkill", "-f", "morphling_device"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
     )
-    print("env_init", output.stdout)
 
     # time.sleep(15)
     # start model from here
-    model = AutoModelForCausalLM.from_pretrained(
-        model_args.model_name, torch_dtype=torch.float32
+    model, tokenizer = load_model_and_tokenizer(
+        model_args.model_name, dtype=torch.float32
     )
-    model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name)
 
     print("Model loaded", model)
 
-    # # get output of "docker exec mosquitto mosquitto_sub -t '$SYS/broker/subscriptions/count'  -C 1"
-    # while True:
-    #     command = [
-    #             "docker",
-    #             "exec",
-    #             "mosquitto",
-    #             "mosquitto_sub",
-    #             "-t",
-    #             "$SYS/broker/subscriptions/count",
-    #             "-C",
-    #             "1",
-    #         ]
-    #     # command = [
-    #     #         "docker",
-    #     #         "exec",
-    #     #         "emqx",
-    #     #         "emqx_ctl",
-    #     #         "broker",
-    #     #         "stats",
-    #     #     ]
-    #     output = subprocess.run(
-    #         command,
-    #         stdout=subprocess.PIPE,
-    #     )
-    #     print("Command", " ".join(command))
-    #     print("Subscriptions count", output.stdout)
-    #     # print("Error", output.stderr)
+    backend = start_backend(
+        backend_name=model_args.backend,
+        block_size=model_args.block_size,
+        cfg_path=model_args.cfg,
+    )
 
-    #     # # find line of "connections.count" from output.stdout
-    #     # for line in output.stdout.decode("utf-8").split("\n"):
-    #     #     if "connections.count" in line:
-    #     #         print("Connections count", line)
-    #     #         break
-
-    #     # if int(line.split(" ")[-1]) >= device_args.num_devices:
-    #     #     break
-
-    #     if int(output.stdout) >= device_args.num_devices:
-    #         break
-
-    #     time.sleep(1)
-    #     print("Waiting for devices to connect")
-
-    if model_args.backend == "rabbitmq":
-        loop = asyncio.get_event_loop()
-        backend = AutoBackend.from_name(
-            model_args.backend, loop, block_size=model_args.block_size
-        )
-        loop.run_until_complete(backend.connect())
-
-    elif model_args.backend == "amqp":
-        backend = AutoBackend.from_name(
-            model_args.backend, "localhost", model_args.block_size
-        )
-
-    elif model_args.backend == "mqtt":
-        backend = AutoBackend.from_name(
-            model_args.backend, model_args.block_size
-        )
-        backend.start()
-
-    elif model_args.backend == "proxy":
-        backend = AutoBackend.from_name(model_args.backend)
-        backend.initialize(model_args.cfg)
-        backend.start()
-
-    # backend = AutoBackend.from_name("amqp", "localhost", model_args.block_size)
     morphling.hooks.autograd._backend = backend
 
     time.sleep(5)
@@ -174,7 +166,6 @@ if __name__ == "__main__":
         #     str(device_args.ul_lat[i]),
         #     "--dl_lat",
         #     str(device_args.dl_lat[i]),
-        #     "--emulation",
         #     "--backend",
         #     model_args.backend,
         #     "&",
@@ -212,49 +203,24 @@ if __name__ == "__main__":
         # os.system(" ".join(command))
         # # device_processes.append(p)
 
-    #     / # mosquitto_sub -t '$SYS/broker/subscriptions/count' -v
-    # $SYS/broker/subscriptions/count 40
-    # $SYS/broker/subscriptions/count 41
-
     # Wait for devices to connect for proxy backend
     if model_args.backend == "proxy":
         print("Waiting for devices to connect to proxy server...")
-        timeout = 120  # 2 minutes timeout
-        start_time = time.time()
-
-        while time.time() - start_time < timeout:
-            try:
-                connection_count = backend.get_connection_count()
-                print(
-                    f"Connected devices: {connection_count}/{device_args.num_devices}"
-                )
-
-                if connection_count >= device_args.num_devices:
-                    print("All devices connected!")
-                    break
-
-                time.sleep(2)
-            except Exception as e:
-                print(f"Error checking connection count: {e}")
-                time.sleep(2)
-        else:
+        connection_count = wait_for_connections(
+            backend, min_devices=device_args.num_devices, timeout=120
+        )
+        if connection_count < device_args.num_devices:
             print(
-                f"Timeout waiting for devices to connect. Connected: {backend.get_connection_count()}/{device_args.num_devices}"
+                f"Timeout waiting for devices to connect. Connected: {connection_count}/{device_args.num_devices}"
             )
-            # Continue anyway
 
     time.sleep(5)
 
     # random text for seqlen > 128
-    input_text = [
-        "".join("Hello, my dog is cute. He is a good ") * 128
-    ] * model_args.batch_size
-    inputs = tokenizer(
-        input_text,
-        return_tensors="pt",
-        padding=True,
-        truncation=True,
-        max_length=model_args.seq_length,
+    inputs = prepare_inputs(
+        tokenizer,
+        batch_size=model_args.batch_size,
+        seq_length=model_args.seq_length,
     )
 
     print("inputs", inputs, flush=True)

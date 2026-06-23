@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import pathlib
 import statistics
 import sys
 import types
@@ -67,10 +68,13 @@ class _GreenRuntime(Protocol):
 torch_mod = cast(object, importlib.import_module("torch"))
 torch = cast(_TorchApi, torch_mod)
 
-TORCH_LIB_PATH = (
-    "/mnt/data/xly/.conda/envs/emulator/lib/python3.9/site-packages/torch/lib"
+_torch_spec = importlib.util.find_spec("torch")
+assert _torch_spec is not None and _torch_spec.origin is not None
+TORCH_LIB_PATH = os.environ.get(
+    "TORCH_LIB_PATH",
+    str(pathlib.Path(_torch_spec.origin).parent / "lib"),
 )
-CUDA_LIB_PATH = "/usr/local/cuda-12.6/lib64"
+CUDA_LIB_PATH = os.environ.get("CUDA_LIB_PATH", "/usr/local/cuda/lib64")
 
 GPU_PREFERENCE = (7, 6, 5, 0)
 SM_COUNTS = (8, 16, 32, 48, 64)
@@ -93,6 +97,16 @@ def _ensure_ld_library_path() -> None:
 
 
 def _bootstrap_morphling() -> None:
+    # Prefer the real installed/in-tree morphling so other tests in the
+    # same pytest session that need morphling.set_backend, hooks, etc.
+    # are not poisoned by a stub module.
+    try:
+        importlib.import_module("morphling")
+        importlib.import_module("morphling.runtime")
+        return
+    except Exception:
+        pass
+
     root = Path(__file__).resolve().parents[3]
     sys.path.insert(0, str(root))
 

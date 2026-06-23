@@ -1,18 +1,13 @@
-# CLAUDE.md — DeviceEmulator (Morphling) agent notes
+# CLAUDE.md — DeviceEmulator (Morphling) developer & agent notes
 
-Call me Bessus in every conversation.
+This file documents the canonical development workflow, repository layout, and
+architecture conventions for DeviceEmulator (Morphling). It is referenced by
+`README.md`, `CONTRIBUTING.md`, `Makefile`, and `docs/` by section number.
 
-请使用第一性原理思考。你不能总是假设我非常清楚自己想要什么和该怎么得到。请保持审慎，从原始需求和问题出发，如果动机和目标不清晰，停下来和我讨论。如果目标清晰但是路径不是最短，告诉我，并且建议更好的办法
-
-Core Philosophy
-Shame in guessing APIs, Honor in careful research
-Shame in vague execution, Honor in seeking confirmation
-Shame in assuming business logic, Honor in human verification
-Shame in creating interfaces, Honor in reusing existing ones
-Shame in skipping validation, Honor in proactive testing
-Shame in breaking architecture, Honor in following specifications
-Shame in pretending to understand, Honor in honest ignorance
-Shame in blind modification, Honor in careful refactoring
+Contributors and coding agents should follow these conventions: research APIs
+before using them, confirm ambiguous requirements before acting, verify changes
+with the Docker-based tests, reuse existing interfaces, and prefer minimal,
+targeted edits over broad refactors.
 
 ## 0) Directory knowledge (read this first)
 
@@ -34,7 +29,7 @@ Shame in blind modification, Honor in careful refactoring
 **Heuristics:**
 - Runtime behavior / CLI / Python logic → `morphling/`, `scripts/`
 - Perf / concurrency / networking → `csrc/backend/`
-- Config-driven behavior → `config/**` + config loading callsites in `scripts/`/`morphling/`
+- Config-driven behavior → `config/proxy/` + config loading callsites in `scripts/`/`morphling/`
 - Wire format / RPC contracts → `proto/*.proto` (ask before changing)
 
 ## 1) Development workflow (Docker-only; GPU by default)
@@ -149,7 +144,7 @@ tests/
 
 ### Worker pool model
 - `WorkerBase` → `XtGemmWorker` (GPU, cublasXt) and `CpuWorker` (MKL)
-- `WorkerPool` dispatches via pluggable `SchedulingPolicy` (round-robin, shortest-wait)
+- `WorkerPool` dispatches via pluggable `SchedulingPolicy` (round-robin, greedy, load-balanced)
 - Task queue: `std::mutex` + `std::condition_variable`, atomic task counts
 - Dual-path GPU/CPU with identical public interfaces (`AddTask`, `EnqueueGemm`)
 

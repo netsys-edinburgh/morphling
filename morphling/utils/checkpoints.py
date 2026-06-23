@@ -37,11 +37,11 @@ from accelerate.utils.constants import SAFE_WEIGHTS_NAME, WEIGHTS_NAME
 
 def get_checkpoint_paths(checkpoint: Union[str, os.PathLike]):
     """
-    Returns the paths to the checkpoint files in a given folder.
+    Returns the paths to checkpoint files for a file, index, or folder.
 
     Args:
-        checkpoint_folder (`str` or `os.PathLike`):
-            The folder where we will look for the checkpoint files.
+        checkpoint (`str` or `os.PathLike`):
+            The checkpoint file, index file, or folder to inspect.
     """
     checkpoint_files = None
     index_filename = None

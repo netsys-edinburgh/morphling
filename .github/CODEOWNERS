@@ -1,0 +1,7 @@
+# CODEOWNERS for drunkcoding/DeviceEmulator
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Owners listed here are auto-requested for review on matching PRs.
+
+# Default owner for everything not matched below.
+*                                                   @drunkcoding

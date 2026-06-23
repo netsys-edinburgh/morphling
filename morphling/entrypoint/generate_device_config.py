@@ -23,7 +23,7 @@ class ModelConfigArguments:
     batch_size: int = field(default=128, metadata={"help": "Batch size"})
     seq_length: int = field(default=1024, metadata={"help": "Sequence length"})
     backend: str = field(
-        default="rabbitmq",
+        default="proxy",
         metadata={"help": "The backend to use for the device"},
     )
     block_size: int = field(default=128, metadata={"help": "Block size"})
@@ -31,15 +31,29 @@ class ModelConfigArguments:
         default="",
         metadata={"help": "Proxy config file path"},
     )
-    # redis_host: str = field(
-    #     default="127.0.0.1:6379",
-    #     metadata={"help": "Redis server host:port for proxy backend"},
-    # )
     proxy_host: str = field(
         default="",
         metadata={
             "help": "Proxy server host:port (e.g., 155.98.37.203:39000), overrides config file"
         },
+    )
+    device_mode: str = field(
+        default="barrier",
+        metadata={"help": "Device mode for dispatch gate: barrier or dynamic"},
+    )
+    barrier_count: int = field(
+        default=0,
+        metadata={
+            "help": "Barrier device count; 0 uses num_device from config"
+        },
+    )
+    barrier_timeout: int = field(
+        default=0,
+        metadata={"help": "Barrier timeout in milliseconds; 0 means infinite"},
+    )
+    max_queue_size: int = field(
+        default=1024,
+        metadata={"help": "Maximum queued requests in dynamic device mode"},
     )
     log_level: str = field(default="info", metadata={"help": "Log level"})
 

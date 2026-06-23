@@ -221,6 +221,69 @@ target_link_libraries(test_worker_base PRIVATE
 )
 add_test(NAME test_worker_base COMMAND test_worker_base)
 
+# ============================================================================
+# DispatchGate / DeviceTracker tests (unit/backend + integration)
+# ============================================================================
+set(PROJECT_ROOT_DG ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+file(GLOB DG_BASE_LOGGING_SRC ${PROJECT_ROOT_DG}/external/muduo_base/*.cc)
+
+add_executable(test_dispatch_gate
+  unit/backend/test_dispatch_gate.cpp
+  ${PROJECT_ROOT_DG}/csrc/backend/dispatch_gate.cpp
+  ${PROJECT_ROOT_DG}/csrc/core/logger.cpp
+  ${DG_BASE_LOGGING_SRC}
+)
+target_include_directories(test_dispatch_gate PRIVATE
+  ${PROJECT_ROOT_DG}/csrc
+  ${PROJECT_ROOT_DG}/external
+)
+target_link_libraries(test_dispatch_gate PRIVATE
+  GTest::gtest_main
+  GTest::gtest
+  Threads::Threads
+  uuid
+)
+add_test(NAME test_dispatch_gate COMMAND test_dispatch_gate)
+
+# ============================================================================
+# GemmArgs layout tests (unit/intercept/) — Issue #48 collapse
+# ============================================================================
+add_executable(test_gemm_args_layout
+  unit/intercept/test_gemm_args_layout.cpp
+  ${PROJECT_ROOT_DG}/csrc/core/logger.cpp
+  ${DG_BASE_LOGGING_SRC}
+)
+target_include_directories(test_gemm_args_layout PRIVATE
+  ${PROJECT_ROOT_DG}/csrc
+  ${PROJECT_ROOT_DG}/external
+)
+target_link_libraries(test_gemm_args_layout PRIVATE
+  GTest::gtest
+  GTest::gtest_main
+  Threads::Threads
+  uuid
+  fmt
+)
+add_test(NAME test_gemm_args_layout COMMAND test_gemm_args_layout)
+
+add_executable(test_barrier_integration
+  integration/test_barrier_integration.cpp
+  ${PROJECT_ROOT_DG}/csrc/backend/dispatch_gate.cpp
+  ${DG_BASE_LOGGING_SRC}
+)
+target_include_directories(test_barrier_integration PRIVATE
+  ${PROJECT_ROOT_DG}/csrc
+  ${PROJECT_ROOT_DG}/external
+)
+target_link_libraries(test_barrier_integration PRIVATE
+  GTest::gtest
+  GTest::gtest_main
+  Threads::Threads
+  uuid
+)
+add_test(NAME test_barrier_integration COMMAND test_barrier_integration)
+
 # ==========================================================================
 # GreenTraceParser tests (unit/worker/) — no CUDA required
 # ============================================================================
@@ -286,6 +349,61 @@ if(ENABLE_GREEN_CTX_TESTS)
     add_test(NAME test_green_context_runtime COMMAND test_green_context_runtime)
   else()
     message(WARNING "CUDAToolkit not found; green context runtime tests skipped.")
+  endif()
+endif()
+
+# ============================================================================
+# CheckpointHandle multi-file tests (unit/checkpoint/) — Issue #49 lock-in
+# ============================================================================
+# The reader's multi-file consistency check (sum per-file_id sizes) is hard
+# to exercise without the full checkpoint stack (Torch, CUDA caching
+# allocator, muduo logging). Reuse the XtGemm/zerocopy machinery: Torch
+# discovery + CUDAToolkit + base logging + a slim caching-allocator slice.
+option(ENABLE_CHECKPOINT_TESTS "Build CheckpointHandle multi-file tests" ON)
+if(ENABLE_CHECKPOINT_TESTS)
+  find_package(CUDAToolkit QUIET)
+  find_package(Threads REQUIRED)
+  if(CUDAToolkit_FOUND)
+    set(PROJECT_ROOT_CK ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+    # Torch: add cmake prefix path so find_package works
+    execute_process(
+      COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
+      OUTPUT_VARIABLE TORCH_PREFIX_PATH
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    list(APPEND CMAKE_PREFIX_PATH ${TORCH_PREFIX_PATH})
+    find_package(Torch REQUIRED)
+
+    file(GLOB CK_BASE_LOGGING_SRC ${PROJECT_ROOT_CK}/external/muduo_base/*.cc)
+    file(GLOB CK_CHECKPOINT_SRC ${PROJECT_ROOT_CK}/csrc/checkpoint/*.cpp)
+
+    add_executable(test_checkpoint_multifile
+      unit/checkpoint/test_checkpoint_multifile.cpp
+      ${CK_CHECKPOINT_SRC}
+      ${PROJECT_ROOT_CK}/csrc/memory/caching_allocator.cpp
+      ${PROJECT_ROOT_CK}/csrc/memory/shared_memory.cpp
+      ${PROJECT_ROOT_CK}/csrc/core/logger.cpp
+      ${PROJECT_ROOT_CK}/csrc/core/cuda_utils.cpp
+      ${CK_BASE_LOGGING_SRC}
+    )
+    target_include_directories(test_checkpoint_multifile PRIVATE
+      ${PROJECT_ROOT_CK}/csrc
+      ${PROJECT_ROOT_CK}/external
+      ${TORCH_INCLUDE_DIRS}
+    )
+    target_link_libraries(test_checkpoint_multifile PRIVATE
+      GTest::gtest
+      GTest::gtest_main
+      Threads::Threads
+      uuid
+      ${TORCH_LIBRARIES}
+      CUDA::cudart
+      CUDA::cublas
+    )
+    add_test(NAME test_checkpoint_multifile COMMAND test_checkpoint_multifile)
+  else()
+    message(WARNING "CUDAToolkit not found; checkpoint tests skipped.")
   endif()
 endif()
 

@@ -1,0 +1,52 @@
+name: Proto Compatibility
+
+on:
+  pull_request:
+    branches: ['**']
+    paths:
+      - 'proto/**'
+      - '.github/workflows/proto-breaking.yml'
+      - 'buf.work.yaml'
+  push:
+    branches: [main, dev]
+    paths:
+      - 'proto/**'
+      - '.github/workflows/proto-breaking.yml'
+      - 'buf.work.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  buf:
+    name: Lint + breaking-change check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: '1.34.0'
+
+      - name: Lint protos
+        run: buf lint
+
+      - name: Check breaking changes vs base branch
+        if: github.event_name == 'pull_request'
+        run: |
+          BASE="${{ github.event.pull_request.base.ref }}"
+          git fetch origin "${BASE}" --depth=1
+          # The breaking-change check needs a buildable baseline. A base that
+          # predates this guard (no buf config, or malformed protos) cannot be
+          # built, which is not the PR's fault. Probe the base first: skip with
+          # a notice when it is unbuildable, run strictly once the guard exists
+          # on the base branch.
+          if buf build ".git#branch=origin/${BASE}" -o /dev/null 2>/tmp/base.log; then
+            buf breaking --against ".git#branch=origin/${BASE}"
+          else
+            echo "::notice::Base branch ${BASE} has no buildable proto module (pre-guard baseline); skipping breaking-change check."
+            cat /tmp/base.log || true
+          fi

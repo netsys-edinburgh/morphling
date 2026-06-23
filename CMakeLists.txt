@@ -41,7 +41,6 @@ set(Protobuf_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/external/protobuf/src")
 set(Protobuf_LIBRARIES protobuf::libprotobuf)
 include(FindProtobuf)
 
-add_subdirectory(external/rabbitmq-c)
 add_subdirectory(external/redis-plus-plus)
 
 if(DEFINED ENV{CONDA_PREFIX})
@@ -102,6 +101,7 @@ set(PROTO_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 set(PROTO_FILES
   "${PROTO_SRC_DIR}/morphling.proto"
   "${PROTO_SRC_DIR}/global_api.proto"
+  "${PROTO_SRC_DIR}/manage.proto"
 )
 
 protobuf_generate(
@@ -138,10 +138,9 @@ include_directories(
   /usr/local/include
 )
 
-file(GLOB INTERCEPT_SRC "csrc/intercept/*.cpp")
 file(GLOB MEMORY_SRC "csrc/memory/*.cpp")
-# CORE_SRC split: _C only needs the lightweight utils subset;
-# _Msg needs the full core (including env_cfg which pulls in backend vtables)
+# CORE_SRC split: _C extension uses only lightweight utilities;
+# _Msg extension includes the full core, including env_cfg backend policy code.
 set(CORE_UTILS_SRC
   "csrc/core/cuda_utils.cpp"
   "csrc/core/logger.cpp"
@@ -187,6 +186,8 @@ set(MORPHLING_EXT_SRC
   ${CORE_UTILS_SRC}
   ${BASE_SRC}
   ${TIMER_SRC}
+  ${CHECKPOINT_SRC}
+  "csrc/memory/caching_allocator.cpp"
   "csrc/memory/shared_memory.cpp"
   "csrc/python/checkpoint_py.cpp"
 )
@@ -195,7 +196,6 @@ set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
   ${Protobuf_LIBRARIES}
-  rabbitmq
   CUDA::cublas
 )
 
@@ -220,8 +220,6 @@ set(MORPHLING_MSG_SRC
   ${TIMER_SRC}
   ${CORE_SRC}
   ${PROTO_SRCS}
-  "csrc/scheduler/amqp_dispatcher.cpp"
-  "csrc/scheduler/amqp_worker.cpp"
   "csrc/scheduler/cpu_worker.cpp"
   "csrc/scheduler/gpu_worker.cpp"
   "csrc/python/client_py.cpp"
@@ -231,7 +229,6 @@ set(MORPHLING_MSG_SRC
 set(MORPHLING_EXT_LIB
   torch ${torch_python_LIBRARY}
   uuid Threads::Threads fmt
-  rabbitmq mosquitto
   ${Protobuf_LIBRARIES}
   redis++
   hiredis

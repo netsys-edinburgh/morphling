@@ -93,20 +93,19 @@ static std::shared_ptr<GemmArgs> MakeTNGemmArgs(int m, int n, int k,
                                                 const float* a, const float* b,
                                                 float* c) {
   auto args = std::make_shared<GemmArgs>();
-  args->group_size = 1;
-  args->transa[0] = 'T';
-  args->transb[0] = 'N';
-  args->m[0] = m;
-  args->n[0] = n;
-  args->k[0] = k;
-  args->alpha[0] = 1.0f;
-  args->beta[0] = 0.0f;
-  args->a[0] = a;
-  args->lda[0] = k;  // leading dim = k for transposed A
-  args->b[0] = b;
-  args->ldb[0] = k;  // leading dim = k for non-transposed B
-  args->c[0] = c;
-  args->ldc[0] = m;
+  args->transa = 'T';
+  args->transb = 'N';
+  args->m = m;
+  args->n = n;
+  args->k = k;
+  args->alpha = 1.0f;
+  args->beta = 0.0f;
+  args->a = a;
+  args->lda = k;  // leading dim = k for transposed A
+  args->b = b;
+  args->ldb = k;  // leading dim = k for non-transposed B
+  args->c = c;
+  args->ldc = m;
   return args;
 }
 

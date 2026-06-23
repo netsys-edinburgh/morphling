@@ -234,15 +234,31 @@ class BuildPackageProtos(Command):
         return None
 
     def _build_package_proto(self, root: str, proto_file: str) -> None:
-        if protocol_compiler is None:
-            raise RuntimeError("Protocol compiler path is not initialized")
-        command = [
-            protocol_compiler,
-            "-I",
-            "./",
-            f"--python_out={root}",
-            proto_file,
-        ]
+        # Prefer grpc_tools.protoc (libprotoc >= 4.x) so generated *_pb2.py
+        # is compatible with the runtime protobuf>=4.21,<7 pin. The torch
+        # bundled protoc is 3.13 and produces code that the modern runtime
+        # rejects with "Descriptors cannot be created directly".
+        try:
+            importlib.import_module("grpc_tools.protoc")
+            command = [
+                sys.executable,
+                "-m",
+                "grpc_tools.protoc",
+                "-I",
+                "./",
+                f"--python_out={root}",
+                proto_file,
+            ]
+        except ImportError:
+            if protocol_compiler is None:
+                raise RuntimeError("Protocol compiler path is not initialized")
+            command = [
+                protocol_compiler,
+                "-I",
+                "./",
+                f"--python_out={root}",
+                proto_file,
+            ]
         _ = subprocess.check_call(command)
 
     def run(self):

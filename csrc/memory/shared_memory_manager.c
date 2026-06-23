@@ -1,4 +1,4 @@
-#include "/home/eren/DeviceEmulator/csrc/memory/shared_memory_manager.h"  // Include the correct header file
+#include "shared_memory_manager.h"
 
 #include <fcntl.h>
 #include <pthread.h>
@@ -13,9 +13,8 @@
 #include <unistd.h>
 
 #define SHM_NAME "/sgemm_shm"
-#define LOG_FILE \
-  "/home/eren/DeviceEmulator/csrc/intercept/logs/shared_memory.log"
-shared_memory_t* shared_mem_ptr = NULL;  // Central shared memory pointer
+#define LOG_FILE_FALLBACK "/tmp/morphling-intercept-logs/shared_memory.log"
+shared_memory_t* shared_mem_ptr = NULL;
 
 // Central shared memory pointer (actual definition)
 
@@ -26,7 +25,16 @@ size_t get_shared_memory_size() {
 }
 
 void log_message(const char* message) {
-  FILE* log_file = fopen(LOG_FILE, "a");
+  const char* env_dir = getenv("MORPHLING_INTERCEPT_LOG_DIR");
+  char path_buf[512];
+  const char* log_path;
+  if (env_dir && *env_dir) {
+    snprintf(path_buf, sizeof(path_buf), "%s/shared_memory.log", env_dir);
+    log_path = path_buf;
+  } else {
+    log_path = LOG_FILE_FALLBACK;
+  }
+  FILE* log_file = fopen(log_path, "a");
   if (log_file) {
     time_t now = time(NULL);
     struct tm* local = localtime(&now);

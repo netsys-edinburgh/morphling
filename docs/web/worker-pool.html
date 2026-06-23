@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Worker Pool & Scheduling — Morphling Documentation</title>
+<meta name="description" content="Morphling: an emulator for distributed machine-learning training on heterogeneous edge devices. EdgeSys '26 companion code." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400;9..144,500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/styles.css" />
+<script>
+  // Apply stored theme BEFORE first paint to avoid flash
+  (() => {
+    try {
+      const t = localStorage.getItem("morphling-docs-theme");
+      if (t === "light" || t === "dark") {
+        document.documentElement.setAttribute("data-theme", t);
+      }
+    } catch {
+      /* ignore */
+    }
+  })();
+</script>
+</head>
+<body>
+
+<a href="#main" class="skip-link">Skip to content</a>
+
+<!-- ============ NAVBAR ============ -->
+<header id="navbar">
+  <div class="navbar-inner">
+    <button type="button" class="menu-btn" aria-label="Open navigation" data-menu-toggle>
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+
+    <a class="logo" href="index.html">
+      <span class="lockup-mark" aria-hidden="true"></span>
+      <span>Morphling</span>
+    </a>
+
+    <button type="button" class="search-pill" data-search-open aria-label="Open search">
+      <span style="display:inline-flex;align-items:center;gap:0.5rem;">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Search docs…
+      </span>
+      <span class="kbd">⌘ K</span>
+    </button>
+
+    <button type="button" class="assistant-pill" aria-label="Ask assistant">
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.75L11.412 7.587L16.25 9.5L11.412 11.413L9.5 16.25L7.587 11.413L2.75 9.5L7.587 7.587L9.5 2.75Z"/></svg>
+      Ask the Emulator
+    </button>
+
+    <button type="button" class="theme-btn" data-theme-toggle aria-label="Toggle theme">
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ============ TAB BAR ============ -->
+<nav id="tabbar" aria-label="Sections">
+  <div class="tabbar-inner">
+    <a class="tab" href="index.html">Get Started</a>
+    <a class="tab" href="green-context.html" aria-current="page">Internals</a>
+    <a class="tab" href="deployment.html">Deployment</a>
+    <a class="tab" href="paper.html">Paper</a>
+    <a class="tab" href="https://github.com/drunkcoding/DeviceEmulator">GitHub ↗</a>
+  </div>
+</nav>
+
+<div class="shell">
+
+
+
+  <!-- Sidebar -->
+  <aside class="sidebar" aria-label="Documentation navigation">
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7L8 5z"/></svg>
+        Get Started
+      </div>
+      <ul>
+        <li><a href="index.html">Welcome to Morphling</a></li>
+        <li><a href="install.html">Installation</a></li>
+        <li><a href="quickstart.html">Quickstart</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Internals
+      </div>
+      <ul>
+        <li><a href="green-context.html">Per-GEMM Green Contexts</a></li>
+        <li><a href="worker-pool.html" aria-current="page">Worker Pool &amp; Scheduling</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Deployment
+      </div>
+      <ul>
+        <li><a href="deployment.html">Virtual &amp; Physical Devices</a></li>
+      </ul>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">
+        <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        Reference
+      </div>
+      <ul>
+        <li><a href="troubleshooting.html">Troubleshooting</a></li>
+        <li><a href="paper.html">EdgeSys '26 Paper</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main id="main" class="content">
+
+    <div class="breadcrumbs"><a href="index.html">Get Started</a><span class="sep">/</span><a href="green-context.html">Internals</a><span class="sep">/</span><span>Worker Pool &amp; Scheduling</span></div>
+    <div class="hero-eyebrow"><span class="dot"></span> Internals · scheduling</div>
+    <h1>Worker Pool &amp;<br/>Scheduling Policies.</h1>
+    <p class="hero-sub">
+      The worker pool dispatches GEMM tasks through a pluggable
+      <code>SchedulingPolicy</code>. Three scheduling policies ship today
+      (round-robin, greedy, load-balanced). Two virtual-time alignment strategies
+      —&nbsp;<code>EARLIEST</code> and <code>LATEST</code>&nbsp;— answer
+      different research questions.
+    </p>
+
+    <h2 id="model">Worker pool model</h2>
+    <ul class="bul">
+      <li><code>WorkerBase</code> → <code>XtGemmWorker</code> (GPU, cublasXt)
+        and <code>CpuWorker</code> (MKL).</li>
+      <li><code>WorkerPool</code> dispatches via pluggable
+        <code>SchedulingPolicy</code> (round-robin, greedy, load-balanced).</li>
+      <li>Task queue: <code>std::mutex</code> + <code>std::condition_variable</code>,
+        with atomic task counts.</li>
+      <li>Dual-path GPU/CPU with identical public interfaces
+        (<code>AddTask</code>, <code>EnqueueGemm</code>).</li>
+    </ul>
+
+    <h2 id="virtual-time">Virtual-time alignment: EARLIEST vs LATEST</h2>
+    <p>Two strategies align virtual time across devices:</p>
+    <ul class="bul">
+      <li><code>EARLIEST</code>: align all devices to the earliest
+        <code>vt_start</code> (fastest device).</li>
+      <li><code>LATEST</code>: align all devices to the latest
+        <code>vt_start</code> (slowest device).</li>
+    </ul>
+
+    <table>
+      <thead><tr><th>Dimension</th><th>EARLIEST</th><th>LATEST</th></tr></thead>
+      <tbody>
+        <tr><td>Baseline definition</td><td><code>min(vt_start)</code></td><td><code>max(vt_start)</code></td></tr>
+        <tr><td>Baseline device</td><td>Fastest</td><td>Slowest</td></tr>
+        <tr><td>Time shift direction</td><td>Backward (smaller timestamps)</td><td>Forward (larger timestamps)</td></tr>
+        <tr><td>Typical shift size</td><td>Smaller (conservative)</td><td>Larger (aggressive)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="example">Worked example: GEMM 0</h2>
+    <p>Original data (3 devices, single GEMM):</p>
+<pre><code>Device 0: vt_start = 2,326,719 us  (slowest)
+Device 1: vt_start = 2,298,721 us
+Device 2: vt_start = 2,215,361 us  (fastest)
+
+Spread = 111,358 us</code></pre>
+
+    <p><code>EARLIEST</code> (baseline = 2,215,361 us):</p>
+<pre><code>Device 0: 2,326,719 - 111,358 = 2,215,361 us
+Device 1: 2,298,721 -  83,360 = 2,215,361 us
+Device 2: 2,215,361 +       0 = 2,215,361 us</code></pre>
+
+    <p><code>LATEST</code> (baseline = 2,326,719 us):</p>
+<pre><code>Device 0: 2,326,719 +       0 = 2,326,719 us
+Device 1: 2,298,721 +  27,998 = 2,326,719 us
+Device 2: 2,215,361 + 111,358 = 2,326,719 us</code></pre>
+
+    <h2 id="which">Which strategy should you use?</h2>
+
+    <h3>Performance comparison → <code>EARLIEST</code></h3>
+    <ul class="bul">
+      <li>Aligns to the fastest device.</li>
+      <li>Best for comparing per-device compute time fairly.</li>
+      <li>Preserves relative ordering and uses a conservative shift.</li>
+    </ul>
+
+    <h3>Worst-case / SLA analysis → <code>LATEST</code></h3>
+    <ul class="bul">
+      <li>Aligns to the slowest device.</li>
+      <li>Highlights tail latency and bottlenecks.</li>
+      <li>Useful for reliability and capacity planning.</li>
+    </ul>
+
+    <h3>Cross-experiment comparison → neither</h3>
+    <ul class="bul">
+      <li>Both alter absolute timestamps.</li>
+      <li>Keep original logs and compare deltas, or use a fixed baseline
+        device/time for all experiments.</li>
+    </ul>
+
+    <h2 id="workflow">Recommended workflow</h2>
+    <p>If you also care about worst-case impact, generate both and compare:</p>
+<pre><code>python3 scripts/sync_virtual_time.py perf_merged.log \
+  --method earliest --output synced_earliest.log
+
+python3 scripts/sync_virtual_time.py perf_merged.log \
+  --method latest --output synced_latest.log
+
+python3 scripts/analyze_sync.py perf_merged.log synced_earliest.log \
+  > analysis_earliest.txt
+
+python3 scripts/analyze_sync.py perf_merged.log synced_latest.log \
+  > analysis_latest.txt</code></pre>
+
+    <div class="callout tip">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+      <div>
+        From the EdgeSys '26 measurement set (97 GEMM operations):
+        mean virtual-time shift was 109,763 μs (≈ 110 ms), with the spread
+        ranging from 0 μs to 123,886 μs.
+      </div>
+    </div>
+
+
+    <div class="page-nav">
+      <a href="green-context.html">
+        <div class="label">← Previous</div>
+        <div class="title">Green Contexts</div>
+      </a>
+      <a href="deployment.html" class="next">
+        <div class="label">Next →</div>
+        <div class="title">Deployment</div>
+      </a>
+    </div>
+  </main>
+
+  <aside class="toc" aria-label="On this page">
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#model">Worker pool model</a></li>
+      <li><a href="#virtual-time">EARLIEST vs LATEST</a></li>
+      <li><a href="#example">Worked example</a></li>
+      <li><a href="#which">Which to use</a></li>
+      <li><a href="#workflow">Workflow</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="docs-footer">
+  <div>© 2026 The Morphling Authors · Apache-2.0</div>
+  <div>
+    <a href="https://github.com/drunkcoding/DeviceEmulator">GitHub</a> ·
+    <a href="https://doi.org/10.1145/3812836.3814779">DOI</a> ·
+    <a href="troubleshooting.html">Troubleshooting</a>
+  </div>
+</footer>
+
+<!-- ============ Search modal ============ -->
+<div id="search-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Search">
+  <div class="modal">
+    <input id="search-input" type="text" placeholder="Search docs… (try 'green context')" autocomplete="off" />
+    <div id="search-results" class="results"></div>
+  </div>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

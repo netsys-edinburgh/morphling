@@ -202,13 +202,20 @@ typedef std::shared_ptr<DeviceRegisterRequest> DeviceRegisterRequestPtr;
 // Device profile data (client -> server)
 // Contains device performance characteristics and capabilities
 struct DeviceProfileData : public ISerializable {
-  uint64_t uuid;
-  uint64_t flops;
-  uint64_t memory;
-  uint64_t ul_bw;   // upload bandwidth
-  uint64_t dl_bw;   // download bandwidth
-  uint64_t ul_lat;  // upload latency
-  uint64_t dl_lat;  // download latency
+  uint64_t uuid = 0;
+  uint64_t flops = 0;
+  uint64_t memory = 0;
+  uint64_t ul_bw = 0;   // upload bandwidth
+  uint64_t dl_bw = 0;   // download bandwidth
+  uint64_t ul_lat = 0;  // upload latency
+  uint64_t dl_lat = 0;  // download latency
+
+  // Server-measured fields (#45). Zero means "not measured".
+  uint64_t measured_flops = 0;
+  bool measured_flops_verified = false;
+  uint64_t measured_lat_ns = 0;
+  uint64_t measured_ul_bw_bps = 0;
+  uint64_t measured_dl_bw_bps = 0;
 
   // ISerializable interface
   SerializationBufferPtr Serialize(

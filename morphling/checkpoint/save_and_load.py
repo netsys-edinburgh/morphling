@@ -105,7 +105,7 @@ def save_model(model: nn.Module, model_path: str):
     Args:
         model: nn.Module
             a model to be saved
-        storage_path: str
+        model_path: str
             a local path to save the converted model
     """
     if not os.path.exists(model_path):

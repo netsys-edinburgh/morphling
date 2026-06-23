@@ -1,0 +1,74 @@
+cff-version: 1.2.0
+message: >-
+  If you use Morphling (DeviceEmulator) in your research,
+  please cite the EdgeSys '26 workshop paper below.
+title: Morphling (DeviceEmulator)
+abstract: >-
+  Morphling is an emulator for distributed machine learning training on
+  heterogeneous edge devices. It intercepts backend dispatch calls, fits
+  stride-aware and thermal-aware performance models from real measurements,
+  decouples memory demand from device count, and uses event-driven virtual
+  time to preserve execution semantics, enabling large-scale what-if studies
+  of edge training on a single GPU server.
+type: software
+license: Apache-2.0
+repository-code: 'https://github.com/drunkcoding/DeviceEmulator'
+authors:
+  - family-names: Xue
+    given-names: Leyang
+    affiliation: The University of Edinburgh
+  - family-names: Xia
+    given-names: Yufeng
+    affiliation: The University of Edinburgh
+  - family-names: Mendi
+    given-names: Eren
+    affiliation: The University of Edinburgh
+  - family-names: Bashir
+    given-names: Ismaeel
+    affiliation: The University of Edinburgh
+  - family-names: Yang
+    given-names: Jiaxun
+    affiliation: The University of Edinburgh
+  - family-names: Lee
+    given-names: Myungjin
+    affiliation: Cisco Research
+  - family-names: Marina
+    given-names: Mahesh K.
+    affiliation: The University of Edinburgh
+preferred-citation:
+  type: conference-paper
+  title: 'Morphling: Emulator for Distributed Machine Learning at the Edge'
+  year: 2026
+  month: 6
+  conference:
+    name: >-
+      The 24th Annual International Conference on Mobile Systems,
+      Applications and Services (MobiSys Workshop '26)
+    city: Cambridge
+    country: GB
+    date-start: '2026-06-21'
+    date-end: '2026-06-25'
+  collection-title: >-
+    The 24th Annual International Conference on Mobile Systems,
+    Applications and Services, MobiSys Workshop '26,
+    Cambridge, United Kingdom, June 21-25, 2026
+  publisher:
+    name: ACM
+  doi: 10.1145/3812836.3814779
+  isbn: '979-8-4007-2712-2'
+  url: 'https://doi.org/10.1145/3812836.3814779'
+  authors:
+    - family-names: Xue
+      given-names: Leyang
+    - family-names: Xia
+      given-names: Yufeng
+    - family-names: Mendi
+      given-names: Eren
+    - family-names: Bashir
+      given-names: Ismaeel
+    - family-names: Yang
+      given-names: Jiaxun
+    - family-names: Lee
+      given-names: Myungjin
+    - family-names: Marina
+      given-names: Mahesh K.

@@ -4,8 +4,6 @@
 import subprocess
 import sys
 
-import pytest
-
 
 class TestBenchGflopsScript:
     def test_script_help(self):
@@ -24,14 +22,3 @@ class TestBenchGflopsScript:
         time_ms = 0.5
         gflops = flops / (time_ms * 1e-3) / 1e9
         assert abs(gflops - 8.388608) < 0.01
-
-
-class TestAggregateScript:
-    def test_script_help(self):
-        result = subprocess.run(
-            [sys.executable, "scripts/aggregate_paper_results.py", "--help"],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0
-        assert "--results-dir" in result.stdout

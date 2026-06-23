@@ -18,20 +18,19 @@ static std::shared_ptr<GemmArgs> MakeGemmArgs(char transa, char transb, int m,
                                               const float* b, int ldb,
                                               float beta, float* c, int ldc) {
   auto args = std::make_shared<GemmArgs>();
-  args->group_size = 1;
-  args->transa[0] = transa;
-  args->transb[0] = transb;
-  args->m[0] = m;
-  args->n[0] = n;
-  args->k[0] = k;
-  args->alpha[0] = alpha;
-  args->a[0] = a;
-  args->lda[0] = lda;
-  args->b[0] = b;
-  args->ldb[0] = ldb;
-  args->beta[0] = beta;
-  args->c[0] = c;
-  args->ldc[0] = ldc;
+  args->transa = transa;
+  args->transb = transb;
+  args->m = m;
+  args->n = n;
+  args->k = k;
+  args->alpha = alpha;
+  args->a = a;
+  args->lda = lda;
+  args->b = b;
+  args->ldb = ldb;
+  args->beta = beta;
+  args->c = c;
+  args->ldc = ldc;
   return args;
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -10,6 +11,7 @@
 
 #include "core/env_cfg.h"
 #include "core/pytorch_defs.h"
+#include "device_measurement.h"
 #include "device_tracker.h"
 #include "morphling.pb.h"
 #include "network/uevent.h"
@@ -70,28 +72,47 @@ class ProxySvrHandle : public uevent::LoopHandle {
   void SendRegisterRequest(const uevent::ConnectionUeventPtr& conn);
   MessageHandlerSignature HandleRegisterResponse;
 
+  // Device-measurement probe response handlers (#55). Routed by device_id
+  // to the session stored on DEVICE_TRACKER.
+  MessageHandlerSignature HandleProbeLatencyResponse;
+  MessageHandlerSignature HandleProbeBandwidthResponse;
+  MessageHandlerSignature HandleProbeFlopsResponse;
+
  private:
   // Message decoding and dispatching
   void DecodeAndDispatch(const uevent::ConnectionUeventPtr& conn,
                          const void* payload, size_t size);
+
+  // Start a probe session for a freshly-registered device. No-op when all
+  // probe flags are disabled. On completion (or failure), pushes the
+  // device into the idle-partition scheduler.
+  void StartMeasurementOrDispatch(const uevent::ConnectionUeventPtr& conn,
+                                  int64_t device_id);
 
   // Message handlers following MessageHandler interface
   MessageHandlerSignature HandleMatMul;
   MessageHandlerSignature HandleDevicePerf;
 
  private:
+  struct SendMeta {
+    uint64_t vt_send_end_us;
+    size_t send_bytes;
+    int64_t m;
+    int64_t n;
+    int64_t h_dim;
+  };
+
   ProxyEnvCfg& ctx_;
   uevent::UeventLoop* loop_;
+  DeviceMeasurementService measurement_;
   std::unordered_map<std::string, uint32_t> conn_inflight_;
   std::deque<std::function<void()>> task_queue_;
+  std::unordered_map<std::string, SendMeta> send_meta_;
 
   // Handshake tracking: maps connection address to handshake state
   // true = handshake complete, false = waiting for device_id
   std::unordered_map<std::string, bool> conn_handshake_complete_;
   std::mutex handshake_mutex_;
-
-  // std::unordered_map<std::string, DeviceProfileData> device_info_;
-  // Scheduling policy is now in ctx_.sched_policy
 };
 
 class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
@@ -208,8 +229,30 @@ class ProxySvr {
   }
   torch::Tensor WaitMatMul(int oid) { return svr_->WaitMatMul(oid); }
   size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }
+  void FlushPerfLog() const { DEVICE_TRACKER.FlushPerfLog(); }
   size_t GetRegisteredDeviceCount() const {
     return svr_->GetRegisteredDeviceCount();
+  }
+  bool IsBarrierMet() const {
+    auto* gate = DEVICE_TRACKER.GetDispatchGate();
+    if (gate == nullptr) {
+      return false;
+    }
+    return gate->IsBarrierMet();
+  }
+  size_t GetQueueSize() const {
+    auto* gate = DEVICE_TRACKER.GetDispatchGate();
+    if (gate == nullptr) {
+      return 0;
+    }
+    return gate->GetQueueSize();
+  }
+  DeviceMode GetDeviceMode() const {
+    auto* gate = DEVICE_TRACKER.GetDispatchGate();
+    if (gate == nullptr) {
+      return context_.device_mode;
+    }
+    return gate->GetMode();
   }
 
  private:

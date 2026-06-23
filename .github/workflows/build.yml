@@ -1,0 +1,110 @@
+name: Build Sanity
+
+on:
+  push:
+    branches: [main, dev]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - '.github/CODEOWNERS'
+  pull_request:
+    branches: ['**']
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - '.github/CODEOWNERS'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanity:
+    name: Validate build inputs
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The full Docker image (PyTorch CUDA-devel base + 170-step C++ build)
+      # cannot reliably complete on default GitHub-hosted runners — attempts
+      # have been killed by the runner shutdown signal at ~25 min. Until a
+      # self-hosted runner exists, this workflow validates the build inputs
+      # (Dockerfile syntax, dependency resolution, packaging metadata)
+      # without doing the full compile.
+
+      - name: Lint Dockerfile (hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: error
+          ignore: DL3008,DL3013,DL3015
+
+      - name: Validate pyproject.toml
+        run: |
+          python -m pip install --upgrade pip
+          pip install validate-pyproject tomli
+          python -m validate_pyproject pyproject.toml
+
+      - name: Resolve Python dependencies (dry-run)
+        run: |
+          python -m pip install --dry-run -r requirements.txt
+          python -m pip install --dry-run -r requirements-lint.txt
+
+      - name: Verify MANIFEST.in globs match real files
+        run: |
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          checks = {
+              "csrc C/C++/CUDA":  list(Path("csrc").rglob("*.cpp")) + list(Path("csrc").rglob("*.h")) + list(Path("csrc").rglob("*.cu")),
+              "external headers": list(Path("external").rglob("*.h")) + list(Path("external").rglob("*.hpp")),
+              "cmake glue":       list(Path("cmake").rglob("*.cmake")) + list(Path("cmake").rglob("CMakeLists.txt")),
+              "proto files":      list(Path("proto").rglob("*.proto")),
+          }
+          ok = True
+          for name, files in checks.items():
+              count = len(files)
+              status = "OK" if count > 0 else "EMPTY"
+              print(f"  {name:25s} {count:5d} files  [{status}]")
+              if count == 0:
+                  ok = False
+          sys.exit(0 if ok else 1)
+          PY
+
+      - name: Verify CITATION.cff parses
+        run: |
+          pip install cffconvert
+          cffconvert --validate -i CITATION.cff
+
+      - name: Verify required community files exist
+        run: |
+          set -e
+          for f in LICENSE README.md CONTRIBUTING.md CITATION.cff \
+                   .github/CODEOWNERS .github/PULL_REQUEST_TEMPLATE.md \
+                   .github/ISSUE_TEMPLATE/bug_report.yml \
+                   .github/ISSUE_TEMPLATE/feature_request.yml \
+                   Makefile MANIFEST.in requirements.txt \
+                   requirements-lint.txt pyproject.toml Dockerfile; do
+            if [ ! -f "$f" ]; then
+              echo "MISSING: $f"
+              exit 1
+            fi
+            echo "OK: $f"
+          done

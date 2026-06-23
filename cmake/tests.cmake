@@ -1,15 +1,3 @@
-# add_executable(test_torch_layout test_torch_layout.cpp)
-# target_include_directories(test_torch_layout PRIVATE
-# ${TORCH_INCLUDE_DIRS}
-# )
-# target_link_libraries(test_torch_layout ${TORCH_LIBRARIES})
-# set_target_properties(test_torch_layout PROPERTIES
-# RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
-# )
-# add_test(NAME test_torch_layout COMMAND test_torch_layout)
-
-
-
 #
 # Define a target named `TEST_NAME` for a single extension.
 # Optional arguments:

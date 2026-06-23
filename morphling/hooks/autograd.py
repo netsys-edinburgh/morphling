@@ -1,5 +1,6 @@
 # pyright: reportMissingImports=false, reportAssignmentType=false
 # pyright: reportAttributeAccessIssue=false
+# pyright: reportDeprecated=false, reportUnusedImport=false, reportExplicitAny=false, reportAny=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnusedParameter=false, reportUnannotatedClassAttribute=false, reportImplicitOverride=false, reportIncompatibleMethodOverride=false, reportArgumentType=false, reportCallIssue=false
 """Autograd hooks for green context switching and GEMM logging."""
 
 import functools
@@ -30,6 +31,17 @@ _greenctx: Any = None
 _gemm_log: List[Dict[str, Any]] = []
 _greenctx_t0: float = 0.0
 _gemm_idx: int = 0
+# Decoupled from _greenctx so backends can request activation without logging
+# (or logging without activation). set_greenctx() flips this implicitly to
+# preserve historical behavior; callers can override afterwards.
+_gemm_log_enabled: bool = False
+
+
+def set_gemm_logging(enabled: bool) -> None:
+    """Enable or disable per-GEMM log entries (independent of greenctx)."""
+    global _gemm_log_enabled
+    _gemm_log_enabled = bool(enabled)
+
 
 HOOK_TYPES = [
     "linear",
@@ -100,10 +112,17 @@ def _log_gemm(
 
 
 def set_greenctx(greenctx: Any = None, reset_log: bool = True) -> None:
-    """Set the green context controller and optionally reset the GEMM log."""
+    """Set the green context controller and optionally reset the GEMM log.
+
+    Implicitly enables logging when ``greenctx`` is not ``None`` and disables
+    it otherwise, preserving the pre-#46 behavior. Call
+    :func:`set_gemm_logging` afterwards to override.
+    """
     global _greenctx
+    global _gemm_log_enabled
 
     _greenctx = greenctx
+    _gemm_log_enabled = greenctx is not None
     if _greenctx is not None and not hasattr(_greenctx, "deactivate"):
         backend = getattr(_greenctx, "backend", None)
         if backend is None:
@@ -169,7 +188,6 @@ class LinearFunction(torch.autograd.Function):
         # logger.debug(f"weight shape: {weight.shape}")
         # output = torch.as_tensor(np.matmul(input, weight))
 
-        # FIXME: this only applies to mqtt backend
         start_us: Optional[float] = None
         sm_count: Optional[int] = None
         gemm_idx: Optional[int] = None
@@ -183,16 +201,13 @@ class LinearFunction(torch.autograd.Function):
             finally:
                 if activated_sm_count is not None:
                     _greenctx.deactivate(activated_sm_count)
-            gemm_idx = _gemm_idx
-            _gemm_idx += 1
+            if _gemm_log_enabled:
+                gemm_idx = _gemm_idx
+                _gemm_idx += 1
         else:
             _backend.async_dispatch_matmul(input, weight.transpose(-2, -1))
         output = _backend.wait_matmul(0)
-        if (
-            _greenctx is not None
-            and start_us is not None
-            and gemm_idx is not None
-        ):
+        if _gemm_log_enabled and start_us is not None and gemm_idx is not None:
             m = int(input.shape[0])
             k = int(input.shape[1])
             n = int(weight.shape[0])
@@ -261,8 +276,9 @@ class LinearFunction(torch.autograd.Function):
                 finally:
                     if activated_sm_count is not None:
                         _greenctx.deactivate(activated_sm_count)
-                grad_input_gemm_idx = _gemm_idx
-                _gemm_idx += 1
+                if _gemm_log_enabled:
+                    grad_input_gemm_idx = _gemm_idx
+                    _gemm_idx += 1
             else:
                 _backend.async_dispatch_matmul(grad_output, weight)
         if ctx.needs_input_grad[1]:
@@ -288,8 +304,9 @@ class LinearFunction(torch.autograd.Function):
                 finally:
                     if activated_sm_count is not None:
                         _greenctx.deactivate(activated_sm_count)
-                grad_weight_gemm_idx = _gemm_idx
-                _gemm_idx += 1
+                if _gemm_log_enabled:
+                    grad_weight_gemm_idx = _gemm_idx
+                    _gemm_idx += 1
             else:
                 _backend.async_dispatch_matmul(
                     grad_output.transpose(-2, -1),
@@ -364,193 +381,3 @@ class LinearFunction(torch.autograd.Function):
                 )
 
         return grad_input, grad_weight, grad_bias
-
-
-# custom autograd function for torch.nn.functional.layer_norm
-class LayerNormFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input, normalized_shape, weight, bias, eps):
-        logger.debug("LayerNormFunction forward")
-        ctx.save_for_backward(input, weight, bias)
-        # output = torch.nn.functional.layer_norm(input, normalized_shape, weight, bias, eps)
-        output = input
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        logger.debug("LayerNormFunction backward")
-        input, weight, bias = ctx.saved_tensors
-        grad_input = grad_weight = grad_bias = None
-
-        if ctx.needs_input_grad[0]:
-            grad_input = grad_output
-        if ctx.needs_input_grad[2]:
-            grad_weight = grad_output
-        if ctx.needs_input_grad[3]:
-            grad_bias = grad_output
-
-        return grad_input, None, grad_weight, grad_bias, None
-
-
-# custom autograd function for softmax
-class SoftmaxFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input):
-        ctx.save_for_backward(input)
-        output = torch.nn.functional.softmax(input, dim=1)
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        input = ctx.saved_tensors
-        grad_input = None
-
-        if ctx.needs_input_grad[0]:
-            grad_input = grad_output
-
-        return grad_input
-
-
-# custom autograd function for torch.Tensor.__add__(self, other) -> Tensor
-class AddFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input, other):
-        logger.debug("AddFunction forward")
-        output = torch.as_tensor(np.add(input, other))
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        logger.debug("AddFunction backward")
-        grad_input = grad_other = None
-
-        if ctx.needs_input_grad[0]:
-            grad_input = grad_output
-        if ctx.needs_input_grad[1]:
-            grad_other = grad_output
-
-        return grad_input, grad_other
-
-
-# custom autograd function for divide
-class DivideFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input, other):
-        ctx.save_for_backward(input, other)
-        output = input / other
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        input, other = ctx.saved_tensors
-        grad_input = grad_other = None
-
-        if ctx.needs_input_grad[0]:
-            grad_input = grad_output / other
-        if ctx.needs_input_grad[1]:
-            grad_other = -grad_output * input / (other**2)
-
-        return grad_input, grad_other
-
-
-# custom autograd function for subtract
-class SubtractFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input, other):
-        ctx.save_for_backward(input, other)
-        output = input - other
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        input, other = ctx.saved_tensors
-        grad_input = grad_other = None
-
-        if ctx.needs_input_grad[0]:
-            grad_input = grad_output
-        if ctx.needs_input_grad[1]:
-            grad_other = -grad_output
-
-        return grad_input, grad_other
-
-
-# custom autograd function for matmul
-class MatmulFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input, other):
-        ctx.save_for_backward(input, other)
-        output = input @ other
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        input, other = ctx.saved_tensors
-        grad_input = grad_other = None
-
-        if ctx.needs_input_grad[0]:
-            grad_input = grad_output @ other.t()
-        if ctx.needs_input_grad[1]:
-            grad_other = input.t() @ grad_output
-
-        return grad_input, grad_other
-
-
-# custom autograd function for relu
-class ReLUFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input):
-        ctx.save_for_backward(input)
-        output = torch.nn.functional.relu(input)
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        input = ctx.saved_tensors
-        grad_input = None
-
-        if ctx.needs_input_grad[0]:
-            grad_input = grad_output.clone()
-            grad_input[input < 0] = 0
-
-        return grad_input
-
-
-# custom autograd function for gelu
-class GeLUFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input):
-        ctx.save_for_backward(input)
-        output = torch.nn.functional.gelu(input)
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        input = ctx.saved_tensors
-        grad_input = None
-
-        if ctx.needs_input_grad[0]:
-            grad_input = grad_output * torch.nn.functional.gelu(input, True)
-
-        return grad_input
-
-
-# custom autograd function for dropout
-class DropoutFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, input, p, train):
-        ctx.save_for_backward(input)
-        if train:
-            output = torch.nn.functional.dropout(input, p)
-        else:
-            output = input
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        input = ctx.saved_tensors
-        grad_input = None
-
-        if ctx.needs_input_grad[0]:
-            grad_input = grad_output
-
-        return grad_input

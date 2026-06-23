@@ -1,8 +1,16 @@
+> **⚠ Opt-in iteration loop.** All PRs must additionally pass
+> `make docker-test` (see [CONTRIBUTING.md](../CONTRIBUTING.md)). This
+> page describes a faster local edit-test cycle, **not** a substitute
+> for the canonical Docker test path.
+
 # Morphling Development Workflow
 
-This workflow lets you iterate on Morphling without rebuilding the Docker image
-on every edit. Source code is bind-mounted into the container, and build output
-is cached in a Docker volume.
+This workflow lets you iterate on Morphling with a single Docker image
+build and incremental rebuilds inside a long-running container. Source
+code is bind-mounted into the container, and build output is cached in
+a Docker volume. **Before opening a PR, verify your change passes
+`make docker-test` against a freshly-built image** — the bind-mount
+loop is for fast iteration only.
 
 ## Quick Start
 
@@ -135,5 +143,5 @@ chmod +x scripts/*.sh
 
 ```bash
 lsof -i :28516
-# Or update port mappings in docker-compose.yml
+# Or update port mappings in dev.sh
 ```

@@ -30,9 +30,11 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # Previously we would do pip install .[dev] but this is causing out of
-          # space errors start with torch 2.1.0 release
-          grep -E "clang-format|pre-commit" requirements.txt | xargs pip install
+          # Lint deps live in requirements-lint.txt (separated from
+          # requirements.txt so the main install doesn't drag in formatting
+          # toolchains). pip install .[dev] caused out-of-space errors with
+          # torch 2.1.0+, so we install lint deps directly.
+          pip install -r requirements-lint.txt
 
       - name: Formatting checks
         run: |

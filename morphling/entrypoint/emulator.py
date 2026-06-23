@@ -1,120 +1,80 @@
 """Emulator server entrypoint for Morphling.
 
-Launches the C++ morphling_server with configured checkpoint path,
-GPU memory size, CPU pinned memory size, and network listen address.
+Starts the proxy backend server (``ProxySvr``) with the configured
+checkpoint path, GPU/CPU memory budget, and network listen address, then
+serves device connections until interrupted.
+
+The legacy implementation exec'd a standalone C++ ``morphling_server``
+binary; that build target was removed (the gRPC server is no longer
+needed) so the proxy backend is now the canonical server path, matching
+``scripts/run_devices.py`` / ``scripts/_runtime_common.start_backend``.
 """
 
 import os
-import subprocess
-import sys
+import time
+from typing import Any, cast
 
 from transformers import HfArgumentParser
 
 import morphling
+from morphling.backend import AutoBackend
 from morphling.common import EmulatorConfig
 
-KB = 1024
-MB = 1024 * KB
-GB = 1024 * MB
+
+def _default_proxy_cfg_path() -> str:
+    """Path to the proxy server INI shipped with the installed package."""
+    return os.path.join(
+        os.path.dirname(morphling.__path__[0]),
+        "config",
+        "proxy",
+        "svr.ini",
+    )
 
 
 def main():
-    parser = HfArgumentParser((EmulatorConfig,))
-    args = parser.parse_args()
+    parser = HfArgumentParser(cast(Any, (EmulatorConfig,)))
+    # parse_args_into_dataclasses() constructs the EmulatorConfig, whose
+    # __post_init__ wires the MORPHLING_CKPT_PATH / MORPHLING_SHM_SIZE /
+    # MORPHLING_PIN_SIZE / MORPHLING_GPU_SIZE env vars that the C++ proxy
+    # server reads at startup. (The previous parse_args() returned a bare
+    # Namespace and never ran __post_init__, so those env vars were never
+    # set.)
+    (config,) = parser.parse_args_into_dataclasses()
 
-    print(args)
+    print(config)
 
-    print(morphling.__path__[0])
+    # The proxy server reads listen_ip/listen_port from svr.ini but honors
+    # MORPHLING_PROXY_HOST / MORPHLING_PROXY_PORT overrides (see
+    # csrc/core/env_cfg.cpp). Export the entrypoint's --listen_ip /
+    # --listen_port so those flags take effect.
+    os.environ["MORPHLING_PROXY_HOST"] = config.listen_ip
+    os.environ["MORPHLING_PROXY_PORT"] = str(config.listen_port)
 
-    server_executable = os.path.join(morphling.__path__[0], "morphling_server")
-    checkpoint_path = args.ckpt_path
-    listen_address = f"{args.listen_ip}:{args.listen_port}"
+    if config.debug:
+        os.environ["SPDLOG_LEVEL"] = "DEBUG"
 
-    env = os.environ.copy()
-    env["MORPHLING_SERVER_ADDRESS"] = listen_address
-    env["MORPHLING_GPU_SIZE"] = str(args.gpu_memory * GB)
-    env["MORPHLING_PIN_SIZE"] = str(args.cpu_memory * GB)
+    cfg_path = _default_proxy_cfg_path()
 
-    if args.debug:
-        env["SPDLOG_LEVEL"] = "DEBUG"
+    server = AutoBackend.from_name("proxy")
+    server.initialize(cfg_path)
+    server.start()
 
-    sys.exit(
-        subprocess.call(
-            [
-                server_executable,
-                "--listen",
-                listen_address,
-                "--path",
-                checkpoint_path,
-            ],
-            env=env,
-        )
+    print(
+        f"morphling_emulator: proxy server listening on "
+        f"{config.listen_ip}:{config.listen_port} "
+        f"(ckpt={config.ckpt_path}); press Ctrl-C to stop.",
+        flush=True,
     )
 
-    print("Emulator exited")
-
-    # param_meta_map_file = os.path.join(args.ckpt_path, "param_meta_map.json")
-
-    # with open(param_meta_map_file, "r") as f:
-    #     param_meta_map = json.load(f)
-
-    # shm_mem_size, shm_mem_offsets = compute_shm_offsets(param_meta_map)
-
-    # unique_sizes_counter = Counter(
-    #     [param["size"] for param in param_meta_map.values()]
-    # )
-
-    # shm_param_buffer = shared_memory.SharedMemory(create=True, size=shm_mem_size)
-    # buffer = shm_param_buffer.buf
-    # buffer[:] = bytearray(shm_mem_size)
-
-    # for size, count in unique_sizes_counter.items():
-    #     # find all tensor name and id with the same size
-    #     ids_of_size = find_tensor_same_size(param_meta_map, size)
-
-    #     # print(f"Size: {size}, Count: {count}, Names: {names_of_size}, IDs: {ids_of_size}")
-
-    #     assert (
-    #         len(ids_of_size) == count
-    #     ), f"Size mismatch: {len(ids_of_size)} != {count}"
-
-    #     # write ids_of_size to buffer
-    #     tmp = np.ndarray(
-    #         ids_of_size.shape,
-    #         dtype=ids_of_size.dtype,
-    #         buffer=buffer,
-    #         offset=shm_mem_offsets[size],
-    #     )
-    #     tmp[:] = ids_of_size[:]
-
-    #     tmp = np.ndarray(
-    #         ids_of_size.shape,
-    #         dtype=ids_of_size.dtype,
-    #         buffer=buffer,
-    #         offset=shm_mem_offsets[size] + size - count * 4,
-    #     )
-    #     tmp[:] = ids_of_size[:]
-
-    # pin_mem_size, pin_mem_offsets = compute_pin_offsets(param_meta_map)
-    # name_id_map = {}
-    # for name, meta in param_meta_map.items():
-    #     name_id_map[name] = meta["id"]
-
-    # checkpoint_handle = CheckpointHandle(args.ckpt_path)
-    # checkpoint_handle.read_checkpoint(pin_mem_offsets, name_id_map)
-
-    # pin_param_buffer = torch.zeros(pin_mem_size, dtype=torch.uint8).pin_memory()
-    # pin_buffer = pin_param_buffer.data_ptr()
-
-    # # read from file offset to pin_buffer offsets
-    # for name in param_meta_map:
-    #     param_meta = param_meta_map[name]
-    #     file_offset = param_meta["file_offset"]
-    #     size = param_meta["size"]
-    #     pin_offset = pin_mem_offsets[name]
-    #     with open(os.path.join(args.ckpt_path, "archer_param_0"), "rb") as f:
-    #         f.seek(file_offset)
-    #         pin_buffer[pin_offset:pin_offset+size] = torch.ByteTensor(list(f.read(size)))
+    # server.start() launches the libevent loop on a background thread and
+    # returns immediately. Block the main thread so the server keeps
+    # serving; on Ctrl-C, returning drops the last reference to `server`,
+    # whose destructor performs the ordered CUDA/loop teardown.
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        print("morphling_emulator: shutting down.", flush=True)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "dispatch_gate.h"
 #include "morphling.pb.h"
 #include "muduo_base/log_file.h"
 #include "network/uevent.h"
@@ -19,10 +20,22 @@
 
 namespace morphling {
 namespace backend {
+
+class DeviceMeasurementSession;
+using DeviceMeasurementSessionPtr = std::shared_ptr<DeviceMeasurementSession>;
+
+struct CircuitBreakerConfig {
+  bool enabled = false;
+  int failure_threshold = 3;
+  int window_seconds = 60;
+  int quarantine_seconds = 300;
+};
+
 struct DeviceLiveness {
   int64_t device_id;
   std::string conn_addr;
   bool is_connected;
+  bool is_draining = false;
   std::chrono::steady_clock::time_point last_seen;
   std::chrono::steady_clock::time_point connected_at;
   std::chrono::steady_clock::time_point
@@ -46,6 +59,12 @@ struct DeviceLiveness {
   uint64_t
       last_packet_start_epoch_us;  // When last packet started (us since epoch)
   uint64_t last_packet_end_epoch_us;  // When last packet ended (us since epoch)
+
+  uint64_t stable_uuid = 0;
+  int failure_count = 0;
+  std::chrono::steady_clock::time_point first_failure_time;
+  bool quarantined = false;
+  std::chrono::steady_clock::time_point quarantined_at;
 
   DeviceLiveness()
       : device_id(-1),
@@ -85,6 +104,10 @@ class DevicePartitionTracker {
   int64_t RegisterDevice(const std::string& conn_addr,
                          const DeviceProfileData& profile);
   void UnregisterDevice(int64_t device_id);
+  void DisconnectDevice(int64_t device_id);
+  void PurgeDevice(int64_t device_id);
+  void SetCircuitBreakerConfig(const CircuitBreakerConfig& config);
+  bool IsDeviceQuarantined(int64_t device_id) const;
   //   void MarkDeviceConnected(int64_t device_id, const std::string&
   //   conn_addr); void MarkDeviceDisconnected(int64_t device_id);
   void UpdateDeviceLastSeen(int64_t device_id);
@@ -96,6 +119,7 @@ class DevicePartitionTracker {
   std::string GetDeviceAddr(int64_t device_id) const;
   DeviceLiveness GetDeviceLiveness(int64_t device_id) const;
   std::vector<int64_t> GetConnectedDevices() const;
+  std::vector<int64_t> GetDisconnectedDevices() const;
   std::vector<int64_t> GetAllDevices() const;
   size_t GetConnectedDeviceCount() const;
   size_t GetTotalDeviceCount() const;
@@ -134,6 +158,12 @@ class DevicePartitionTracker {
                            const std::string& phase, const std::string& event,
                            uint64_t vt_start_us, uint64_t vt_end_us) const;
 
+  // Logs a PROFILE_DELTA row (reported vs measured, #60). Observability
+  // only; makes no reconciliation decision.
+  void LogProfileDelta(int64_t device_id, const DeviceProfileData& p) const;
+
+  void FlushPerfLog() const;
+
   void InitPerfLog(const std::string& log_path = "./perf.log");
 
   // Initialize separate performance logs for Server and each Device
@@ -151,11 +181,33 @@ class DevicePartitionTracker {
   uevent::ConnectionUeventPtr GetDeviceConnection(int64_t device_id) const;
   void RemoveDeviceConnection(int64_t device_id);
 
+  // Device measurement session (#55). Per-device M1->M2->M3 probe state
+  // machine owned by the tracker so probe responses can be routed by
+  // device_id from any worker loop. Lifetime is tied to the device's
+  // registration window: cleared on UnregisterDevice/RemoveMeasurementSession.
+  void SetMeasurementSession(int64_t device_id,
+                             const DeviceMeasurementSessionPtr& session);
+  DeviceMeasurementSessionPtr GetMeasurementSession(int64_t device_id) const;
+  void RemoveMeasurementSession(int64_t device_id);
+
+  // Merge measured_* fields into the stored device profile (#55 step 4).
+  // Leaves the 7 device-reported legacy fields untouched.
+  void UpdateMeasuredProfile(int64_t device_id,
+                             const DeviceProfileData& measured);
+
   // Debug and monitoring
   std::string DebugString() const;
   void DumpState() const;
 
-  // Clear all state (for testing)
+  void InitDispatchGate(DeviceMode mode, int64_t barrier_count,
+                        int64_t barrier_timeout_ms, int64_t max_queue_size);
+  DispatchGate* GetDispatchGate();
+
+  void SetDeviceDraining(int64_t device_id, bool draining);
+  bool IsDeviceDraining(int64_t device_id) const;
+  std::vector<int64_t> GetDrainingDevices() const;
+  std::vector<int64_t> GetSchedulableDevices() const;
+
   void Reset();
 
  private:
@@ -176,12 +228,22 @@ class DevicePartitionTracker {
   int64_t next_device_id_;
   std::unordered_map<std::string, int64_t> addr_to_device_id_;
   std::unordered_map<int64_t, std::string> device_id_to_addr_;
+  std::unordered_map<uint64_t, int64_t> uuid_to_device_id_;
 
   // Connection management
   std::unordered_map<int64_t, uevent::ConnectionUeventPtr> device_conn_;
 
+  // Active probe sessions (#55), keyed by device_id. Cleared on
+  // UnregisterDevice / RemoveMeasurementSession.
+  std::unordered_map<int64_t, DeviceMeasurementSessionPtr>
+      measurement_sessions_;
+
+  CircuitBreakerConfig circuit_breaker_config_;
+
   // Performance log file using LogFile class
   mutable std::unique_ptr<base::LogFile> perf_log_file_;
+
+  std::unique_ptr<DispatchGate> dispatch_gate_;
 };
 
 }  // namespace backend

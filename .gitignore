@@ -1,23 +1,30 @@
 *.pdf
 *.csv
 *.txt
+!requirements*.txt
+!CMakeLists.txt
 *.png
 *.nsys-rep
 *.ncu-rep
 *.sqlite
 node_modules
-.taskmaster
+.taskmaster/
 .vscode
+.qa-vtime-qa
 .claude
 .opencode
 .tmp*
 .sisyphus/
-figures/
-evaluation/
+.omo/
 logs/
+
+# internal-only docs (private experiment inventories, not for public release)
+docs/internal/
 results/
-CLAUDE.md
-AGENTS.md
+
+# Experiment / evaluation figure outputs (kept locally, not released)
+figures/evaluation/
+figures/comparison/
 
 # CMake-generated files
 .ninja_deps
@@ -95,6 +102,9 @@ test-driver
 compile
 
 src/**/*.log
+emulator.log
+ncu.log
+__pycache__/
 src/**/*.trs
 
 # JavaBuild output.
@@ -423,6 +433,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
 .venv
 env/
 venv/
@@ -535,6 +546,7 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+!/Makefile
 install_manifest.txt
 compile_commands.json
 
@@ -564,14 +576,4 @@ Testing/
 
 build_local/
 .trace
-
-
-# Reference project (not part of baselines)
-asteroid_project/
-
-
-# Deploy secrets (vault-encrypted, per-user)
-baselines/deploy_asteroid/secrets.yml
-
-# Profiling output
-baselines/profiles/
+.codex

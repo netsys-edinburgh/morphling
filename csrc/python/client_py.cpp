@@ -4,13 +4,9 @@
 
 #include <string>
 
-#include "backend/mqtt_server.h"
-#include "backend/mqtt_worker.h"
 #include "backend/proxy_cli.h"
 #include "backend/proxy_svr.h"
 #include "core/pytorch_defs.h"
-#include "scheduler/amqp_dispatcher.h"
-#include "scheduler/amqp_worker.h"
 
 namespace py = pybind11;
 
@@ -18,48 +14,31 @@ using morphling::backend::ProxyCli;
 using morphling::backend::ProxySvr;
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  py::class_<AMQPBackend>(m, "AMQPBackend")
-      .def(py::init<const std::string&, uint32_t>())
-      .def("sync_dispatch_matmul", &AMQPBackend::DispatchMatMul,
-           "Dispatch matmul to devices");
+  py::enum_<DeviceMode>(m, "DeviceMode")
+      .value("BARRIER", DeviceMode::BARRIER)
+      .value("DYNAMIC", DeviceMode::DYNAMIC)
+      .export_values();
 
   py::class_<ProxySvr>(m, "ProxySvr")
       .def(py::init<>())
       .def("initialize", &ProxySvr::Initialize)
       .def("start", &ProxySvr::Start)
       .def("async_dispatch_matmul", &ProxySvr::DispatchMatMulAsync)
-      .def("wait_matmul", &ProxySvr::WaitMatMul)
-      .def("get_connection_count", &ProxySvr::GetConnectionCount);
+      .def("wait_matmul",
+           [](ProxySvr& self, int oid) {
+             py::gil_scoped_release release;
+             return self.WaitMatMul(oid);
+           })
+      .def("get_connection_count", &ProxySvr::GetConnectionCount)
+      .def("flush_perf_log", &ProxySvr::FlushPerfLog)
+      .def("is_barrier_met", &ProxySvr::IsBarrierMet)
+      .def("get_queue_size", &ProxySvr::GetQueueSize)
+      .def("get_device_mode", &ProxySvr::GetDeviceMode);
 
   py::class_<ProxyCli>(m, "ProxyCli")
       .def(py::init<>())
       .def("initialize", &ProxyCli::Initialize)
       .def("start", &ProxyCli::Start);
-
-  py::class_<MQTTWorker>(m, "MQTTWorker")
-      .def(py::init<const std::string&>())
-      //   .def(py::init<const std::unordered_map<std::string, uint64_t>&>())
-      //   .def("subscribe", &MQTTWorker::Subscribe, "Handle request message")
-      .def("start", &MQTTWorker::Start, "Start MQTT worker");
-
-  py::class_<MQTTServer>(m, "MQTTServer")
-      .def(py::init<int64_t>())
-      .def(py::init<>())
-      //   .def("subscribe", &MQTTServer::Subscribe, "Handle request message")
-      .def("start", &MQTTServer::Start, "Start MQTT server")
-      .def("async_dispatch_matmul", &MQTTServer::DispatchMatMulAsync,
-           "Dispatch matmul to devices")
-      .def("wait_matmul", &MQTTServer::WaitMatMul, "Wait for matmul response");
-  //   .def("publish",
-  //        [](MQTTServer& server, std::string& topic, torch::Tensor& payload) {
-  //          server.Publish(topic, payload.data_ptr(),
-  //                         payload.numel() * sizeof(float));
-  //        });
-
-  //   py::class_<AMQPBackend>(m, "AMQPBackend")
-  //       .def(py::init<const std::string&, uint32_t>())
-  //       .def("sync_dispatch_matmul", &AMQPBackend::DispatchMatMul,
-  //            "Dispatch matmul to devices");
 
   // define a function equal to torch::matmul
   m.def(
@@ -151,10 +130,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   //         return result.to(torch::kCPU);
   //       },
   //       "Matrix multiplication");
-
-  py::class_<AMQPWorker>(m, "AMQPWorker")
-      .def(py::init<const std::string&, uint32_t>())
-      .def("handle_req", &AMQPWorker::HandleReq, "Handle request message");
 
   py::class_<MatMulRequestMessage>(m, "MatMulRequestMessage")
       .def(py::init<>())

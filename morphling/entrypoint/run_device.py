@@ -2,19 +2,14 @@
 
 Provides CLI interface for launching virtual or physical device instances
 with configurable FLOPs, memory, network bandwidth, and latency parameters.
-Supports multiple backends including RabbitMQ, AMQP, MQTT, and proxy mode.
+Supports the proxy backend.
 """
 
-import asyncio
 import os
-import subprocess
-import threading
 import time
-import uuid
-from argparse import REMAINDER, ArgumentParser
+from argparse import ArgumentParser
 
-# import redis
-from morphling.common import bytes2human, human2bytes
+from morphling.common import human2bytes
 
 
 def main():
@@ -59,13 +54,6 @@ def main():
         help="The downlink latency of the device",
     )
 
-    # parser.add_argument(
-    #     "--redis_host",
-    #     type=str,
-    #     default="morphling-redis:6379",
-    #     help="The host and port of the redis server",
-    # )
-
     parser.add_argument(
         "--proxy_host",
         type=str,
@@ -76,14 +64,9 @@ def main():
     parser.add_argument(
         "--backend",
         type=str,
-        default="rabbitmq",
+        default="proxy",
         help="The backend to use for the device",
-        choices=["rabbitmq", "amqp", "mqtt", "proxy"],  # more to be added later
-    )
-    parser.add_argument(
-        "--emulation",
-        action="store_true",
-        help="Enable emulation mode",
+        choices=["proxy"],
     )
     parser.add_argument(
         "--cfg",
@@ -91,21 +74,7 @@ def main():
         help="The path to the config file",
     )
 
-    # # positional
-    # parser.add_argument(
-    #     "user_script",
-    #     type=str,
-    #     help="The full path to the single GPU user "
-    #     "program/script to be launched in parallel, "
-    #     "followed by all the arguments for the "
-    #     "user script",
-    # )
-
-    # # rest from the user program
-    # parser.add_argument("user_script_args", nargs=REMAINDER)
-
     args = parser.parse_args()
-    # print(args, flush=True)
 
     # human to bytes
     args.flops = human2bytes(args.flops)
@@ -115,11 +84,6 @@ def main():
 
     os.environ["MORPHLING_PIN_SIZE"] = str(args.memory)
 
-    # # connect to redis
-    # host, port = args.redis_host.split(":")
-    # redis_connector = redis.Redis(host=host, port=port)
-
-    # device_uuid = str(uuid.uuid4())
     device_info = {
         "id": args.id,
         "flops": args.flops,
@@ -131,47 +95,25 @@ def main():
         "logical_time": 0,
     }
 
-    # FIXME: subject to change as we do not trust the device to do its own measurement
-    # 1. latency and bandwidth are measured by the server
-    # 2. server send random number matrix multiplication tasks to the device to measure flops, results needs to be matched.
+    # NOTE(#45 trust model): the device-reported FLOPS / bandwidth / latency
+    # values below are *advisory*. When `MORPHLING_MEASURE_LAT` /
+    # `MORPHLING_MEASURE_BW` / `MORPHLING_MEASURE_FLOPS` are enabled on the
+    # server (see `docs/deployment.md` → "Server-measured device profile"),
+    # the proxy runs a probe trio (M1 latency, M2 bandwidth, M3 verifiable
+    # GEMM) against each registered device and records the measured numbers
+    # alongside the reported ones. Reconciliation policy (which value wins
+    # in scheduling) is deferred to a follow-up issue.
 
-    # device reconnect is considered new device
-    # print(f"Registering device {args.id} with info {device_info}", flush=True)
-    # redis_connector.hmset(args.id, mapping=device_info)
-    # redis_connector.expire(args.id, 120)
-
-    # use threading to timer to refresh ttl
-    # threading.Timer(5, lambda: redis_connector.expire("devices", 5)).start()
-
-    if args.emulation:
-        # enable interception of torch.mm
-        print("Enabling interception of torch.mm")
-        import torch
-
-        import morphling._C
     from morphling.backend import AutoWorker
 
-    if args.backend == "rabbitmq":
+    if args.backend == "proxy":
+        os.environ["MORPHLING_FLOPS"] = str(device_info["flops"])
+        os.environ["MORPHLING_MEMORY"] = str(device_info["memory"])
+        os.environ["MORPHLING_UL_BW"] = str(device_info["ul_bw"])
+        os.environ["MORPHLING_DL_BW"] = str(device_info["dl_bw"])
+        os.environ["MORPHLING_UL_LAT"] = str(device_info["ul_lat"])
+        os.environ["MORPHLING_DL_LAT"] = str(device_info["dl_lat"])
 
-        async def main():
-            loop = asyncio.get_event_loop()
-            worker = AutoWorker.from_name(args.backend, device_info, loop)
-            await worker.connect()
-            await worker.start_consuming()
-
-        asyncio.run(main())
-    elif args.backend == "amqp":
-        worker = AutoWorker.from_name(args.backend, "localhost", 32)
-        worker.handle_req()
-
-    elif args.backend == "mqtt":
-        worker = AutoWorker.from_name(args.backend, str(args.id))
-        worker.start()
-        while True:
-            time.sleep(1)
-
-    elif args.backend == "proxy":
-        # Set environment variables to override config file if proxy_host is provided
         if args.proxy_host:
             try:
                 host, port = args.proxy_host.split(":")
@@ -190,21 +132,6 @@ def main():
         worker.start()
         while True:
             time.sleep(1)
-
-    # # create env variables
-    # env = os.environ.copy()
-    # env["MORPHLING_FLOPS"] = str(args.flops)
-    # env["MORPHLING_MEMORY"] = str(args.memory)
-    # env["MORPHLING_UL_BW"] = str(args.ul_bw)
-    # env["MORPHLING_DL_BW"] = str(args.dl_bw)
-    # env["MORPHLING_UL_LAT"] = str(args.ul_lat)
-    # env["MORPHLING_DL_LAT"] = str(args.dl_lat)
-
-    # # run the user script with the env
-    # cmd = ["python", args.user_script] + args.user_script_args
-
-    # print(f"Running user script: {cmd} with env: {env}")
-    # subprocess.run(cmd, env=env)
 
 
 if __name__ == "__main__":

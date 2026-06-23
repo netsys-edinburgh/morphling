@@ -133,20 +133,19 @@ struct PinnedBuffer {
 inline std::shared_ptr<GemmArgs> MakeNNGemmArgs(int m, int n, int k, float* a,
                                                 float* b, float* c) {
   auto args = std::make_shared<GemmArgs>();
-  args->group_size = 1;
-  args->transa[0] = 'N';
-  args->transb[0] = 'N';
-  args->m[0] = m;
-  args->n[0] = n;
-  args->k[0] = k;
-  args->alpha[0] = 1.0f;
-  args->a[0] = a;
-  args->lda[0] = m;
-  args->b[0] = b;
-  args->ldb[0] = k;
-  args->beta[0] = 0.0f;
-  args->c[0] = c;
-  args->ldc[0] = m;
+  args->transa = 'N';
+  args->transb = 'N';
+  args->m = m;
+  args->n = n;
+  args->k = k;
+  args->alpha = 1.0f;
+  args->a = a;
+  args->lda = m;
+  args->b = b;
+  args->ldb = k;
+  args->beta = 0.0f;
+  args->c = c;
+  args->ldc = m;
   return args;
 }
 
@@ -229,10 +228,9 @@ inline void RunGemmDirect(cublasHandle_t handle, cudaStream_t stream,
                           float* d_A, float* d_B, float* d_C,
                           const GemmArgs& args) {
   CHECK_CUBLAS_ERROR(cublasSetStream(handle, stream));
-  CHECK_CUBLAS_ERROR(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, args.m[0],
-                                 args.n[0], args.k[0], &args.alpha[0], d_A,
-                                 args.lda[0], d_B, args.ldb[0], &args.beta[0],
-                                 d_C, args.ldc[0]));
+  CHECK_CUBLAS_ERROR(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, args.m,
+                                 args.n, args.k, &args.alpha, d_A, args.lda,
+                                 d_B, args.ldb, &args.beta, d_C, args.ldc));
   CHECK_CUDA_ERROR(cudaStreamSynchronize(stream));
 }
 

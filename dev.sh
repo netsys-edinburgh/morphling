@@ -5,6 +5,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
+IMAGE_NAME="device-emulator:latest"
+CONTAINER_NAME="morphling-emulator"
 
 cd "$PROJECT_ROOT"
 
@@ -22,6 +24,7 @@ show_help() {
     echo "Usage: $0 [COMMAND] [ARGS...]"
     echo ""
     echo "Commands:"
+    echo "  quickstart     - Build image and start emulator container with GPU"
     echo "  build          - 重新构建 Docker 镜像 (GPU 模式)"
     echo "  build-cpu      - 重新构建 Docker 镜像 (CPU 模式)"
     echo "  start          - 启动开发容器 (GPU 模式)"
@@ -44,10 +47,13 @@ show_help() {
     echo "  $0 run python3 scripts/run_devices.py --num_devices 4 --model_name facebook/opt-125m --backend proxy"
 }
 
-# 检查 docker-compose 是否可用
-check_docker_compose() {
-    if ! command -v docker-compose &> /dev/null; then
-        echo -e "${RED}Error: docker-compose is not installed${NC}"
+check_docker() {
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}Error: docker is not installed${NC}"
+        exit 1
+    fi
+    if ! docker info &> /dev/null; then
+        echo -e "${RED}Error: Docker daemon is not running${NC}"
         exit 1
     fi
 }
@@ -55,21 +61,95 @@ check_docker_compose() {
 # 函数：构建镜像
 build_image() {
     echo -e "${YELLOW}Building Docker image (GPU mode)...${NC}"
-    docker-compose build device-emulator
+    docker build -t "$IMAGE_NAME" .
     echo -e "${GREEN}Build completed${NC}"
 }
 
 # 函数：构建镜像 (CPU模式)
 build_image_cpu() {
     echo -e "${YELLOW}Building Docker image (CPU mode)...${NC}"
-    docker-compose -f docker-compose.yml -f docker-compose.cpu.yml build device-emulator
+    docker build -t "$IMAGE_NAME" .
     echo -e "${GREEN}Build completed${NC}"
+}
+
+start_container_common() {
+    local use_gpu="$1"
+    local gpu_args=()
+
+    if [ "$use_gpu" = "true" ]; then
+        gpu_args=(--gpus all)
+    fi
+
+    # --ulimit memlock=-1 removes the page-pinning quota required by the
+    # proxy server's pinned-buffer pools (4 MiB bandwidth probe + general
+    # zerocopy traffic). Without it the listener crashes mid-flight with
+    # `AlignedBufferPool: pin_fn_ failed`. See issue #59.
+    docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+    docker run -d \
+        --name "$CONTAINER_NAME" \
+        "${gpu_args[@]}" \
+        --ulimit memlock=-1 \
+        -p 39000:39000 \
+        "$IMAGE_NAME" \
+        tail -f /dev/null
+}
+
+quickstart() {
+    local use_gpu=false
+
+    if command -v nvidia-docker &> /dev/null || docker info | grep -q nvidia; then
+        echo "NVIDIA Docker support detected"
+        use_gpu=true
+    else
+        echo "WARNING: NVIDIA Docker support not detected. Running in CPU-only mode."
+    fi
+
+    echo "Building DeviceEmulator Docker image..."
+    docker build -t "$IMAGE_NAME" .
+
+    docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+
+    # --ulimit memlock=-1: required by proxy-server pinned buffer pools (#59).
+    if [ "$use_gpu" = true ]; then
+        docker run -d \
+            --name "$CONTAINER_NAME" \
+            --gpus all \
+            --ulimit memlock=-1 \
+            -p 39000:39000 \
+            "$IMAGE_NAME" \
+            tail -f /dev/null
+    else
+        echo "Starting in CPU-only mode..."
+        docker run -d \
+            --name "$CONTAINER_NAME" \
+            --ulimit memlock=-1 \
+            -p 39000:39000 \
+            "$IMAGE_NAME" \
+            tail -f /dev/null
+    fi
+
+    echo "Waiting for container to start..."
+    sleep 5
+
+    echo "Service status:"
+    docker ps --filter "name=$CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+    echo ""
+    echo "=== Setup Complete ==="
+    echo ""
+    echo "Available commands:"
+    echo "  docker exec -it $CONTAINER_NAME bash"
+    echo "  docker exec -it $CONTAINER_NAME morphling_emulator --help"
+    echo "  docker logs $CONTAINER_NAME"
+    echo "  docker stop $CONTAINER_NAME"
+    echo ""
+    echo "DeviceEmulator is running in container: $CONTAINER_NAME"
 }
 
 # 函数：启动容器
 start_container() {
     echo -e "${YELLOW}Starting development container (GPU mode)...${NC}"
-    docker-compose up -d device-emulator
+    start_container_common true
     echo -e "${GREEN}Container started${NC}"
     echo -e "${BLUE}Run '$0 shell' to enter the container${NC}"
 }
@@ -77,7 +157,7 @@ start_container() {
 # 函数：启动容器 (CPU模式)
 start_container_cpu() {
     echo -e "${YELLOW}Starting development container (CPU mode)...${NC}"
-    docker-compose -f docker-compose.yml -f docker-compose.cpu.yml up -d device-emulator
+    start_container_common false
     echo -e "${GREEN}Container started${NC}"
     echo -e "${BLUE}Run '$0 shell' to enter the container${NC}"
 }
@@ -85,34 +165,34 @@ start_container_cpu() {
 # 函数：停止容器
 stop_container() {
     echo -e "${YELLOW}Stopping containers...${NC}"
-    docker-compose stop
+    docker stop "$CONTAINER_NAME" 2>/dev/null || true
     echo -e "${GREEN}Containers stopped${NC}"
 }
 
 # 函数：重启容器
 restart_container() {
     echo -e "${YELLOW}Restarting containers (GPU mode)...${NC}"
-    docker-compose restart device-emulator
+    docker restart "$CONTAINER_NAME"
     echo -e "${GREEN}Container restarted${NC}"
 }
 
 # 函数：重启容器 (CPU模式)
 restart_container_cpu() {
     echo -e "${YELLOW}Restarting containers (CPU mode)...${NC}"
-    docker-compose -f docker-compose.yml -f docker-compose.cpu.yml restart device-emulator
+    docker restart "$CONTAINER_NAME"
     echo -e "${GREEN}Container restarted${NC}"
 }
 
 # 函数：进入容器shell
 enter_shell() {
     echo -e "${YELLOW}Entering container shell...${NC}"
-    docker-compose exec device-emulator bash
+    docker exec -it "$CONTAINER_NAME" bash
 }
 
 # 函数：在容器内重新编译
 rebuild_in_container() {
     echo -e "${YELLOW}Rebuilding morphling in container...${NC}"
-    docker-compose exec device-emulator bash /app/scripts/dev_build.sh
+    docker exec -it "$CONTAINER_NAME" bash /app/scripts/dev_build.sh
     echo -e "${GREEN}Rebuild completed${NC}"
 }
 
@@ -120,33 +200,37 @@ rebuild_in_container() {
 run_command() {
     shift  # 移除 'run' 参数
     echo -e "${YELLOW}Running command in container: $@${NC}"
-    docker-compose exec device-emulator bash -c "$*"
+    docker exec -it "$CONTAINER_NAME" bash -c "$*"
 }
 
 # 函数：查看日志
 show_logs() {
     echo -e "${YELLOW}Showing container logs...${NC}"
-    docker-compose logs -f device-emulator
+    docker logs -f "$CONTAINER_NAME"
 }
 
 # 函数：清理
 clean_up() {
     echo -e "${YELLOW}Cleaning up containers and volumes...${NC}"
-    docker-compose down -v
-    docker-compose down --rmi local
+    docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    docker rm "$CONTAINER_NAME" 2>/dev/null || true
+    docker image rm "$IMAGE_NAME" 2>/dev/null || true
     echo -e "${GREEN}Cleanup completed${NC}"
 }
 
 # 函数：运行测试
 run_tests() {
     echo -e "${YELLOW}Running tests...${NC}"
-    docker-compose exec device-emulator bash -c "cd /app && python3 -m pytest tests/ -v"
+    docker exec -it "$CONTAINER_NAME" bash -c "cd /app && python3 -m pytest tests/ -v"
 }
 
 # 主逻辑
-check_docker_compose
+check_docker
 
 case "${1:-help}" in
+    "quickstart")
+        quickstart
+        ;;
     "build")
         build_image
         ;;

@@ -1,4 +1,4 @@
-#include "/home/eren/DeviceEmulator/csrc/memory/shared_memory_initializer.h"
+#include "shared_memory_initializer.h"
 
 #include <stdio.h>
 #include <stdlib.h>

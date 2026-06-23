@@ -1,32 +1,18 @@
-"""Backend module for distributed matrix multiplication via various protocols."""
+"""Backend module for distributed matrix multiplication via the proxy backend."""
 
 from morphling._Msg import (
-    AMQPBackend,
-    AMQPWorker,
-    MQTTServer,
-    MQTTWorker,
     ProxyCli,
     ProxySvr,
 )
 
 from .base import BaseBackend, MatMulRequestMessage, MatMulResponseMessage
-from .rabbitmq import RabbitMQBackend, RabbitMQWorker
 
 
 # auto backend from name
 class AutoBackend:
     @classmethod
     def from_name(cls, name, *args, **kwargs):
-        if name == "rabbitmq":
-            print("Using RabbitMQ backend")
-            return RabbitMQBackend(*args, **kwargs)
-        elif name == "amqp":
-            print("Using AMQP backend")
-            return AMQPBackend(args[0], args[1])
-        elif name == "mqtt":
-            print("Using MQTT backend")
-            return MQTTServer(args[0])
-        elif name == "proxy":
+        if name == "proxy":
             print("Using Proxy backend")
             return ProxySvr()
         else:
@@ -36,16 +22,7 @@ class AutoBackend:
 class AutoWorker:
     @classmethod
     def from_name(cls, name, *args, **kwargs):
-        if name == "rabbitmq":
-            print("Using RabbitMQ worker")
-            return RabbitMQWorker(*args, **kwargs)
-        elif name == "amqp":
-            print("Using AMQP worker")
-            return AMQPWorker(args[0], args[1])
-        elif name == "mqtt":
-            print("Using MQTT worker")
-            return MQTTWorker(args[0])
-        elif name == "proxy":
+        if name == "proxy":
             print("Using Proxy worker")
             return ProxyCli()
         else:
@@ -53,17 +30,11 @@ class AutoWorker:
 
 
 __all__ = [
-    "AMQPBackend",
-    "AMQPWorker",
-    "MQTTServer",
-    "MQTTWorker",
     "ProxyCli",
     "ProxySvr",
     "BaseBackend",
     "MatMulRequestMessage",
     "MatMulResponseMessage",
-    "RabbitMQBackend",
-    "RabbitMQWorker",
     "AutoBackend",
     "AutoWorker",
 ]
