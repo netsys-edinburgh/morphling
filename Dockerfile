@@ -1,5 +1,5 @@
 # DeviceEmulator Dockerfile
-FROM pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel
+FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel
 
 RUN sed -i 's|http://security.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list || true
 
