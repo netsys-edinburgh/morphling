@@ -273,11 +273,11 @@ class EmulatorConfig:
         metadata={"help": "The path to save the emulator model checkpoints"},
     )
     listen_port: int = field(
-        default=50051,
+        default=39000,
         metadata={"help": "The port to listen to the incoming requests"},
     )
     listen_ip: str = field(
-        default="localhost",
+        default="0.0.0.0",
         metadata={"help": "The address to listen to the incoming requests"},
     )
     debug: bool = field(
