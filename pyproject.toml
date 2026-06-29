@@ -50,7 +50,7 @@ Paper = "https://doi.org/10.1145/3812836.3814779"
 [project.optional-dependencies]
 test = [
     "pytest",
-    "accelerate>=0.27.2",
+    "accelerate>=1.14.0",
     "transformers>=5.12.1",
     "parameterized",
 ]
