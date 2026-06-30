@@ -1,5 +1,5 @@
 accelerate
-cmake
+cmake>=4.3.4
 grpcio>=1.81.1
 grpcio-tools>=1.81.1
 matplotlib
