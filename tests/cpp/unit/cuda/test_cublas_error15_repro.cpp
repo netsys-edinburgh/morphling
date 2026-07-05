@@ -334,8 +334,11 @@ TEST_F(CublasError15Test, ValidDimensions_Succeeds) {
   EXPECT_EQ(st, CUBLAS_STATUS_SUCCESS)
       << "Valid GEMM should succeed, got status=" << static_cast<int>(st);
 
-  free(r_ptr);
-  free(c_ptr);
+  // r_ptr/c_ptr came from CudaPinnedMemoryPool::Acquire (cudaHostAlloc'd), so
+  // they must be returned to the pool — calling libc free() on them is UB and
+  // segfaults on glibc.
+  pool_.Release(r_ptr, r_ptr_meta.second);
+  pool_.Release(c_ptr, c_ptr_meta.second);
 }
 
 // ============================================================================
