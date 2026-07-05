@@ -55,7 +55,7 @@ RUN apt-get update && apt-get install -y \
 
 RUN apt-get install -y libopenblas-dev
 
-# PyTorch 2.10 image uses PEP 668 EXTERNALLY-MANAGED.
+# PyTorch 2.11 image uses PEP 668 EXTERNALLY-MANAGED.
 # Safe to remove in a Docker container.
 RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED
 

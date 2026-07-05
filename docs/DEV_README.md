@@ -82,7 +82,9 @@ python3 scripts/run_devices.py \
 ### Edit Python code
 
 1. Modify files under `morphling/`.
-2. Run your tests directly (changes take effect immediately).
+2. Run your tests directly. Python changes take effect immediately **after the
+   first `./dev.sh rebuild`**, which installs the package in editable mode
+   (`pip install -e .`) against the bind-mounted source.
 
 ### Debugging
 

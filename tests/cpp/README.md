@@ -65,6 +65,10 @@ cmake --build tests/cpp/build -j
 
 - `test_dispatch_gate` (unit/backend)
 
+### Unit / Intercept (GoogleTest)
+
+- `test_gemm_args_layout` (unit/intercept) — GemmArgs layout check (#48)
+
 ### Unit / Checkpoint (GoogleTest)
 
 - `test_checkpoint_multifile` (unit/checkpoint) — multi-file
@@ -92,6 +96,10 @@ cmake --build tests/cpp/build -j
 - `test_serialization_buffer`
 - `test_scatter_gather_buffer`
 - `test_matrix_partition`
+- `test_device_profile_roundtrip`
+- `test_profile_delta_log`
+- `test_device_measurement_service`
+- `test_device_measurement_session`
 - `test_cuda_pinned_pool` (requires CUDA runtime)
 
 ### Benchmarks (optional, Google Benchmark)
