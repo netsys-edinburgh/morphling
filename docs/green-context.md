@@ -21,7 +21,7 @@ from morphling.runtime.green_context import (
 
 cfg = GreenContextConfig(
     enabled=True,
-    trace_path="traces/second_level.trace",
+    trace_path="tests/data/greenctx/second_level_wall.trace",
     clock_mode="wall",
 )
 controller = GreenContextController.from_config(device_id=0, cfg=cfg)
@@ -66,7 +66,11 @@ Each log entry has the fields:
 - `n`: GEMM N dimension for this operation.
 - `k`: GEMM K dimension for this operation.
 
-## End-to-end example
+## Standalone controller example
+
+The controller can be driven directly — no autograd hooks, no dispatch
+backend — which makes it runnable as-is inside the Docker image on any
+green-context-capable GPU (driver 12.5+):
 
 ```python
 import torch
@@ -75,27 +79,37 @@ from morphling.runtime.green_context import (
     GreenContextConfig,
     GreenContextController,
 )
-from morphling.hooks import apply_hooks, get_gemm_log
 
 cfg = GreenContextConfig(
     enabled=True,
-    trace_path="traces/second_level.trace",
-    clock_mode="wall",
+    trace_path="tests/data/greenctx/second_level.trace",
+    clock_mode="step",
 )
 controller = GreenContextController.from_config(device_id=0, cfg=cfg)
 
-apply_hooks("linear", greenctx=controller)
-
 model = torch.nn.Linear(16, 16).cuda()
-x = torch.randn(8, 16, device="cuda", requires_grad=True)
-target = torch.randn(8, 16, device="cuda")
+x = torch.randn(8, 16, device="cuda")
 
-out = model(x)
-loss = torch.nn.functional.mse_loss(out, target)
-loss.backward()
+for step in range(3):
+    with controller.step_scope(step) as streams:
+        with torch.cuda.stream(streams.comp):
+            y = model(x)
+    torch.cuda.synchronize()
 
-print(get_gemm_log()[0])
+print("green-context switches:", controller.switch_count())
+controller.close()
 ```
+
+## Per-GEMM logging in the full runtime
+
+The autograd-hook path (`apply_hooks("linear", greenctx=controller)` followed
+by `get_gemm_log()`) reroutes every linear GEMM through the proxy **dispatch
+backend** at `morphling.hooks.autograd._backend`. That backend is started only
+by the training runtime, so per-GEMM green-context logging is exercised through
+`scripts/run_devices.py` (which starts the proxy backend and connects devices)
+rather than as a standalone snippet — calling `apply_hooks("linear", ...)` and
+then running a bare `torch.nn.Linear` with no backend set raises
+`AttributeError: 'NoneType' object has no attribute 'async_dispatch_matmul'`.
 
 ## Cleanup ordering (critical)
 
