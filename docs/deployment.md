@@ -60,7 +60,7 @@ sleep 5
 
 # 4) Generate device config
 cd morphling/entrypoint
-SPDLOG_LEVEL=debug python generate_device_config.py --num_devices 1 --device_type physical
+SPDLOG_LEVEL=debug python generate_device_config.py --num_devices 1
 cp device_config.json ../../scripts/
 
 # 5) Run Morphling devices in the background
