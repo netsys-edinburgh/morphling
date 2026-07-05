@@ -27,7 +27,7 @@ rebuilds. This requires BuildKit (enabled by default in Docker 23+, or set
 
 ### How it works
 
-- `setup.py` detects `ccache` on `$PATH` and passes
+- `_setup_helpers.py` detects `ccache` on `$PATH` and passes
   `-DCMAKE_<LANG>_COMPILER_LAUNCHER=ccache` to CMake.
 - The Dockerfile uses `--mount=type=cache,target=/ccache` so the cache persists
   across layer rebuilds.

@@ -5,7 +5,7 @@
 #
 # Examples:
 #   ./scripts/dev_build.sh
-#   PYTHON_EXECUTABLE=/usr/bin/python3.11 ./scripts/dev_build.sh
+#   PYTHON_EXECUTABLE=/usr/bin/python3.12 ./scripts/dev_build.sh
 
 set -e
 
@@ -20,9 +20,9 @@ fi
 
 # 设置环境变量
 PYTHON_ROOT_DIR=${PYTHON_ROOT_DIR:-/usr}
-PYTHON_EXECUTABLE=${PYTHON_EXECUTABLE:-/usr/bin/python3.10}
-PYTHON_INCLUDE_DIR=${PYTHON_INCLUDE_DIR:-/usr/include/python3.10}
-PYTHON_LIBRARY=${PYTHON_LIBRARY:-/usr/lib/x86_64-linux-gnu/libpython3.10.so}
+PYTHON_EXECUTABLE=${PYTHON_EXECUTABLE:-/usr/bin/python3.12}
+PYTHON_INCLUDE_DIR=${PYTHON_INCLUDE_DIR:-/usr/include/python3.12}
+PYTHON_LIBRARY=${PYTHON_LIBRARY:-/usr/lib/x86_64-linux-gnu/libpython3.12.so}
 
 export Python3_ROOT_DIR="${PYTHON_ROOT_DIR}"
 export Python3_EXECUTABLE="${PYTHON_EXECUTABLE}"

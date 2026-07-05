@@ -8,7 +8,19 @@ PROJECT_ROOT="$SCRIPT_DIR"
 IMAGE_NAME="device-emulator:latest"
 CONTAINER_NAME="morphling-emulator"
 
+# Bind-mount host source + a build-cache volume into the dev container so an
+# in-container `./dev.sh rebuild` compiles your host edits (see DEV_README.md).
+MOUNT_ARGS=(
+    -v "${PROJECT_ROOT}/csrc:/app/csrc"
+    -v "${PROJECT_ROOT}/morphling:/app/morphling"
+    -v "${PROJECT_ROOT}/scripts:/app/scripts"
+    -v "${PROJECT_ROOT}/config:/app/config"
+    -v "${PROJECT_ROOT}/logs:/app/logs"
+    -v "morphling_build:/app/build"
+)
+
 cd "$PROJECT_ROOT"
+mkdir -p "${PROJECT_ROOT}/logs"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -89,6 +101,7 @@ start_container_common() {
         --name "$CONTAINER_NAME" \
         "${gpu_args[@]}" \
         --ulimit memlock=-1 \
+        "${MOUNT_ARGS[@]}" \
         -p 39000:39000 \
         "$IMAGE_NAME" \
         tail -f /dev/null
@@ -115,6 +128,7 @@ quickstart() {
             --name "$CONTAINER_NAME" \
             --gpus all \
             --ulimit memlock=-1 \
+            "${MOUNT_ARGS[@]}" \
             -p 39000:39000 \
             "$IMAGE_NAME" \
             tail -f /dev/null
@@ -123,6 +137,7 @@ quickstart() {
         docker run -d \
             --name "$CONTAINER_NAME" \
             --ulimit memlock=-1 \
+            "${MOUNT_ARGS[@]}" \
             -p 39000:39000 \
             "$IMAGE_NAME" \
             tail -f /dev/null

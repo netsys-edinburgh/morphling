@@ -26,7 +26,7 @@ set `LD_LIBRARY_PATH`:
 export LD_LIBRARY_PATH="/path/to/rttr/install/lib:$LD_LIBRARY_PATH"
 
 # Example for local build artefacts (e.g., C++ .so files)
-export LD_LIBRARY_PATH="/path/to/emulator/build/lib.linux-x86_64-cpython-310/morphling:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="/path/to/emulator/build/lib.linux-x86_64-cpython-312/morphling:$LD_LIBRARY_PATH"
 ```
 
 ## CUDA driver too old for green contexts
