@@ -208,7 +208,7 @@ class DeviceConfigArguments:
             )
 
 
-if __name__ == "__main__":
+def main():
     parser = HfArgumentParser(DeviceConfigArguments)
     args = parser.parse_args_into_dataclasses()[0]
     print(args)
@@ -229,3 +229,7 @@ if __name__ == "__main__":
 
     with open(args.output, "w") as f:
         json.dump(meta_list, f, indent=4, cls=EnhancedJSONEncoder)
+
+
+if __name__ == "__main__":
+    main()
