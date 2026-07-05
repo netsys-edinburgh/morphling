@@ -9,7 +9,7 @@ Usage:
 
     cfg = GreenContextConfig(
         enabled=True,
-        trace_path="traces/second_level.trace",
+        trace_path="tests/data/greenctx/second_level.trace",
     )
     ctrl = GreenContextController.from_config(device_id=0, cfg=cfg)
 
