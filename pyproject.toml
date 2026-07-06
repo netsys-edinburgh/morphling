@@ -4,7 +4,7 @@ requires = [
     "wheel",
     "cmake>=4.3.4",
     "ninja",
-    "protobuf>=4.21.6,<7"
+    "protobuf>=6.33.6,<7"
 ]
 build-backend = "setuptools.build_meta"
 

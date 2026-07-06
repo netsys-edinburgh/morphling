@@ -6,7 +6,7 @@ matplotlib
 ninja
 numpy
 pandas
-protobuf>=4.21.6,<7
+protobuf>=6.33.6,<7
 psutil
 pytest-timeout
 safetensors>=0.8.0
