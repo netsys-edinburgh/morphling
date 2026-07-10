@@ -77,6 +77,13 @@ ARG USE_CCACHE=1
 ENV CCACHE_DIR=/ccache
 RUN if [ "$USE_CCACHE" = "1" ]; then ccache -M 5G; fi
 
+# --no-build-isolation (below) does not install build-system.requires, and the
+# build context excludes .git; install setuptools-scm and inject the git-derived
+# version via a build arg (empty => pyproject [tool.setuptools_scm] fallback).
+RUN pip install --no-cache "setuptools-scm>=8"
+ARG MORPHLING_VERSION
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MORPHLING=${MORPHLING_VERSION}
+
 # 构建和安装项目（使用系统 python）with BuildKit cache mount for ccache
 RUN --mount=type=cache,target=/ccache \
     if [ "$USE_CCACHE" = "1" ]; then export PATH="/usr/lib/ccache:$PATH"; fi && \

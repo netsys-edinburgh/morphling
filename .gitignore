@@ -561,6 +561,9 @@ compile_commands.json
 
 # PRD drafts (local planning)
 PRD_*.md
+
+# setuptools-scm generated version file
+morphling/_version.py
 *.bak
 *.swp
 
