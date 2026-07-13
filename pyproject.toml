@@ -2,7 +2,7 @@
 requires = [
     "setuptools",
     "wheel",
-    "cmake>=4.3.4",
+    "cmake>=4.4.0",
     "ninja",
     "protobuf>=4.21.6,<7"
 ]
