@@ -246,6 +246,18 @@ target_link_libraries(test_dispatch_gate PRIVATE
 )
 add_test(NAME test_dispatch_gate COMMAND test_dispatch_gate)
 
+add_executable(test_operation_id
+  unit/backend/test_operation_id.cpp
+)
+target_include_directories(test_operation_id PRIVATE
+  ${PROJECT_ROOT_DG}/csrc
+)
+target_link_libraries(test_operation_id PRIVATE
+  GTest::gtest_main
+  GTest::gtest
+)
+add_test(NAME test_operation_id COMMAND test_operation_id)
+
 # ============================================================================
 # GemmArgs layout tests (unit/intercept/) — Issue #48 collapse
 # ============================================================================

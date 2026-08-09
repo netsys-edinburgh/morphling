@@ -22,17 +22,21 @@ class _StubBackend:
     def __init__(self) -> None:
         self.dispatch_calls = 0
         self.wait_calls = 0
-        self._queue: list[torch.Tensor] = []
+        self._outputs: dict[int, torch.Tensor] = {}
 
     def async_dispatch_matmul(
         self, mat_a: torch.Tensor, mat_b: torch.Tensor
-    ) -> None:
+    ) -> int:
+        oid = self.dispatch_calls
         self.dispatch_calls += 1
-        self._queue.append(torch.matmul(mat_a, mat_b.transpose(-2, -1)))
+        self._outputs[oid] = torch.matmul(
+            mat_a, mat_b.transpose(-2, -1)
+        )
+        return oid
 
-    def wait_matmul(self, _idx: int) -> torch.Tensor:
+    def wait_matmul(self, oid: int) -> torch.Tensor:
         self.wait_calls += 1
-        return self._queue.pop(0)
+        return self._outputs.pop(oid)
 
 
 class _StubGreenCtx:

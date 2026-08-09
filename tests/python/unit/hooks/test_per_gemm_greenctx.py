@@ -16,15 +16,21 @@ _TRACE_PATH = _ROOT / "tests" / "data" / "greenctx" / "second_level_wall.trace"
 
 class _LocalMatmulBackend:
     def __init__(self) -> None:
-        self._queue = []
+        self._next_oid = 0
+        self._outputs = {}
 
-    def async_dispatch_matmul(self, mat_a, mat_b) -> None:
-        self._queue.append(torch.matmul(mat_a, mat_b.transpose(-2, -1)))
+    def async_dispatch_matmul(self, mat_a, mat_b) -> int:
+        oid = self._next_oid
+        self._next_oid += 1
+        self._outputs[oid] = torch.matmul(
+            mat_a, mat_b.transpose(-2, -1)
+        )
+        return oid
 
-    def wait_matmul(self, _idx: int):
-        if not self._queue:
+    def wait_matmul(self, oid: int):
+        if oid not in self._outputs:
             raise RuntimeError("wait_matmul called without pending result")
-        return self._queue.pop(0)
+        return self._outputs.pop(oid)
 
 
 class _DeactivateRecorder:

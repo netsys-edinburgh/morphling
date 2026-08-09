@@ -106,6 +106,47 @@ void PartitionTracker::RemovePartitionByKey(const std::string& partition_key) {
   }
 }
 
+bool PartitionTracker::ReassignPartitionToDevice(
+    const std::string& partition_key, int64_t target_device_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  auto partition_it = partition_map_.find(partition_key);
+  if (partition_it == partition_map_.end()) {
+    return false;
+  }
+  const auto& partition_info = partition_it->second;
+
+  auto owner_it = partition_to_device_.find(partition_key);
+  if (owner_it != partition_to_device_.end()) {
+    auto device_it = device_partitions_.find(owner_it->second);
+    if (device_it != device_partitions_.end()) {
+      auto& partitions = device_it->second;
+      partitions.erase(
+          std::remove_if(partitions.begin(), partitions.end(),
+                         [&partition_key](const PartitionInfoPtr& candidate) {
+                           return candidate->key == partition_key;
+                         }),
+          partitions.end());
+      if (partitions.empty()) {
+        device_partitions_.erase(device_it);
+      }
+    }
+  }
+
+  auto& target_partitions = device_partitions_[target_device_id];
+  target_partitions.erase(
+      std::remove_if(target_partitions.begin(), target_partitions.end(),
+                     [&partition_key](const PartitionInfoPtr& candidate) {
+                       return candidate->key == partition_key;
+                     }),
+      target_partitions.end());
+  target_partitions.push_back(partition_info);
+  partition_to_device_[partition_key] = target_device_id;
+  partition_info->owner_device_id = target_device_id;
+  partition_info->partition->dev_id = target_device_id;
+  return true;
+}
+
 void PartitionTracker::MarkDevicePartitionsFailed(int64_t device_id) {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -248,6 +289,19 @@ std::vector<PartitionInfoPtr> PartitionTracker::GetIdlePartitions() const {
     }
   }
   return idle_partitions;
+}
+
+std::vector<PartitionInfoPtr> PartitionTracker::ClaimIdlePartitions() {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  std::vector<PartitionInfoPtr> claimed_partitions;
+  for (const auto& part_info : partitions_set_) {
+    if (part_info->state == PartitionState::IDLE) {
+      part_info->state = PartitionState::RUNNING;
+      claimed_partitions.push_back(part_info);
+    }
+  }
+  return claimed_partitions;
 }
 
 PartitionTracker::DeviceOidStats PartitionTracker::GetDeviceOidStats(
