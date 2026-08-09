@@ -423,13 +423,9 @@ void ProxySvrHandle::HandleMatMul(const ConnectionUeventPtr& conn,
   start = std::chrono::high_resolution_clock::now();
   auto output = torch::from_blob(o_ptr, {row_size, col_size},
                                  FLOAT32_TENSOR_OPTIONS(torch::kCPU));
-  {
-    // std::lock_guard<std::mutex> lock(outputs_mutex_[partition.oid]);
-    auto& output_matrix = reinterpret_cast<ProxySvrImpl*>(ctx_.instance)
-                              ->GetOutputMatrix(partition.oid);
-    IndexPutMatrixBlock(output_matrix, output, partition.row, partition.col,
-                        partition.pivot, ctx_.block_size);
-  }
+  reinterpret_cast<ProxySvrImpl*>(ctx_.instance)
+      ->WriteResultBlock(partition.oid, output, partition.row, partition.col,
+                         partition.pivot, ctx_.block_size);
   end = std::chrono::high_resolution_clock::now();
   LOG_DEBUG << "UpdateMatrixBlock time: "
             << std::chrono::duration_cast<std::chrono::microseconds>(end -
@@ -663,7 +659,7 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 /********************************ProxySvrImpl****************************************/
 
 ProxySvrImpl::ProxySvrImpl(ProxyEnvCfg& ctx)
-    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(65536) {
+    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(kMaxLifetimeOperationCount) {
   // Initialize with greedy scheduling policy by default
 }
 
@@ -714,7 +710,7 @@ void ProxySvrImpl::Initialize(UeventLoop* loop) {
   // Start();
   // InitLogger();
 
-  outputs_.resize(65536);
+  outputs_.resize(kMaxLifetimeOperationCount);
   for (size_t i = 0; i < outputs_.size(); i++) {
     outputs_[i] = torch::empty({0, 0});
     rsp_cb_counts_[i] = 0;
@@ -819,14 +815,14 @@ void ProxySvrImpl::RequestCb(const ConnectionUeventPtr& conn) {
 //   handle->RequestCb(conn);
 // }
 
-void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
-                                       torch::Tensor& mat_b) {
+int ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
+                                      torch::Tensor& mat_b) {
   auto* gate = DEVICE_TRACKER.GetDispatchGate();
   if (gate != nullptr) {
     if (gate->GetMode() == DeviceMode::BARRIER) {
       if (!gate->WaitForReady()) {
         LOG_ERROR << "[DispatchMatMulAsync] DispatchGate WaitForReady timeout";
-        return;
+        return -1;
       }
     } else if (gate->GetMode() == DeviceMode::DYNAMIC &&
                DEVICE_TRACKER.GetConnectedDeviceCount() == 0) {
@@ -839,21 +835,26 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
       });
       LOG_INFO << "[DispatchMatMulAsync] No connected devices in DYNAMIC mode, "
                   "work enqueued";
-      return;
+      return -1;
     }
   }
 
-  LOG_INFO << "[DispatchMatMulAsync] Starting dispatch - mm_count="
-           << mm_count_;
+  int oid = ReserveOperationId(mm_count_);
+  if (oid < 0) {
+    LOG_ERROR << "[DispatchMatMulAsync] Operation capacity exhausted at "
+              << kMaxLifetimeOperationCount << " lifetime dispatches";
+    return -1;
+  }
+  LOG_INFO << "[DispatchMatMulAsync] Starting dispatch - oid=" << oid;
 
-  outputs_[mm_count_].set_data(CreateOutputMatrix(mat_a, mat_b));
+  int gemm_id = gemm_id_count_.fetch_add(1);
   auto partitions = PartitionMatrices(mat_a, mat_b, ctx_.block_size);
   auto a_shape = mat_a.sizes().vec();
   auto b_shape = mat_b.sizes().vec();
 
   if (partitions.empty()) {
     LOG_ERROR << "[DispatchMatMulAsync] No partitions generated!";
-    return;
+    return -1;
   }
 
   auto cur_ver = partitions[0]->version;
@@ -874,7 +875,11 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
   //          << partitions.size() << " partitions";
   auto start = std::chrono::high_resolution_clock::now();
 
-  DecRspCbCount(mm_count_, partitions.size());
+  {
+    std::lock_guard<std::mutex> lk(outputs_mutex_);
+    outputs_[oid].set_data(CreateOutputMatrix(mat_a, mat_b));
+    DecRspCbCount(oid, partitions.size());
+  }
 
   LOG_INFO << "[DispatchMatMulAsync] Creating " << partitions.size()
            << " partitions as IDLE";
@@ -882,21 +887,21 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
   // Add all partitions to tracker as IDLE - they will be dispatched by
   // SendIdlePartitions
   for (auto& partition : partitions) {
-    partition->oid = mm_count_;
-    partition->gemm_id = gemm_id_count_;  // assign global gemm_id
+    partition->oid = oid;
+    partition->gemm_id = gemm_id;  // assign global gemm_id
     partition->dev_id =
         -1;  // Mark as unassigned, will be assigned by scheduling policy
 
     // Add partition to tracker with dev_id=-1 (unassigned, to be scheduled)
     // The tracker will use owner_device_id=-1 until scheduling assigns a real
     // device
-    PARTITION_TRACKER.AddPartition(-1, partition->GetPartitionKey(), mm_count_,
+    PARTITION_TRACKER.AddPartition(-1, partition->GetPartitionKey(), oid,
                                    partition);
 
     LOG_DEBUG << "[DispatchMatMulAsync] Created IDLE partition key="
               << partition->GetPartitionKey()
               << ", dev_id=" << partition->dev_id << " (unassigned)"
-              << ", oid=" << mm_count_ << ", gemm_id=" << partition->gemm_id;
+              << ", oid=" << oid << ", gemm_id=" << partition->gemm_id;
   }
   auto end = std::chrono::high_resolution_clock::now();
   LOG_INFO << "[DispatchMatMulAsync] Created " << partitions.size()
@@ -904,147 +909,43 @@ void ProxySvrImpl::DispatchMatMulAsync(torch::Tensor& mat_a,
            << std::chrono::duration_cast<std::chrono::microseconds>(end - start)
                   .count()
            << "us. Partitions will be sent by SendIdlePartitions timer. "
-              "gemm_id_count="
-           << gemm_id_count_;
-  mm_count_++;
-  gemm_id_count_++;  // increment global gemm_id for next operation
+              "gemm_id="
+           << gemm_id;
 
   auto* handle = reinterpret_cast<ProxySvrHandle*>(loop_->GetLoopHandle());
   loop_->QueueInLoop(bind(&ProxySvrHandle::SendIdlePartitions, handle));
+  return oid;
 }
 
 torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
-  auto start = std::chrono::high_resolution_clock::now();
-  LOG_INFO << "[WaitMatMul] Starting wait for oid=" << oid
-           << ", rsp_cb_counts_[oid]=" << rsp_cb_counts_[oid];
-
-  int poll_count = 0;
-  while (rsp_cb_counts_[oid] > 0) {
-    poll_count++;
-    if (poll_count % 50 == 0) {  // Log every 5 seconds (50 * 100ms)
-      LOG_WARN << "[WaitMatMul] Still waiting for oid=" << oid
-               << ", rsp_cb_counts_[oid]=" << rsp_cb_counts_[oid]
-               << ", poll_count=" << poll_count * 100 << "ms";
-
-      // Diagnose partition states across all devices
-      auto connected_devices = DEVICE_TRACKER.GetConnectedDevices();
-      LOG_WARN << "[WaitMatMul] Connected devices: "
-               << connected_devices.size();
-
-      size_t total_idle = 0, total_running = 0, total_finished = 0;
-      size_t devices_with_partitions = 0;
-      std::vector<int64_t> devices_with_oid;
-
-      for (int64_t device_id : connected_devices) {
-        auto stats = PARTITION_TRACKER.GetDeviceOidStats(device_id, oid);
-        size_t device_total =
-            stats.idle_count + stats.running_count + stats.finished_count;
-
-        if (device_total > 0) {
-          devices_with_partitions++;
-          devices_with_oid.push_back(device_id);
-          bool is_connected = DEVICE_TRACKER.IsDeviceConnected(device_id);
-          total_idle += stats.idle_count;
-          total_running += stats.running_count;
-          total_finished += stats.finished_count;
-
-          LOG_WARN << "[WaitMatMul]   Device " << device_id
-                   << " (connected=" << (is_connected ? "YES" : "NO") << ")"
-                   << ": IDLE=" << stats.idle_count
-                   << ", RUNNING=" << stats.running_count
-                   << ", FINISHED=" << stats.finished_count
-                   << ", Total=" << device_total;
-
-          // Show first few partition keys for debugging (only for first 3
-          // devices)
-          if (devices_with_partitions <= 3) {
-            if (!stats.partition_keys.empty() &&
-                stats.partition_keys.size() <= 5) {
-              std::string keys_str;
-              for (const auto& key : stats.partition_keys) {
-                if (!keys_str.empty()) keys_str += ", ";
-                keys_str += key;
-              }
-              LOG_WARN << "[WaitMatMul]     Partition keys: " << keys_str;
-            } else if (stats.partition_keys.size() > 5) {
-              LOG_WARN << "[WaitMatMul]     First partition key: "
-                       << stats.partition_keys[0] << " (+ "
-                       << (stats.partition_keys.size() - 1) << " more)";
-            }
-          }
-        }
-      }
-
-      // Summary with device distribution info
-      LOG_WARN << "[WaitMatMul] Summary for oid=" << oid
-               << ": Devices with partitions=" << devices_with_partitions << "/"
-               << connected_devices.size() << ", Total IDLE=" << total_idle
-               << ", RUNNING=" << total_running
-               << ", FINISHED=" << total_finished
-               << ", Expected remaining=" << rsp_cb_counts_[oid];
-
-      // Critical: if only 1 device has all partitions, this is a scheduling
-      // problem!
-      if (devices_with_partitions == 1 && connected_devices.size() > 1) {
-        LOG_ERROR << "[WaitMatMul] ⚠️  SCHEDULING ISSUE: All "
-                  << (total_idle + total_running + total_finished)
-                  << " partitions assigned to single device "
-                  << devices_with_oid[0] << " while "
-                  << (connected_devices.size() - 1)
-                  << " other devices are idle!";
-      } else if (devices_with_partitions > 0 && devices_with_partitions <= 10) {
-        std::string device_list;
-        for (auto dev_id : devices_with_oid) {
-          if (!device_list.empty()) device_list += ", ";
-          device_list += std::to_string(dev_id);
-        }
-        LOG_WARN << "[WaitMatMul] Devices with oid=" << oid << ": ["
-                 << device_list << "]";
-      }
-
-      // Check if partitions are stuck in RUNNING state
-      if (total_running > 0 && total_running == rsp_cb_counts_[oid] &&
-          total_idle == 0) {
-        LOG_ERROR << "[WaitMatMul] ⚠️  STUCK PARTITIONS: All " << total_running
-                  << " partitions stuck in RUNNING state for "
-                  << poll_count * 100 << "ms";
-        LOG_ERROR << "[WaitMatMul] Possible causes: 1) Devices not responding "
-                     "2) Network issues 3) Devices processing too slowly";
-
-        // Sample a few devices to check connection quality
-        size_t check_count = std::min(size_t(5), devices_with_oid.size());
-        for (size_t i = 0; i < check_count; ++i) {
-          int64_t dev_id = devices_with_oid[i];
-          auto conn = DEVICE_TRACKER.GetDeviceConnection(dev_id);
-          bool has_conn = (conn != nullptr);
-          bool conn_closed = has_conn ? conn->IsClosed() : true;
-          LOG_ERROR << "[WaitMatMul]   Sample device " << dev_id
-                    << ": has_connection=" << (has_conn ? "YES" : "NO")
-                    << ", connection_closed=" << (conn_closed ? "YES" : "NO");
-        }
-      }
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  ValidateOperationId(oid);
+  std::unique_lock<std::mutex> lk(outputs_mutex_);
+  while (!outputs_cv_.wait_for(lk, std::chrono::seconds(5),
+                               [&] { return rsp_cb_counts_[oid] == 0; })) {
+    LOG_WARN << "[WaitMatMul] Still waiting for oid=" << oid
+             << ", remaining=" << rsp_cb_counts_[oid];
   }
-  auto end = std::chrono::high_resolution_clock::now();
-  auto shape = outputs_[oid].sizes().vec();
-  auto wait_time =
-      std::chrono::duration_cast<std::chrono::microseconds>(end - start)
-          .count();
-  LOG_INFO << "[WaitMatMul] Completed for oid=" << oid
-           << ", wait_time=" << wait_time << "us, shape=" << shape;
+  return outputs_[oid].clone();
+}
 
-  return outputs_[oid];
+void ProxySvrImpl::WriteResultBlock(int oid, torch::Tensor& block, int64_t row,
+                                    int64_t col, int64_t pivot, int block_size) {
+  std::lock_guard<std::mutex> lock(outputs_mutex_);
+  IndexPutMatrixBlock(outputs_[oid], block, row, col, pivot, block_size);
 }
 
 void ProxySvrImpl::IncRspCbCount(int oid, size_t count) {
-  unsigned long long prev = rsp_cb_counts_[oid].load();
+  std::lock_guard<std::mutex> lock(outputs_mutex_);
+  uint64_t prev = rsp_cb_counts_[oid];
   if (prev < count) {
     LOG_WARN << "[IncRspCbCount] Clamping underflow for oid=" << oid
              << ", current=" << prev << ", decrement=" << count;
     rsp_cb_counts_[oid] = 0;
   } else {
     rsp_cb_counts_[oid] -= count;
+  }
+  if (rsp_cb_counts_[oid] == 0) {
+    outputs_cv_.notify_all();
   }
   LOG_DEBUG << "[IncRspCbCount] oid=" << oid << ", count=" << count
             << ", prev=" << prev << ", now=" << rsp_cb_counts_[oid];
@@ -1146,7 +1047,7 @@ void ProxySvrImpl::HandleDeviceFailure(int64_t failed_device_id) {
 }
 
 void ProxySvrHandle::SendIdlePartitions() {
-  auto idle_partitions = PARTITION_TRACKER.GetIdlePartitions();
+  auto idle_partitions = PARTITION_TRACKER.ClaimIdlePartitions();
 
   if (idle_partitions.empty()) {
     LOG_DEBUG << "[SendIdlePartitions] No IDLE partitions to send";
@@ -1161,42 +1062,35 @@ void ProxySvrHandle::SendIdlePartitions() {
 
   if (redistributed.empty()) {
     LOG_DEBUG << "[SendIdlePartitions] No available devices for redistribution";
+    for (const auto& part_info : idle_partitions) {
+      PARTITION_TRACKER.MarkPartitionIdle(part_info->key);
+    }
     return;
   }
 
   LOG_INFO << "[SendIdlePartitions] Scheduling complete, moving partitions to "
               "assigned devices";
 
-  // IMPORTANT: After scheduling, partitions' owner_device_id has been updated
-  // We need to move them from device -1 to their assigned devices in tracker
-  // Do this BEFORE marking as RUNNING to avoid race conditions
+  std::vector<PartitionInfoPtr> ready_partitions;
+  ready_partitions.reserve(idle_partitions.size());
   for (const auto& part_info : idle_partitions) {
-    int64_t old_device =
-        part_info
-            ->owner_device_id;  // This might be wrong due to scheduling update
-    // Find old device from partition_to_device_ map
-
-    LOG_DEBUG << "[SendIdlePartitions] Moving partition " << part_info->key
-              << " (oid=" << part_info->oid << ") to device "
-              << part_info->owner_device_id;
-
-    // Remove from old location and add to new location
-    PARTITION_TRACKER.RemovePartitionByKey(part_info->key);
-    PARTITION_TRACKER.AddPartition(part_info->owner_device_id, part_info->key,
-                                   part_info->oid, part_info->partition);
-
-    // Update partition's dev_id to match the assigned device
-    part_info->partition->dev_id = part_info->owner_device_id;
-
-    // Mark partition as RUNNING after it's in the correct device list
-    PARTITION_TRACKER.MarkPartitionRunning(part_info->key);
+    auto assignment = redistributed.find(part_info->key);
+    if (assignment == redistributed.end() ||
+        !PARTITION_TRACKER.ReassignPartitionToDevice(part_info->key,
+                                                     assignment->second)) {
+      LOG_ERROR << "[SendIdlePartitions] Failed to reassign partition "
+                << part_info->key;
+      PARTITION_TRACKER.MarkPartitionIdle(part_info->key);
+      continue;
+    }
+    ready_partitions.push_back(part_info);
   }
 
-  LOG_INFO << "[SendIdlePartitions] Sending " << idle_partitions.size()
+  LOG_INFO << "[SendIdlePartitions] Sending " << ready_partitions.size()
            << " partitions to devices";
 
   // Send each partition
-  for (const auto& part_info : idle_partitions) {
+  for (const auto& part_info : ready_partitions) {
     LOG_DEBUG << "[SendIdlePartitions] Sending partition " << part_info->key
               << " to device " << part_info->owner_device_id;
 
@@ -1216,7 +1110,7 @@ void ProxySvrHandle::SendIdlePartitions() {
   }
 
   LOG_INFO << "[SendIdlePartitions] Completed sending "
-           << idle_partitions.size() << " partitions to devices";
+           << ready_partitions.size() << " partitions to devices";
 }
 
 void ProxySvrImpl::CheckFailedPartitions() {

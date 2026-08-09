@@ -16,6 +16,20 @@ logger = get_logger()
 _backend: Any = None
 
 
+def _reference_grad_input(
+    grad_output: torch.Tensor, weight: torch.Tensor
+) -> torch.Tensor:
+    return torch.matmul(grad_output, weight)
+
+
+def _wait_for_dispatched_matmul(oid: int, phase: str) -> torch.Tensor:
+    if oid < 0:
+        raise RuntimeError(
+            f"{phase} matmul dispatch failed with operation id {oid}"
+        )
+    return _backend.wait_matmul(oid)
+
+
 def set_backend(backend: Any) -> None:
     """Set the active compute backend for morphling hooks.
 
@@ -181,7 +195,6 @@ class LinearFunction(torch.autograd.Function):
     def forward(ctx, input, weight, bias=None):
         global _gemm_idx
 
-        print("LinearFunction forward", input.shape, weight.shape)
         ctx.save_for_backward(input, weight, bias)
         # output = input.mm(weight.t())
         # logger.debug(f"input shape: {input.shape}")
@@ -191,13 +204,15 @@ class LinearFunction(torch.autograd.Function):
         start_us: Optional[float] = None
         sm_count: Optional[int] = None
         gemm_idx: Optional[int] = None
+        _fwd_oid = -1
+        _fwd_weight = weight.transpose(-2, -1).contiguous()
         if _greenctx is not None:
             start_us = _elapsed_us()
             activated_sm_count = None
             try:
                 sm_count, _ = _greenctx.activate_for_time(int(start_us))
                 activated_sm_count = sm_count
-                _backend.async_dispatch_matmul(input, weight.transpose(-2, -1))
+                _fwd_oid = _backend.async_dispatch_matmul(input, _fwd_weight)
             finally:
                 if activated_sm_count is not None:
                     _greenctx.deactivate(activated_sm_count)
@@ -205,8 +220,8 @@ class LinearFunction(torch.autograd.Function):
                 gemm_idx = _gemm_idx
                 _gemm_idx += 1
         else:
-            _backend.async_dispatch_matmul(input, weight.transpose(-2, -1))
-        output = _backend.wait_matmul(0)
+            _fwd_oid = _backend.async_dispatch_matmul(input, _fwd_weight)
+        output = _wait_for_dispatched_matmul(_fwd_oid, "forward")
         if _gemm_log_enabled and start_us is not None and gemm_idx is not None:
             m = int(input.shape[0])
             k = int(input.shape[1])
@@ -243,13 +258,13 @@ class LinearFunction(torch.autograd.Function):
         global _gemm_idx
 
         input, weight, bias = ctx.saved_tensors
-        print(
-            "LinearFunction backward",
-            grad_output.shape,
-            weight.shape,
-            input.shape,
-        )
         grad_input = grad_weight = grad_bias = None
+        _gi_oid = -1
+        _gw_oid = -1
+        _dg = grad_output.contiguous()
+        _dw = weight.contiguous()
+        _dg_t = grad_output.transpose(-2, -1).contiguous()
+        _din_t = input.transpose(-2, -1).contiguous()
         grad_input_start_us: Optional[float] = None
         grad_input_sm_count: Optional[int] = None
         grad_input_gemm_idx: Optional[int] = None
@@ -272,7 +287,7 @@ class LinearFunction(torch.autograd.Function):
                         int(grad_input_start_us)
                     )
                     activated_sm_count = grad_input_sm_count
-                    _backend.async_dispatch_matmul(grad_output, weight)
+                    _gi_oid = _backend.async_dispatch_matmul(_dg, _dw)
                 finally:
                     if activated_sm_count is not None:
                         _greenctx.deactivate(activated_sm_count)
@@ -280,7 +295,7 @@ class LinearFunction(torch.autograd.Function):
                     grad_input_gemm_idx = _gemm_idx
                     _gemm_idx += 1
             else:
-                _backend.async_dispatch_matmul(grad_output, weight)
+                _gi_oid = _backend.async_dispatch_matmul(_dg, _dw)
         if ctx.needs_input_grad[1]:
             # grad_weight = grad_output.t().mm(input)
             # grad_weight = torch.as_tensor(
@@ -297,10 +312,7 @@ class LinearFunction(torch.autograd.Function):
                         int(grad_weight_start_us)
                     )
                     activated_sm_count = grad_weight_sm_count
-                    _backend.async_dispatch_matmul(
-                        grad_output.transpose(-2, -1),
-                        input.transpose(-2, -1),
-                    )
+                    _gw_oid = _backend.async_dispatch_matmul(_dg_t, _din_t)
                 finally:
                     if activated_sm_count is not None:
                         _greenctx.deactivate(activated_sm_count)
@@ -308,15 +320,12 @@ class LinearFunction(torch.autograd.Function):
                     grad_weight_gemm_idx = _gemm_idx
                     _gemm_idx += 1
             else:
-                _backend.async_dispatch_matmul(
-                    grad_output.transpose(-2, -1),
-                    input.transpose(-2, -1),
-                )
+                _gw_oid = _backend.async_dispatch_matmul(_dg_t, _din_t)
 
-        dispatch_count = 0
         if ctx.needs_input_grad[0]:
-            grad_input = _backend.wait_matmul(dispatch_count)
-            dispatch_count += 1
+            grad_input = _wait_for_dispatched_matmul(
+                _gi_oid, "backward_grad_input"
+            )
             if (
                 grad_input_start_us is not None
                 and grad_input_gemm_idx is not None
@@ -336,8 +345,9 @@ class LinearFunction(torch.autograd.Function):
                 )
 
         if ctx.needs_input_grad[1]:
-            grad_weight = _backend.wait_matmul(dispatch_count).transpose(-2, -1)
-            dispatch_count += 1
+            grad_weight = _wait_for_dispatched_matmul(
+                _gw_oid, "backward_grad_weight"
+            ).transpose(-2, -1)
             if (
                 grad_weight_start_us is not None
                 and grad_weight_gemm_idx is not None
@@ -361,7 +371,7 @@ class LinearFunction(torch.autograd.Function):
 
         if _enable_verification:
             if ctx.needs_input_grad[0]:
-                ref_grad_input = torch.matmul(grad_output, weight, atol=1e-5)
+                ref_grad_input = _reference_grad_input(grad_output, weight)
                 assert torch.allclose(grad_input, ref_grad_input), (
                     f"grad_input is not close! max diff: {torch.max(torch.abs(grad_input - ref_grad_input))}"
                 )

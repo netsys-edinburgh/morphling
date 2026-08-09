@@ -69,6 +69,25 @@ add_zerocopy_test(test_profile_delta_log)
 add_zerocopy_test(test_device_measurement_service)
 add_zerocopy_test(test_device_measurement_session)
 
+add_executable(test_partition_tracker_claim
+  ../backend/test_partition_tracker_claim.cpp
+  ${PROJECT_ROOT}/csrc/backend/partition_tracker.cpp
+  ${ZEROCOPY_TEST_DEPS}
+  ${BASE_LOGGING_SRC}
+  ${PROTO_SRCS}
+)
+target_compile_options(test_partition_tracker_claim PRIVATE -ffunction-sections
+  -fdata-sections)
+target_link_options(test_partition_tracker_claim PRIVATE -Wl,--gc-sections)
+target_include_directories(test_partition_tracker_claim PRIVATE
+  ${ZEROCOPY_INCLUDE_DIRS})
+target_link_libraries(test_partition_tracker_claim PRIVATE
+  ${ZEROCOPY_COMMON_LIBS})
+if(TARGET generate_proto_files)
+  add_dependencies(test_partition_tracker_claim generate_proto_files)
+endif()
+add_test(NAME test_partition_tracker_claim COMMAND test_partition_tracker_claim)
+
 # ============================================================================
 # CUDA Pinned Pool Test (uses CUDAToolkit from parent project)
 # ============================================================================

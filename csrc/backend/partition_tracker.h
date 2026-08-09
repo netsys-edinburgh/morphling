@@ -68,6 +68,8 @@ class PartitionTracker {
                     int64_t oid, MatrixPartitionPtr partition);
   void RemovePartition(int64_t device_id, const std::string& partition_key);
   void RemovePartitionByKey(const std::string& partition_key);
+  bool ReassignPartitionToDevice(const std::string& partition_key,
+                                 int64_t target_device_id);
 
   // Mark all partitions owned by a device as failed (ownership removed)
   void MarkDevicePartitionsFailed(int64_t device_id);
@@ -85,6 +87,7 @@ class PartitionTracker {
   size_t GetDevicePartitionCount(int64_t device_id) const;
   bool HasPendingPartitions(int64_t device_id) const;
   std::vector<PartitionInfoPtr> GetIdlePartitions() const;
+  std::vector<PartitionInfoPtr> ClaimIdlePartitions();
 
   // Statistics for a specific OID on a device (for debugging)
   struct DeviceOidStats {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <condition_variable>
 #include <deque>
 #include <map>
 #include <memory>
@@ -16,6 +17,7 @@
 #include "morphling.pb.h"
 #include "network/uevent.h"
 #include "network/ueventloop_thread.h"
+#include "operation_id.h"
 #include "sched_policy.h"
 #include "server_base.h"
 
@@ -121,9 +123,11 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   ~ProxySvrImpl();
   void Initialize(uevent::UeventLoop* loop);
 
-  void DispatchMatMulAsync(torch::Tensor& mat_a, torch::Tensor& mat_b);
+  int DispatchMatMulAsync(torch::Tensor& mat_a, torch::Tensor& mat_b);
   torch::Tensor WaitMatMul(int oid);
   torch::Tensor& GetOutputMatrix(int oid) { return outputs_[oid]; }
+  void WriteResultBlock(int oid, torch::Tensor& block, int64_t row, int64_t col,
+                        int64_t pivot, int block_size);
 
   void IncRspCbCount(int oid, size_t count);
   void DecRspCbCount(int oid, size_t count) { rsp_cb_counts_[oid] += count; }
@@ -175,8 +179,10 @@ class ProxySvrImpl : public std::enable_shared_from_this<ProxySvrImpl> {
   std::atomic_int mm_count_{0};
   std::atomic_int gemm_id_count_{0};  // global gemm operation id counter
   std::vector<torch::Tensor> outputs_;
-  std::vector<std::atomic_ullong> rsp_cb_counts_;
+  std::vector<uint64_t> rsp_cb_counts_;
   std::vector<std::unordered_set<TensorKey>> device_tensors_;
+  std::mutex outputs_mutex_;
+  std::condition_variable outputs_cv_;
 
   // Note: Partition tracking is now handled by DevicePartitionTracker singleton
   // Access via DEVICE_TRACKER macro
@@ -224,8 +230,8 @@ class ProxySvr {
   void SetCacheEnabled(bool enabled) {
     context_.enable_cli_cache = enabled ? 1 : 0;
   }
-  void DispatchMatMulAsync(torch::Tensor& mat_a, torch::Tensor& mat_b) {
-    svr_->DispatchMatMulAsync(mat_a, mat_b);
+  int DispatchMatMulAsync(torch::Tensor& mat_a, torch::Tensor& mat_b) {
+    return svr_->DispatchMatMulAsync(mat_a, mat_b);
   }
   torch::Tensor WaitMatMul(int oid) { return svr_->WaitMatMul(oid); }
   size_t GetConnectionCount() const { return svr_->GetConnectionCount(); }

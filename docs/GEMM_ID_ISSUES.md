@@ -25,9 +25,43 @@ describing each record format.
 time. In [`csrc/backend/proxy_svr.cpp`](../csrc/backend/proxy_svr.cpp) it is
 sourced from the atomic `gemm_id_count_` (`proxy_svr.h`), stamped onto
 every `MatrixPartition` in `DispatchMatMulAsync` (`partition->gemm_id =
-gemm_id_count_`), and incremented after each dispatch. It appears in both
+gemm_id`), and reserved with `fetch_add` for each dispatch. It appears in both
 the VTIME and Throughput records so events can be grouped by the GEMM that
 produced them; it starts at 0 and increases by one per `DispatchMatMulAsync`.
+
+## Live-dispatch synchronization invariants
+
+Live training can have several GEMMs and dispatch callbacks in flight. The
+proxy runtime preserves operation and partition ownership through three
+invariants.
+
+1. `DispatchMatMulAsync` returns a distinct operation ID. Callers pass that ID
+   to `WaitMatMul`, so a later GEMM cannot consume an earlier output.
+2. Output block writes, response-count decrements, and completion waits share
+   one mutex and condition variable. `WaitMatMul` returns a cloned completed
+   tensor rather than storage that a later dispatch can reuse.
+3. `PartitionTracker::ClaimIdlePartitions` changes `IDLE` partitions to
+   `RUNNING` while holding the tracker lock. Assignment then uses
+   `ReassignPartitionToDevice`, which moves the same `PartitionInfo` between
+   device indexes atomically without exposing an intermediate `IDLE` state.
+
+The third invariant prevents concurrent `SendIdlePartitions` callbacks from
+sending the same shard twice and prematurely completing an operation. The
+claim and reassignment lifecycle is covered by
+[`tests/cpp/unit/backend/test_partition_tracker_claim.cpp`](../tests/cpp/unit/backend/test_partition_tracker_claim.cpp).
+
+Operation IDs index fixed storage and are therefore bounded by
+`kMaxLifetimeOperationCount`. The current lifetime limit is 65,536 dispatches
+per proxy instance. The final valid ID is reserved normally, but subsequent
+dispatches fail with `-1` before any output storage is accessed. Storage is not
+resized because callbacks retain operation IDs for the lifetime of an in-flight
+GEMM.
+
+`WaitMatMul` accepts only IDs in the valid storage range. Negative IDs and IDs
+at or above the lifetime limit raise `std::out_of_range`, which pybind exposes
+as a Python exception. The autograd hook checks dispatch results before calling
+`wait_matmul` and raises `RuntimeError` with the failed GEMM phase when dispatch
+returns the `-1` sentinel.
 
 ## VTIME format
 
