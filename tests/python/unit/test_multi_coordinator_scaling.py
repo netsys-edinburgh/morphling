@@ -16,7 +16,10 @@ def test_strong_scaling_keeps_global_work_fixed() -> None:
     assert [config.coordinators for config in configs] == [1, 2]
     assert {config.total_devices for config in configs} == {8}
     assert {config.global_batch for config in configs} == {16}
-    assert [(config.devices_per_coordinator, config.local_batch) for config in configs] == [
+    assert [
+        (config.devices_per_coordinator, config.local_batch)
+        for config in configs
+    ] == [
         (8, 16),
         (4, 8),
     ]
@@ -32,7 +35,9 @@ def test_weak_scaling_keeps_local_work_fixed() -> None:
     assert [config.coordinators for config in configs] == [1, 2]
     assert {config.devices_per_coordinator for config in configs} == {4}
     assert {config.local_batch for config in configs} == {8}
-    assert [(config.total_devices, config.global_batch) for config in configs] == [
+    assert [
+        (config.total_devices, config.global_batch) for config in configs
+    ] == [
         (4, 8),
         (8, 16),
     ]
@@ -74,7 +79,9 @@ def test_rank_command_pins_each_rank_to_its_numa_node(
     )
 
 
-def test_affinity_fallback_labels_cpu_first_touch_substrate(tmp_path: Path) -> None:
+def test_affinity_fallback_labels_cpu_first_touch_substrate(
+    tmp_path: Path,
+) -> None:
     # Given
     config = dataclasses.replace(
         run_multi_coordinator.build_scaling_configs("weak")[1],
@@ -95,7 +102,9 @@ def test_affinity_fallback_labels_cpu_first_touch_substrate(tmp_path: Path) -> N
     )
 
 
-def test_affinity_selection_falls_back_when_memory_binding_is_unavailable() -> None:
+def test_affinity_selection_falls_back_when_memory_binding_is_unavailable() -> (
+    None
+):
     # Given / When
     privileged = run_multi_coordinator.select_affinity_mode(
         numactl_available=True, memory_binding_available=True
@@ -112,10 +121,16 @@ def test_affinity_selection_falls_back_when_memory_binding_is_unavailable() -> N
 def test_scaling_efficiency_uses_strong_and_weak_definitions() -> None:
     # Given / When
     strong = coordinator_scaling_analysis.scaling_efficiency(
-        mode="strong", baseline_seconds=12.0, measured_seconds=7.5, coordinators=2
+        mode="strong",
+        baseline_seconds=12.0,
+        measured_seconds=7.5,
+        coordinators=2,
     )
     weak = coordinator_scaling_analysis.scaling_efficiency(
-        mode="weak", baseline_seconds=12.0, measured_seconds=15.0, coordinators=2
+        mode="weak",
+        baseline_seconds=12.0,
+        measured_seconds=15.0,
+        coordinators=2,
     )
 
     # Then
@@ -123,7 +138,9 @@ def test_scaling_efficiency_uses_strong_and_weak_definitions() -> None:
     assert weak == pytest.approx(0.8)
 
 
-def test_breakdown_reconciles_device_communication_optimizer_and_residual() -> None:
+def test_breakdown_reconciles_device_communication_optimizer_and_residual() -> (
+    None
+):
     # Given / When
     breakdown = coordinator_scaling_analysis.reconcile_breakdown(
         iteration_total_seconds=10.0,
@@ -143,7 +160,9 @@ def test_breakdown_reconciles_device_communication_optimizer_and_residual() -> N
 
 def test_breakdown_rejects_components_exceeding_iteration_total() -> None:
     # Given / When / Then
-    with pytest.raises(coordinator_scaling_analysis.BreakdownReconciliationError):
+    with pytest.raises(
+        coordinator_scaling_analysis.BreakdownReconciliationError
+    ):
         coordinator_scaling_analysis.reconcile_breakdown(
             iteration_total_seconds=1.0,
             forward_device_seconds=0.5,
@@ -153,7 +172,9 @@ def test_breakdown_rejects_components_exceeding_iteration_total() -> None:
         )
 
 
-def test_rank_result_records_warmup_separately_and_measured_throughput() -> None:
+def test_rank_result_records_warmup_separately_and_measured_throughput() -> (
+    None
+):
     # Given
     phases = {
         "warmup_iteration": 4.0,
@@ -215,7 +236,9 @@ def test_global_result_uses_slowest_rank_as_iteration_makespan() -> None:
     assert result.substrate.startswith("same-host Gloo loopback lower bound")
 
 
-def test_iteration_plan_has_one_warmup_before_three_measured_iterations() -> None:
+def test_iteration_plan_has_one_warmup_before_three_measured_iterations() -> (
+    None
+):
     # Given
     config = run_multi_coordinator.build_scaling_configs("strong")[0]
 
@@ -284,12 +307,16 @@ def test_experiment_plan_covers_strong_and_weak_without_writing_results(
 
 def test_scaling_conclusion_reports_speedup_and_efficiency() -> None:
     # Given
-    config_one, config_two = run_multi_coordinator.build_scaling_configs("strong")
+    config_one, config_two = run_multi_coordinator.build_scaling_configs(
+        "strong"
+    )
     baseline = run_multi_coordinator.GlobalResult(
         coordinators=1,
         iteration_total_seconds=12.0,
         throughput_samples_per_second=4.0,
-        loss_correctness=run_multi_coordinator.LossCorrectness(True, True, True, 0.0),
+        loss_correctness=run_multi_coordinator.LossCorrectness(
+            True, True, True, 0.0
+        ),
         substrate="same-host Gloo loopback lower bound",
         ranks=(),
     )

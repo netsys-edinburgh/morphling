@@ -32,10 +32,25 @@ def spawn_fleet(
             (rank * count + index) % gpu_count
         )
         command = (
-            "morphling_device", "--id", str(rank * count + index),
-            "--flops", "100T", "--memory", "8G", "--ul_bw", "10G",
-            "--dl_bw", "10G", "--ul_lat", "0", "--dl_lat", "0",
-            "--backend", "proxy", "--cfg", str(device_config),
+            "morphling_device",
+            "--id",
+            str(rank * count + index),
+            "--flops",
+            "100T",
+            "--memory",
+            "8G",
+            "--ul_bw",
+            "10G",
+            "--dl_bw",
+            "10G",
+            "--ul_lat",
+            "0",
+            "--dl_lat",
+            "0",
+            "--backend",
+            "proxy",
+            "--cfg",
+            str(device_config),
         )
         output_path = (
             Path(log_directory) / f"dev_c{rank}_{index}.log"

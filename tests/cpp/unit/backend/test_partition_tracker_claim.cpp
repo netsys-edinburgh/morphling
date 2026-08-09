@@ -50,7 +50,7 @@ TEST(PartitionTrackerClaimTest, ConcurrentClaimersClaimEachPartitionOnce) {
 
   // Then
   const std::unordered_set<std::string> unique_keys(claimed_keys.begin(),
-                                                     claimed_keys.end());
+                                                    claimed_keys.end());
   EXPECT_EQ(claimed_keys.size(), kPartitionCount);
   EXPECT_EQ(unique_keys.size(), kPartitionCount);
   EXPECT_TRUE(tracker.GetIdlePartitions().empty());
@@ -125,5 +125,5 @@ TEST(PartitionTrackerClaimTest, ReassignmentRejectsUnknownPartition) {
   EXPECT_FALSE(reassigned);
 }
 
-}
-}
+}  // namespace
+}  // namespace morphling::backend

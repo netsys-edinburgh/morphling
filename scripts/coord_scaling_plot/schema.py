@@ -56,6 +56,7 @@ class MissingDataError(SchemaError):
 
 # ── Typed, immutable views ──────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class DeviceScalingPoint:
     device_count: int
@@ -101,9 +102,12 @@ class Breakdown:
 
 # ── Small validation helpers ────────────────────────────────────────────────
 
+
 def _mapping(value: Any, ctx: str) -> dict:
     if not isinstance(value, dict):
-        raise SchemaError(f"{ctx}: expected an object, got {type(value).__name__}")
+        raise SchemaError(
+            f"{ctx}: expected an object, got {type(value).__name__}"
+        )
     return value
 
 
@@ -144,15 +148,21 @@ def load_json(path: Any) -> Any:
 
 # ── Parsers ─────────────────────────────────────────────────────────────────
 
+
 def parse_device_scaling(data: Any) -> DeviceScaling:
     """Parse single-coordinator device-scaling ``summary.json`` (panel a)."""
     root = _mapping(data, "summary")
-    environment = _mapping(_require(root, "environment", "summary"),
-                           "summary.environment")
-    logical = _as_int(_require(environment, "logical_cpu_count",
-                               "summary.environment"), "logical_cpu_count")
+    environment = _mapping(
+        _require(root, "environment", "summary"), "summary.environment"
+    )
+    logical = _as_int(
+        _require(environment, "logical_cpu_count", "summary.environment"),
+        "logical_cpu_count",
+    )
     if logical <= 0:
-        raise SchemaError("summary.environment.logical_cpu_count must be positive")
+        raise SchemaError(
+            "summary.environment.logical_cpu_count must be positive"
+        )
     rows = _sequence(_require(root, "rows", "summary"), "summary.rows")
 
     points = []
@@ -165,13 +175,17 @@ def parse_device_scaling(data: Any) -> DeviceScaling:
             continue
         substrate = substrate or row.get("substrate")
         peak = row.get("peak_cpu_percent")
-        points.append(DeviceScalingPoint(
-            device_count=_as_int(_require(row, "device_count", ctx), ctx),
-            iteration_runtime_seconds=_as_float(runtime, ctx),
-            sustained_cpu_percent=_as_float(
-                _require(row, "median_cpu_percent", ctx), ctx) / logical,
-            peak_cpu_percent=None if peak is None else _as_float(peak, ctx),
-        ))
+        points.append(
+            DeviceScalingPoint(
+                device_count=_as_int(_require(row, "device_count", ctx), ctx),
+                iteration_runtime_seconds=_as_float(runtime, ctx),
+                sustained_cpu_percent=_as_float(
+                    _require(row, "median_cpu_percent", ctx), ctx
+                )
+                / logical,
+                peak_cpu_percent=None if peak is None else _as_float(peak, ctx),
+            )
+        )
 
     if not points:
         raise MissingDataError("summary.rows has no measured device points")
@@ -186,7 +200,9 @@ def parse_device_scaling(data: Any) -> DeviceScaling:
 def parse_scaling_efficiency(data: Any, mode: str) -> ScalingEfficiency:
     """Parse ``strong.json``/``weak.json`` and derive per-point efficiency."""
     if mode not in SCALING_MODES:
-        raise SchemaError(f"unknown scaling mode {mode!r}; expected {SCALING_MODES}")
+        raise SchemaError(
+            f"unknown scaling mode {mode!r}; expected {SCALING_MODES}"
+        )
     root = _mapping(data, mode)
     entries = _sequence(_require(root, "points", mode), f"{mode}.points")
 
@@ -194,33 +210,49 @@ def parse_scaling_efficiency(data: Any, mode: str) -> ScalingEfficiency:
     raw = []
     for index, entry in enumerate(entries):
         point = _mapping(entry, f"{mode}.points[{index}]")
-        config = _mapping(_require(point, "configuration",
-                                   f"{mode}.points[{index}]"), "configuration")
-        result = _mapping(_require(point, "result",
-                                   f"{mode}.points[{index}]"), "result")
-        coordinators = _as_int(_require(config, "coordinators", "configuration"),
-                               "coordinators")
-        seconds = _as_float(_require(result, "iteration_total_seconds", "result"),
-                            "iteration_total_seconds")
+        config = _mapping(
+            _require(point, "configuration", f"{mode}.points[{index}]"),
+            "configuration",
+        )
+        result = _mapping(
+            _require(point, "result", f"{mode}.points[{index}]"), "result"
+        )
+        coordinators = _as_int(
+            _require(config, "coordinators", "configuration"), "coordinators"
+        )
+        seconds = _as_float(
+            _require(result, "iteration_total_seconds", "result"),
+            "iteration_total_seconds",
+        )
         throughput = result.get("throughput_samples_per_second")
         seconds_by_coord[coordinators] = seconds
-        raw.append((coordinators, seconds,
-                    None if throughput is None else _as_float(throughput, "result")))
+        raw.append(
+            (
+                coordinators,
+                seconds,
+                None if throughput is None else _as_float(throughput, "result"),
+            )
+        )
 
     if not raw:
         raise MissingDataError(f"{mode}.points is empty")
     baseline = seconds_by_coord.get(1)
     if baseline is None:
         raise MissingDataError(
-            f"{mode} scaling lacks the single-coordinator baseline point")
+            f"{mode} scaling lacks the single-coordinator baseline point"
+        )
 
     points = []
-    for coordinators, seconds, throughput in sorted(raw, key=lambda item: item[0]):
+    for coordinators, seconds, throughput in sorted(
+        raw, key=lambda item: item[0]
+    ):
         if mode == "strong":
             efficiency = baseline / (coordinators * seconds)
         else:
             efficiency = baseline / seconds
-        points.append(EfficiencyPoint(coordinators, seconds, efficiency, throughput))
+        points.append(
+            EfficiencyPoint(coordinators, seconds, efficiency, throughput)
+        )
     return ScalingEfficiency(mode=mode, points=tuple(points))
 
 
@@ -237,21 +269,30 @@ def parse_breakdown(data: Any) -> Breakdown:
         ctx = f"breakdown.rows[{index}]"
         iteration_total = _as_float(_require(row, "iteration_total", ctx), ctx)
         components = tuple(
-            _as_float(_require(row, name, ctx), ctx) for name in BREAKDOWN_COMPONENTS)
+            _as_float(_require(row, name, ctx), ctx)
+            for name in BREAKDOWN_COMPONENTS
+        )
         if abs(sum(components) - iteration_total) > (
-                _RECON_ATOL + _RECON_RTOL * abs(iteration_total)):
+            _RECON_ATOL + _RECON_RTOL * abs(iteration_total)
+        ):
             raise SchemaError(
                 f"{ctx}: components {sum(components):.4f}s do not reconcile with "
-                f"iteration_total {iteration_total:.4f}s")
-        rows.append(BreakdownRow(
-            mode=str(_require(row, "mode", ctx)),
-            coordinators=_as_int(_require(row, "coordinators", ctx), ctx),
-            iteration_total=iteration_total,
-            components=components,
-        ))
+                f"iteration_total {iteration_total:.4f}s"
+            )
+        rows.append(
+            BreakdownRow(
+                mode=str(_require(row, "mode", ctx)),
+                coordinators=_as_int(_require(row, "coordinators", ctx), ctx),
+                iteration_total=iteration_total,
+                components=components,
+            )
+        )
 
     semantics = root.get("component_semantics", {})
     semantics_pairs = tuple(
-        (str(key), str(value)) for key, value in _mapping(
-            semantics, "breakdown.component_semantics").items())
+        (str(key), str(value))
+        for key, value in _mapping(
+            semantics, "breakdown.component_semantics"
+        ).items()
+    )
     return Breakdown(rows=tuple(rows), component_semantics=semantics_pairs)

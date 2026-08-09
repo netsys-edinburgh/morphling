@@ -74,20 +74,30 @@ def build_inner_command(run: RunSpec, metrics_interval: float) -> list[str]:
 
 
 def docker_container_name(run: RunSpec) -> str:
-    return (
-        f"morphling-d2-d{run.device_count}-r{run.repetition}-p{run.port}"
-    )
+    return f"morphling-d2-d{run.device_count}-r{run.repetition}-p{run.port}"
 
 
 def build_docker_command(
     run: RunSpec, output_root: Path, image: str, metrics_interval: float
 ) -> list[str]:
     return [
-        "docker", "run", "--rm", "--name", docker_container_name(run),
-        "--gpus", "all", "--ulimit", "memlock=-1", "--ipc", "host",
-        "-v", f"{output_root.resolve()}:/scaling-output",
-        "-e", f"CFG_PATH={run.container_directory / 'proxy.ini'}",
-        image, *build_inner_command(run, metrics_interval),
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        docker_container_name(run),
+        "--gpus",
+        "all",
+        "--ulimit",
+        "memlock=-1",
+        "--ipc",
+        "host",
+        "-v",
+        f"{output_root.resolve()}:/scaling-output",
+        "-e",
+        f"CFG_PATH={run.container_directory / 'proxy.ini'}",
+        image,
+        *build_inner_command(run, metrics_interval),
     ]
 
 
@@ -119,7 +129,9 @@ def run_command(
         environment = os.environ.copy()
         environment["CFG_PATH"] = str(run.container_directory / "proxy.ini")
     else:
-        command = build_docker_command(run, output_root, image, metrics_interval)
+        command = build_docker_command(
+            run, output_root, image, metrics_interval
+        )
         environment = None
     started = _utc_now()
     timed_out = False

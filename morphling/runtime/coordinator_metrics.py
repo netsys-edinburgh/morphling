@@ -69,9 +69,7 @@ class PhaseRecorder:
 
 
 @contextmanager
-def track_phase(
-    recorder: PhaseRecorder | None, name: str
-) -> Iterator[None]:
+def track_phase(recorder: PhaseRecorder | None, name: str) -> Iterator[None]:
     """Track a phase only when metrics collection is enabled."""
     if recorder is None:
         yield
@@ -212,7 +210,11 @@ class CoordinatorMetricsCollector:
                     file=sys.stderr,
                     flush=True,
                 )
-        print(f"Coordinator metrics stopped: {failure}", file=sys.stderr, flush=True)
+        print(
+            f"Coordinator metrics stopped: {failure}",
+            file=sys.stderr,
+            flush=True,
+        )
         return failure
 
     def _close_output(self) -> None:

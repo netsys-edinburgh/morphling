@@ -81,18 +81,24 @@ def _write_result(
     config = _scaling_config(args)
     result = build_rank_result(
         config,
-        RankMeasurement(rank, recorder.snapshot().durations_seconds, losses, golden),
+        RankMeasurement(
+            rank, recorder.snapshot().durations_seconds, losses, golden
+        ),
     )
     path = Path(args.result_output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(rank_result_payload(config, result), indent=2, sort_keys=True)
+        json.dumps(
+            rank_result_payload(config, result), indent=2, sort_keys=True
+        )
         + "\n",
         encoding="utf-8",
     )
 
 
-def _write_failure(args: argparse.Namespace, rank: int, error: Exception) -> None:
+def _write_failure(
+    args: argparse.Namespace, rank: int, error: Exception
+) -> None:
     if args.result_output is None:
         return
     path = Path(args.result_output)
@@ -144,7 +150,10 @@ def run_coordinator(rank: int, args: argparse.Namespace) -> int:
 
         root = Path(__file__).resolve().parents[1]
         rank_config = _write_rank_config(
-            root / "config/proxy/svr.ini", rank, proxy_port, args.devices_per_coord
+            root / "config/proxy/svr.ini",
+            rank,
+            proxy_port,
+            args.devices_per_coord,
         )
         backend = start_backend("proxy", args.block_size, str(rank_config))
         import morphling.hooks.autograd as hooks_autograd

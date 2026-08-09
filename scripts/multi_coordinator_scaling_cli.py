@@ -27,9 +27,14 @@ class ScalingCliConfig:
 def parse_scaling_cli() -> ScalingCliConfig:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--modes", nargs="+", choices=("strong", "weak"), default=("strong", "weak")
+        "--modes",
+        nargs="+",
+        choices=("strong", "weak"),
+        default=("strong", "weak"),
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("results/coord_scaling"))
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("results/coord_scaling")
+    )
     parser.add_argument("--timeout-seconds", type=int, default=1800)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--tiny", action="store_true")

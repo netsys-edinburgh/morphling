@@ -21,9 +21,7 @@ class _SequenceBackend:
         oid = next(self._operation_ids)
         self.dispatch_operands.append((mat_a, mat_b))
         if oid >= 0:
-            self._outputs[oid] = torch.matmul(
-                mat_a, mat_b.transpose(-2, -1)
-            )
+            self._outputs[oid] = torch.matmul(mat_a, mat_b.transpose(-2, -1))
         return oid
 
     def wait_matmul(self, oid: int) -> torch.Tensor:
@@ -68,7 +66,9 @@ def test_backward_rejects_failed_dispatch_before_wait() -> None:
     assert backend.waited_ids == [0]
 
 
-def test_forward_dispatches_contiguous_operands_with_native_linear_parity() -> None:
+def test_forward_dispatches_contiguous_operands_with_native_linear_parity() -> (
+    None
+):
     backend = _SequenceBackend([7])
     ag.set_backend(backend)
     input_tensor = torch.randn(3, 4)

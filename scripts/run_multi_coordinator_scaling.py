@@ -72,7 +72,9 @@ def _load_rank_result(path: Path) -> RankResult:
         throughput_samples_per_second=float(
             payload["throughput_samples_per_second"]
         ),
-        measured_losses=tuple(float(value) for value in payload["measured_losses"]),
+        measured_losses=tuple(
+            float(value) for value in payload["measured_losses"]
+        ),
         golden_losses=tuple(float(value) for value in payload["golden_losses"]),
         loss_correctness=LossCorrectness(
             passed=bool(correctness["passed"]),
@@ -93,9 +95,12 @@ def _rank_commands(
         commands.append(
             launch.command
             + (
-                "--scaling_mode", config.mode,
-                "--master_port", str(run.master_port),
-                "--base_proxy_port", str(run.base_proxy_port),
+                "--scaling_mode",
+                config.mode,
+                "--master_port",
+                str(run.master_port),
+                "--base_proxy_port",
+                str(run.base_proxy_port),
             )
         )
     return tuple(commands)

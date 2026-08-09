@@ -57,9 +57,7 @@ def apply_affinity_mode(
     return tuple(
         dataclasses.replace(
             run,
-            config=dataclasses.replace(
-                run.config, affinity_mode=affinity_mode
-            ),
+            config=dataclasses.replace(run.config, affinity_mode=affinity_mode),
         )
         for run in runs
     )

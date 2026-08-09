@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Mapping, TypedDict, assert_never
+from typing import Mapping, TypedDict
+
+try:  # Python 3.11+
+    from typing import assert_never
+except ImportError:  # Python 3.10
+    from typing_extensions import assert_never
 
 from scripts.multi_coordinator_scaling_analysis import reconcile_breakdown
 from scripts.multi_coordinator_scaling_config import ScalingConfig
@@ -165,7 +170,9 @@ def build_global_result(
     correctness = LossCorrectness(
         passed=all(rank.loss_correctness.passed for rank in ranks),
         decreasing=all(rank.loss_correctness.decreasing for rank in ranks),
-        tracks_golden=all(rank.loss_correctness.tracks_golden for rank in ranks),
+        tracks_golden=all(
+            rank.loss_correctness.tracks_golden for rank in ranks
+        ),
         max_relative_error=max(
             rank.loss_correctness.max_relative_error for rank in ranks
         ),

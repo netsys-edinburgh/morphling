@@ -125,7 +125,9 @@ def test_parse_metrics_skips_blank_lines(tmp_path: Path) -> None:
     assert metrics.iteration_runtime_seconds == 3.0
 
 
-def test_parse_metrics_warns_for_trailing_partial_record(tmp_path: Path) -> None:
+def test_parse_metrics_warns_for_trailing_partial_record(
+    tmp_path: Path,
+) -> None:
     # Given
     metrics_path = tmp_path / "metrics.jsonl"
     _write_jsonl(
@@ -222,7 +224,9 @@ def test_aggregate_repetitions_reports_means_and_success_count() -> None:
     assert aggregate.phase_durations_seconds == {"iteration_total": 10.0}
 
 
-def test_runtime_plateau_without_sustained_cpu_does_not_name_cpu_bottleneck() -> None:
+def test_runtime_plateau_without_sustained_cpu_does_not_name_cpu_bottleneck() -> (
+    None
+):
     # Given
     rows = (
         coordinator_scaling_analysis.ScalingPoint(1, 8.0, 100.0, 200.0),

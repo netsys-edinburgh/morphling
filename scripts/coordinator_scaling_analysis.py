@@ -96,7 +96,9 @@ def parse_metrics_jsonl(path: Path) -> RunMeasurement:
         try:
             records.append(json.loads(line))
         except json.JSONDecodeError as error:
-            message = f"malformed metrics JSONL at line {line_number}: {error.msg}"
+            message = (
+                f"malformed metrics JSONL at line {line_number}: {error.msg}"
+            )
             if position != len(numbered_lines) - 1:
                 return _empty_measurement(message)
             warnings.append(
@@ -104,9 +106,13 @@ def parse_metrics_jsonl(path: Path) -> RunMeasurement:
                 f"{error.msg}"
             )
     terminal_errors = [
-        record for record in records if record.get("record_type") == "terminal_error"
+        record
+        for record in records
+        if record.get("record_type") == "terminal_error"
     ]
-    samples = [record for record in records if record.get("record_type") == "sample"]
+    samples = [
+        record for record in records if record.get("record_type") == "sample"
+    ]
     measured = [
         sample
         for sample in samples
@@ -141,7 +147,9 @@ def parse_metrics_jsonl(path: Path) -> RunMeasurement:
         iteration_runtime_seconds=(
             iteration_total / iteration_count if iteration_count > 0 else None
         ),
-        peak_cpu_percent=max(float(sample["process_cpu_percent"]) for sample in measured),
+        peak_cpu_percent=max(
+            float(sample["process_cpu_percent"]) for sample in measured
+        ),
         median_cpu_percent=statistics.median(
             float(sample["process_cpu_percent"]) for sample in measured
         ),
@@ -190,14 +198,19 @@ def aggregate_repetitions(
         for measurement in successful
         for name in measurement.phase_durations_seconds
     }
-    peak_cpu_values = [measurement.peak_cpu_percent for measurement in successful]
+    peak_cpu_values = [
+        measurement.peak_cpu_percent for measurement in successful
+    ]
     peak_rss_values = [measurement.peak_rss_bytes for measurement in successful]
     return ScalingAggregate(
         device_count=device_count,
         repetitions=len(measurements),
         successful_repetitions=len(successful),
         iteration_runtime_seconds=_mean_present(
-            [measurement.iteration_runtime_seconds for measurement in successful]
+            [
+                measurement.iteration_runtime_seconds
+                for measurement in successful
+            ]
         ),
         peak_cpu_percent=max(peak_cpu_values) if peak_cpu_values else None,
         median_cpu_percent=_mean_present(
@@ -214,9 +227,14 @@ def aggregate_repetitions(
                 for measurement in successful
             ),
             default=0.0,
-        ) if successful else None,
+        )
+        if successful
+        else None,
         median_nic_tx_bytes_per_sec=_mean_present(
-            [measurement.median_nic_tx_bytes_per_sec for measurement in successful]
+            [
+                measurement.median_nic_tx_bytes_per_sec
+                for measurement in successful
+            ]
         ),
         peak_nic_rx_bytes_per_sec=max(
             (
@@ -224,13 +242,19 @@ def aggregate_repetitions(
                 for measurement in successful
             ),
             default=0.0,
-        ) if successful else None,
+        )
+        if successful
+        else None,
         median_nic_rx_bytes_per_sec=_mean_present(
-            [measurement.median_nic_rx_bytes_per_sec for measurement in successful]
+            [
+                measurement.median_nic_rx_bytes_per_sec
+                for measurement in successful
+            ]
         ),
         phase_counts={
             name: statistics.mean(
-                measurement.phase_counts.get(name, 0) for measurement in successful
+                measurement.phase_counts.get(name, 0)
+                for measurement in successful
             )
             for name in sorted(phase_names)
         },
