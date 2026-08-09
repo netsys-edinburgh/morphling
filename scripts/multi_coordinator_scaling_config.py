@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal, Mapping, assert_never
+from typing import Final, Literal, Mapping
+
+try:  # Python 3.11+
+    from typing import assert_never
+except ImportError:  # Python 3.10
+    from typing_extensions import assert_never
 
 ScalingMode = Literal["strong", "weak"]
 AffinityMode = Literal["numactl", "taskset"]
@@ -178,9 +183,7 @@ def build_rank_launch(
                 f"--cpunodebind={node}",
                 f"--membind={node}",
             )
-            substrate = (
-                "same-host Gloo loopback lower bound; NUMA CPU and memory binding"
-            )
+            substrate = "same-host Gloo loopback lower bound; NUMA CPU and memory binding"
         case "taskset":
             prefix = ("taskset", "--cpu-list", cpu_range)
             substrate = (

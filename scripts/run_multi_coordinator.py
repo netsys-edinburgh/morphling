@@ -44,7 +44,9 @@ from scripts.multi_coordinator_scaling_results import (
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker", action="store_true")
-    parser.add_argument("--scaling_mode", choices=("strong", "weak"), default="strong")
+    parser.add_argument(
+        "--scaling_mode", choices=("strong", "weak"), default="strong"
+    )
     parser.add_argument("--coords", type=int, choices=(1, 2), default=2)
     parser.add_argument("--devices_per_coord", type=int, default=1)
     parser.add_argument("--steps", type=int, default=3)

@@ -70,23 +70,31 @@ def test_output_path_uses_default_file_for_directory(tmp_path: Path) -> None:
     assert output_path == destination / "coordinator.jsonl"
 
 
-def test_ranked_output_path_suffixes_explicit_jsonl_file(tmp_path: Path) -> None:
+def test_ranked_output_path_suffixes_explicit_jsonl_file(
+    tmp_path: Path,
+) -> None:
     # Given
     destination = tmp_path / "metrics.jsonl"
 
     # When
-    output_path = coordinator_metrics_cli.metrics_output_path(destination, rank=2)
+    output_path = coordinator_metrics_cli.metrics_output_path(
+        destination, rank=2
+    )
 
     # Then
     assert output_path == tmp_path / "metrics-rank-2.jsonl"
 
 
-def test_ranked_output_path_uses_rank_file_for_directory(tmp_path: Path) -> None:
+def test_ranked_output_path_uses_rank_file_for_directory(
+    tmp_path: Path,
+) -> None:
     # Given
     destination = tmp_path / "metrics.results"
 
     # When
-    output_path = coordinator_metrics_cli.metrics_output_path(destination, rank=2)
+    output_path = coordinator_metrics_cli.metrics_output_path(
+        destination, rank=2
+    )
 
     # Then
     assert output_path == destination / "coordinator-rank-2.jsonl"
@@ -107,7 +115,9 @@ def test_config_from_args_keeps_metrics_disabled() -> None:
     assert config is None
 
 
-def test_config_from_args_resolves_ranked_output_and_nics(tmp_path: Path) -> None:
+def test_config_from_args_resolves_ranked_output_and_nics(
+    tmp_path: Path,
+) -> None:
     # Given
     args = argparse.Namespace(
         metrics_output=tmp_path / "metrics.jsonl",

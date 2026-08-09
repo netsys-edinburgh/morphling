@@ -38,15 +38,24 @@ def spawn_fake_fleet(
         environment["CUDA_VISIBLE_DEVICES"] = str(index % num_gpus)
         command = [
             "morphling_device",
-            "--id", str(index),
-            "--flops", "100T",
-            "--memory", "8G",
-            "--ul_bw", "10G",
-            "--dl_bw", "10G",
-            "--ul_lat", "0",
-            "--dl_lat", "0",
-            "--backend", backend_name,
-            "--cfg", device_cfg,
+            "--id",
+            str(index),
+            "--flops",
+            "100T",
+            "--memory",
+            "8G",
+            "--ul_bw",
+            "10G",
+            "--dl_bw",
+            "10G",
+            "--ul_lat",
+            "0",
+            "--dl_lat",
+            "0",
+            "--backend",
+            backend_name,
+            "--cfg",
+            device_cfg,
         ]
         if proxy_host:
             command += ["--proxy_host", proxy_host]

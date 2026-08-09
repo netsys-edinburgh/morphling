@@ -30,7 +30,9 @@ class ModelStep:
     loss_function: LossFunction
 
 
-def _optimizer(config: ScalingConfig, model: torch.nn.Module) -> torch.optim.Optimizer:
+def _optimizer(
+    config: ScalingConfig, model: torch.nn.Module
+) -> torch.optim.Optimizer:
     return torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
 
 
@@ -95,7 +97,9 @@ def _tiny_model(seed: int) -> torch.nn.Module:
     )
 
 
-def _tiny_inputs(seed: int, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
+def _tiny_inputs(
+    seed: int, batch_size: int
+) -> tuple[torch.Tensor, torch.Tensor]:
     generator = torch.Generator(device="cpu")
     generator.manual_seed(seed)
     return (

@@ -57,10 +57,14 @@ def _utc_now() -> str:
 
 
 def _write_json(path: Path, value: dict[str, object]) -> None:
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
-def _load_run(run_directory: Path) -> tuple[RunMeasurement, int, dict[str, object]]:
+def _load_run(
+    run_directory: Path,
+) -> tuple[RunMeasurement, int, dict[str, object]]:
     result_path = run_directory / "result.json"
     if not result_path.exists():
         error = "run result is unavailable"
@@ -87,7 +91,9 @@ def _write_summary(
     scaling_points: list[ScalingPoint] = []
     for device_count in device_counts:
         loaded = [
-            _load_run(output_root / f"devices-{device_count}" / f"rep-{repetition}")
+            _load_run(
+                output_root / f"devices-{device_count}" / f"rep-{repetition}"
+            )
             for repetition in range(1, repetitions + 1)
         ]
         measurements = tuple(item[0] for item in loaded)
@@ -172,9 +178,13 @@ def _write_summary(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--device-counts", nargs="+", type=int, default=[1, 2, 4, 8])
+    parser.add_argument(
+        "--device-counts", nargs="+", type=int, default=[1, 2, 4, 8]
+    )
     parser.add_argument("--repetitions", type=int, default=1)
-    parser.add_argument("--output-dir", type=Path, default=Path("results/coord_scaling/single"))
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("results/coord_scaling/single")
+    )
     parser.add_argument("--image", default=IMAGE)
     parser.add_argument("--metrics-interval", type=float, default=0.2)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
@@ -193,10 +203,16 @@ def main() -> int:
                     repetition,
                     port_for_run(run_index),
                     args.output_dir / relative,
-                    (args.output_dir / relative) if inside_docker else Path("/scaling-output") / relative,
+                    (args.output_dir / relative)
+                    if inside_docker
+                    else Path("/scaling-output") / relative,
                 )
                 if args.dry_run:
-                    print(" ".join(build_inner_command(run, args.metrics_interval)))
+                    print(
+                        " ".join(
+                            build_inner_command(run, args.metrics_interval)
+                        )
+                    )
                 else:
                     run_command(
                         run,

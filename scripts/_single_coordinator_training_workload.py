@@ -43,9 +43,7 @@ def extract_loss(outputs: Any, input_ids: torch.Tensor) -> torch.Tensor:
     if isinstance(loss, torch.Tensor):
         return loss
     logits = outputs["logits"] if isinstance(outputs, dict) else outputs.logits
-    return F.cross_entropy(
-        logits.view(-1, logits.size(-1)), input_ids.view(-1)
-    )
+    return F.cross_entropy(logits.view(-1, logits.size(-1)), input_ids.view(-1))
 
 
 def restricted_linear_forward(self: torch.nn.Linear, inp: torch.Tensor):

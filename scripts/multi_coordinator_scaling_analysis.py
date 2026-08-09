@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Sequence, assert_never
+from typing import Literal, Sequence
+
+try:  # Python 3.11+
+    from typing import assert_never
+except ImportError:  # Python 3.10
+    from typing_extensions import assert_never
 
 ScalingMode = Literal["strong", "weak"]
 ResponseCounterRecord = tuple[int, int, int, int]
@@ -51,9 +56,7 @@ def response_counters_are_balanced(
     for operation_id, count, previous, current in records:
         if count != 1 or previous != current + 1 or current < 0:
             return False
-        grouped.setdefault(operation_id, []).append(
-            (count, previous, current)
-        )
+        grouped.setdefault(operation_id, []).append((count, previous, current))
     if not grouped:
         return False
     return all(

@@ -32,7 +32,9 @@ class FakeFleetProcess:
         return 0
 
 
-def _rank_result(rank: int, *, passed: bool = True) -> run_multi_coordinator.RankResult:
+def _rank_result(
+    rank: int, *, passed: bool = True
+) -> run_multi_coordinator.RankResult:
     return run_multi_coordinator.RankResult(
         rank=rank,
         warmup_iteration_seconds=1.0,

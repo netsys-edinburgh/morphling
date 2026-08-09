@@ -28,12 +28,8 @@ class SaturationAssessment:
 def assess_saturation(
     points: Sequence[ScalingPoint], logical_cpu_count: int
 ) -> SaturationAssessment:
-    runtime_criterion = (
-        "largest-device iteration runtime is at least 95% of the preceding point"
-    )
-    resource_criterion = (
-        "largest-device median process CPU is at least 90% of logical host CPU capacity"
-    )
+    runtime_criterion = "largest-device iteration runtime is at least 95% of the preceding point"
+    resource_criterion = "largest-device median process CPU is at least 90% of logical host CPU capacity"
     if len(points) < 2 or logical_cpu_count <= 0:
         return SaturationAssessment(
             False,
@@ -48,7 +44,8 @@ def assess_saturation(
     median_normalized = current.median_cpu_percent / logical_cpu_count
     peak_normalized = current.peak_cpu_percent / logical_cpu_count
     runtime_plateau = (
-        current.iteration_runtime_seconds / previous.iteration_runtime_seconds >= 0.95
+        current.iteration_runtime_seconds / previous.iteration_runtime_seconds
+        >= 0.95
     )
     resource_saturation = median_normalized >= 90.0
     if runtime_plateau and resource_saturation:

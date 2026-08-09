@@ -37,10 +37,15 @@ def test_build_inner_command_uses_proven_d1_settings(tmp_path: Path) -> None:
     )
 
     # When
-    command = run_coordinator_scaling.build_inner_command(run, metrics_interval=0.2)
+    command = run_coordinator_scaling.build_inner_command(
+        run, metrics_interval=0.2
+    )
 
     # Then
-    assert command[:2] == ["python3", "scripts/run_single_coordinator_training.py"]
+    assert command[:2] == [
+        "python3",
+        "scripts/run_single_coordinator_training.py",
+    ]
     assert command[command.index("--num_devices") + 1] == "4"
     assert command[command.index("--model_name") + 1] == "facebook/opt-125m"
     assert command[command.index("--warmup_steps") + 1] == "1"
@@ -50,7 +55,9 @@ def test_build_inner_command_uses_proven_d1_settings(tmp_path: Path) -> None:
     assert command[command.index("--block_size") + 1] == "256"
     assert command[command.index("--metrics_nics") + 1] == "lo"
     assert command[command.index("--cfg") + 1].endswith("proxy.ini")
-    assert command[command.index("--metrics_output") + 1].endswith("metrics.jsonl")
+    assert command[command.index("--metrics_output") + 1].endswith(
+        "metrics.jsonl"
+    )
 
 
 def test_ports_are_unique_across_device_counts_and_repetitions() -> None:
@@ -58,7 +65,10 @@ def test_ports_are_unique_across_device_counts_and_repetitions() -> None:
     run_count = 48
 
     # When
-    ports = [run_coordinator_scaling.port_for_run(index) for index in range(run_count)]
+    ports = [
+        run_coordinator_scaling.port_for_run(index)
+        for index in range(run_count)
+    ]
 
     # Then
     assert len(set(ports)) == run_count
@@ -109,11 +119,15 @@ def test_timeout_forcibly_removes_only_named_docker_container(
     def fake_run(command: list[str], **_kwargs):
         calls.append(command)
         if len(calls) == 1:
-            raise subprocess.TimeoutExpired(command, 1, output="partial", stderr="late")
+            raise subprocess.TimeoutExpired(
+                command, 1, output="partial", stderr="late"
+            )
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(Path, "exists", fake_exists)
-    monkeypatch.setattr(coordinator_scaling_execution.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        coordinator_scaling_execution.subprocess, "run", fake_run
+    )
 
     # When
     coordinator_scaling_execution.run_command(
@@ -150,7 +164,9 @@ def test_normal_docker_completion_relies_only_on_auto_remove(
         return subprocess.CompletedProcess(command, 0, "ok", "")
 
     monkeypatch.setattr(Path, "exists", fake_exists)
-    monkeypatch.setattr(coordinator_scaling_execution.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        coordinator_scaling_execution.subprocess, "run", fake_run
+    )
 
     # When
     coordinator_scaling_execution.run_command(

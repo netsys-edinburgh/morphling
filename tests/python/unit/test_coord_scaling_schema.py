@@ -18,6 +18,7 @@ from scripts.coord_scaling_plot import schema
 
 # ── Fixture builders ────────────────────────────────────────────────────────
 
+
 def _summary(logical_cpu_count: int = 50) -> dict:
     return {
         "schema_version": 1,
@@ -48,8 +49,11 @@ def _summary(logical_cpu_count: int = 50) -> dict:
 def _scaling(mode: str, base_seconds: float, second_seconds: float) -> dict:
     def _point(coordinators: int, total_devices: int, seconds: float) -> dict:
         return {
-            "configuration": {"mode": mode, "coordinators": coordinators,
-                              "total_devices": total_devices},
+            "configuration": {
+                "mode": mode,
+                "coordinators": coordinators,
+                "total_devices": total_devices,
+            },
             "result": {
                 "coordinators": coordinators,
                 "iteration_total_seconds": seconds,
@@ -84,8 +88,12 @@ def _breakdown() -> dict:
     return {
         "schema_version": 1,
         "component_semantics": {"gradient_sync": "AllReduce over loopback"},
-        "rows": [_row("strong", 1), _row("strong", 2),
-                 _row("weak", 1), _row("weak", 2)],
+        "rows": [
+            _row("strong", 1),
+            _row("strong", 2),
+            _row("weak", 1),
+            _row("weak", 2),
+        ],
     }
 
 
@@ -96,6 +104,7 @@ def _write(tmp_path: Path, name: str, payload: dict) -> Path:
 
 
 # ── Device-scaling parsing (panel a) ────────────────────────────────────────
+
 
 def test_parse_device_scaling_sorts_points_and_normalizes_cpu() -> None:
     # Given a summary with rows out of device-count order
@@ -110,7 +119,9 @@ def test_parse_device_scaling_sorts_points_and_normalizes_cpu() -> None:
     assert device.logical_cpu_count == 50
 
 
-def test_parse_device_scaling_missing_runtime_field_raises_schema_error() -> None:
+def test_parse_device_scaling_missing_runtime_field_raises_schema_error() -> (
+    None
+):
     payload = _summary()
     del payload["rows"][0]["iteration_runtime_seconds"]
 
@@ -145,10 +156,12 @@ def test_parse_device_scaling_skips_null_runtime_points() -> None:
 
 # ── Scaling efficiency parsing (panel b) ────────────────────────────────────
 
+
 def test_strong_efficiency_computed_per_point_with_unit_baseline() -> None:
     # Given strong points: base=10s @1 coord, 6s @2 coords
     strong = schema.parse_scaling_efficiency(
-        _scaling("strong", base_seconds=10.0, second_seconds=6.0), "strong")
+        _scaling("strong", base_seconds=10.0, second_seconds=6.0), "strong"
+    )
 
     # Then efficiency(1)=1.0 and efficiency(2)=base/(2*meas)=10/12
     assert strong.mode == "strong"
@@ -159,7 +172,8 @@ def test_strong_efficiency_computed_per_point_with_unit_baseline() -> None:
 
 def test_weak_efficiency_uses_local_baseline() -> None:
     weak = schema.parse_scaling_efficiency(
-        _scaling("weak", base_seconds=8.0, second_seconds=9.0), "weak")
+        _scaling("weak", base_seconds=8.0, second_seconds=9.0), "weak"
+    )
 
     assert weak.points[0].efficiency == pytest.approx(1.0)
     assert weak.points[1].efficiency == pytest.approx(8.0 / 9.0)
@@ -180,17 +194,25 @@ def test_scaling_efficiency_rejects_unknown_mode() -> None:
 
 # ── Breakdown parsing (panel c) ─────────────────────────────────────────────
 
+
 def test_breakdown_orders_components_canonically() -> None:
     breakdown = schema.parse_breakdown(_breakdown())
 
     assert schema.BREAKDOWN_COMPONENTS == (
-        "device_dispatch_aggregation", "gradient_sync",
-        "optimizer", "idle_other")
+        "device_dispatch_aggregation",
+        "gradient_sync",
+        "optimizer",
+        "idle_other",
+    )
     row = breakdown.rows[0]
     # components tuple is aligned to BREAKDOWN_COMPONENTS regardless of key order
     assert row.components == pytest.approx((6.0, 1.5, 1.0, 1.5))
     assert [(r.mode, r.coordinators) for r in breakdown.rows] == [
-        ("strong", 1), ("strong", 2), ("weak", 1), ("weak", 2)]
+        ("strong", 1),
+        ("strong", 2),
+        ("weak", 1),
+        ("weak", 2),
+    ]
 
 
 def test_breakdown_components_reconcile_to_iteration_total() -> None:
@@ -225,6 +247,7 @@ def test_breakdown_empty_rows_raises_missing_data() -> None:
 
 
 # ── JSON loading boundary ───────────────────────────────────────────────────
+
 
 def test_load_json_missing_file_raises_clear_error(tmp_path: Path) -> None:
     missing = tmp_path / "nope.json"

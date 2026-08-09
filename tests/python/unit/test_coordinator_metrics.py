@@ -31,7 +31,9 @@ assert MODELS_SPEC is not None and MODELS_SPEC.loader is not None
 coordinator_metrics_models = importlib.util.module_from_spec(MODELS_SPEC)
 sys.modules[MODELS_SPEC.name] = coordinator_metrics_models
 MODELS_SPEC.loader.exec_module(coordinator_metrics_models)
-SPEC = importlib.util.spec_from_file_location("coordinator_metrics", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location(
+    "coordinator_metrics", MODULE_PATH
+)
 assert SPEC is not None and SPEC.loader is not None
 coordinator_metrics = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = coordinator_metrics
@@ -131,7 +133,9 @@ def test_multi_coordinator_output_paths_do_not_collide(tmp_path: Path) -> None:
     output_directory = tmp_path / "metrics"
 
     # When
-    rank_zero = coordinator_metrics.metrics_output_path(output_directory, rank=0)
+    rank_zero = coordinator_metrics.metrics_output_path(
+        output_directory, rank=0
+    )
     rank_one = coordinator_metrics.metrics_output_path(output_directory, rank=1)
 
     # Then
@@ -334,7 +338,9 @@ def test_collector_start_stop_writes_jsonl_and_stop_is_idempotent(
     collector.start()
     collector.stop()
     collector.stop()
-    samples = [json.loads(line) for line in output_path.read_text().splitlines()]
+    samples = [
+        json.loads(line) for line in output_path.read_text().splitlines()
+    ]
 
     # Then
     assert [sample["record_type"] for sample in samples] == ["sample", "sample"]
@@ -367,7 +373,9 @@ def test_background_sampling_failure_writes_terminal_error_and_stop_returns(
     collector.start()
     assert read_attempted.wait(timeout=1.0)
     collector.stop()
-    records = [json.loads(line) for line in output_path.read_text().splitlines()]
+    records = [
+        json.loads(line) for line in output_path.read_text().splitlines()
+    ]
 
     # Then
     assert set(records[-1]) == {

@@ -17,6 +17,7 @@ from scripts.coord_scaling_plot import cli, figure, schema
 
 # ── Fixture builders (mirror the real emitter field names) ──────────────────
 
+
 def _summary() -> dict:
     def _row(device_count: int, seconds: float, cpu: float) -> dict:
         return {
@@ -32,8 +33,12 @@ def _summary() -> dict:
             "logical_cpu_count": 56,
             "host_nic_substrate": "single-host loopback/emulated devices",
         },
-        "rows": [_row(1, 12.0, 2200.0), _row(2, 9.6, 2600.0),
-                 _row(4, 9.7, 2950.0), _row(8, 9.9, 2860.0)],
+        "rows": [
+            _row(1, 12.0, 2200.0),
+            _row(2, 9.6, 2600.0),
+            _row(4, 9.7, 2950.0),
+            _row(8, 9.9, 2860.0),
+        ],
     }
 
 
@@ -48,29 +53,41 @@ def _scaling(mode: str, base: float, second: float) -> dict:
             },
         }
 
-    return {"points": [_point(1, base), _point(2, second)],
-            "conclusion": {"mode": mode, "efficiency": base / second}}
+    return {
+        "points": [_point(1, base), _point(2, second)],
+        "conclusion": {"mode": mode, "efficiency": base / second},
+    }
 
 
 def _breakdown() -> dict:
     def _row(mode: str, coordinators: int, sync: float) -> dict:
         idle = 10.0 - 6.0 - sync - 1.0
         return {
-            "mode": mode, "coordinators": coordinators, "iteration_total": 10.0,
-            "device_dispatch_aggregation": 6.0, "gradient_sync": sync,
-            "optimizer": 1.0, "idle_other": idle,
+            "mode": mode,
+            "coordinators": coordinators,
+            "iteration_total": 10.0,
+            "device_dispatch_aggregation": 6.0,
+            "gradient_sync": sync,
+            "optimizer": 1.0,
+            "idle_other": idle,
         }
 
     return {
         "component_semantics": {"gradient_sync": "AllReduce over loopback"},
-        "rows": [_row("strong", 1, 0.5), _row("strong", 2, 1.5),
-                 _row("weak", 1, 0.5), _row("weak", 2, 1.5)],
+        "rows": [
+            _row("strong", 1, 0.5),
+            _row("strong", 2, 1.5),
+            _row("weak", 1, 0.5),
+            _row("weak", 2, 1.5),
+        ],
     }
 
 
 def _parsed():
     device = schema.parse_device_scaling(_summary())
-    strong = schema.parse_scaling_efficiency(_scaling("strong", 10.0, 6.0), "strong")
+    strong = schema.parse_scaling_efficiency(
+        _scaling("strong", 10.0, 6.0), "strong"
+    )
     weak = schema.parse_scaling_efficiency(_scaling("weak", 8.0, 9.0), "weak")
     breakdown = schema.parse_breakdown(_breakdown())
     return device, strong, weak, breakdown
@@ -84,13 +101,16 @@ def _write_inputs(tmp_path: Path) -> dict:
         "breakdown": tmp_path / "breakdown.json",
     }
     paths["summary"].write_text(json.dumps(_summary()), encoding="utf-8")
-    paths["strong"].write_text(json.dumps(_scaling("strong", 10.0, 6.0)), "utf-8")
+    paths["strong"].write_text(
+        json.dumps(_scaling("strong", 10.0, 6.0)), "utf-8"
+    )
     paths["weak"].write_text(json.dumps(_scaling("weak", 8.0, 9.0)), "utf-8")
     paths["breakdown"].write_text(json.dumps(_breakdown()), encoding="utf-8")
     return paths
 
 
 # ── Figure structure ────────────────────────────────────────────────────────
+
 
 def test_build_figure_has_three_panels_and_no_figure_title() -> None:
     import matplotlib.pyplot as plt
@@ -114,7 +134,9 @@ def test_breakdown_panel_legend_uses_canonical_component_order() -> None:
     fig = figure.build_figure(*_parsed())
     try:
         assert len(figure.COMPONENT_LABELS) == len(schema.BREAKDOWN_COMPONENTS)
-        panel_c = next(ax for ax in fig.axes if ax.get_title().startswith("(c)"))
+        panel_c = next(
+            ax for ax in fig.axes if ax.get_title().startswith("(c)")
+        )
         legend = panel_c.get_legend()
         labels = [text.get_text() for text in legend.get_texts()]
         assert labels == list(figure.COMPONENT_LABELS)
@@ -124,15 +146,23 @@ def test_breakdown_panel_legend_uses_canonical_component_order() -> None:
 
 # ── CLI contract ────────────────────────────────────────────────────────────
 
+
 def test_cli_missing_input_path_fails_clearly(tmp_path: Path, capsys) -> None:
     missing = tmp_path / "absent_summary.json"
-    exit_code = cli.main([
-        "--summary", str(missing),
-        "--strong", str(tmp_path / "strong.json"),
-        "--weak", str(tmp_path / "weak.json"),
-        "--breakdown", str(tmp_path / "breakdown.json"),
-        "--out", str(tmp_path / "fig"),
-    ])
+    exit_code = cli.main(
+        [
+            "--summary",
+            str(missing),
+            "--strong",
+            str(tmp_path / "strong.json"),
+            "--weak",
+            str(tmp_path / "weak.json"),
+            "--breakdown",
+            str(tmp_path / "breakdown.json"),
+            "--out",
+            str(tmp_path / "fig"),
+        ]
+    )
 
     assert exit_code == 2
     assert "absent_summary.json" in capsys.readouterr().err
@@ -142,13 +172,20 @@ def test_cli_generates_vector_pdf_and_png(tmp_path: Path) -> None:
     inputs = _write_inputs(tmp_path)
     out_base = tmp_path / "coordinator_scaling"
 
-    exit_code = cli.main([
-        "--summary", str(inputs["summary"]),
-        "--strong", str(inputs["strong"]),
-        "--weak", str(inputs["weak"]),
-        "--breakdown", str(inputs["breakdown"]),
-        "--out", str(out_base),
-    ])
+    exit_code = cli.main(
+        [
+            "--summary",
+            str(inputs["summary"]),
+            "--strong",
+            str(inputs["strong"]),
+            "--weak",
+            str(inputs["weak"]),
+            "--breakdown",
+            str(inputs["breakdown"]),
+            "--out",
+            str(out_base),
+        ]
+    )
 
     assert exit_code == 0
     pdf = out_base.with_suffix(".pdf")

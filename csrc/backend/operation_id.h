@@ -11,10 +11,9 @@ inline constexpr int kMaxLifetimeOperationCount = 65'536;
 
 inline void ValidateOperationId(int oid) {
   if (oid < 0 || oid >= kMaxLifetimeOperationCount) {
-    throw std::out_of_range(
-        "matmul operation id " + std::to_string(oid) +
-        " is outside the valid range [0, " +
-        std::to_string(kMaxLifetimeOperationCount) + ")");
+    throw std::out_of_range("matmul operation id " + std::to_string(oid) +
+                            " is outside the valid range [0, " +
+                            std::to_string(kMaxLifetimeOperationCount) + ")");
   }
 }
 
@@ -29,5 +28,5 @@ inline int ReserveOperationId(std::atomic_int& next_oid) noexcept {
   return -1;
 }
 
-}
-}
+}  // namespace backend
+}  // namespace morphling

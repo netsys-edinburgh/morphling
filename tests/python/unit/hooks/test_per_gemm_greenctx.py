@@ -22,9 +22,7 @@ class _LocalMatmulBackend:
     def async_dispatch_matmul(self, mat_a, mat_b) -> int:
         oid = self._next_oid
         self._next_oid += 1
-        self._outputs[oid] = torch.matmul(
-            mat_a, mat_b.transpose(-2, -1)
-        )
+        self._outputs[oid] = torch.matmul(mat_a, mat_b.transpose(-2, -1))
         return oid
 
     def wait_matmul(self, oid: int):

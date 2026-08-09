@@ -15,7 +15,9 @@ def test_opt_strong_scaling_keeps_full_model_global_work_fixed() -> None:
     )
 
     # Then
-    assert [(config.coordinators, config.local_batch) for config in configs] == [
+    assert [
+        (config.coordinators, config.local_batch) for config in configs
+    ] == [
         (1, 2),
         (2, 1),
     ]
@@ -35,7 +37,9 @@ def test_opt_weak_scaling_keeps_full_model_local_work_fixed() -> None:
     )
 
     # Then
-    assert [(config.coordinators, config.global_batch) for config in configs] == [
+    assert [
+        (config.coordinators, config.global_batch) for config in configs
+    ] == [
         (1, 1),
         (2, 2),
     ]
@@ -64,7 +68,9 @@ def test_full_model_rank_command_carries_model_sequence_and_block_size(
     assert "--tiny" not in launch.command
 
 
-def test_tiny_rank_command_preserves_quick_workload_mode(tmp_path: Path) -> None:
+def test_tiny_rank_command_preserves_quick_workload_mode(
+    tmp_path: Path,
+) -> None:
     # Given
     config = run_multi_coordinator.build_scaling_configs(
         "strong", run_multi_coordinator.TINY_WORKLOAD

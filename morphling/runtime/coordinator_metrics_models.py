@@ -72,16 +72,24 @@ def aggregate_nic_counters(
     nic_names: Sequence[str] | None,
 ) -> SelectedNicCounters:
     """Aggregate selected interfaces in stable lexical order."""
-    selected_names = tuple(sorted(counters if nic_names is None else set(nic_names)))
-    missing_names = tuple(name for name in selected_names if name not in counters)
+    selected_names = tuple(
+        sorted(counters if nic_names is None else set(nic_names))
+    )
+    missing_names = tuple(
+        name for name in selected_names if name not in counters
+    )
     if missing_names:
         missing = ", ".join(missing_names)
         raise KeyError(f"network interface(s) unavailable: {missing}")
     return SelectedNicCounters(
         nic_names=selected_names,
         counters=NicCounters(
-            bytes_sent=sum(counters[name].bytes_sent for name in selected_names),
-            bytes_recv=sum(counters[name].bytes_recv for name in selected_names),
+            bytes_sent=sum(
+                counters[name].bytes_sent for name in selected_names
+            ),
+            bytes_recv=sum(
+                counters[name].bytes_recv for name in selected_names
+            ),
         ),
     )
 

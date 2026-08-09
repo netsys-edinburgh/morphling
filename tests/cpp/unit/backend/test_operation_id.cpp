@@ -28,4 +28,4 @@ TEST(OperationIdTest, ReservesLastAvailableOidWithoutExceedingCapacity) {
   EXPECT_EQ(next_oid.load(), kMaxLifetimeOperationCount);
 }
 
-}
+}  // namespace

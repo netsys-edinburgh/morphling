@@ -659,7 +659,9 @@ void ProxySvrHandle::ConnectionClosedCb(const ConnectionUeventPtr& conn) {
 /********************************ProxySvrImpl****************************************/
 
 ProxySvrImpl::ProxySvrImpl(ProxyEnvCfg& ctx)
-    : ctx_(ctx), listener_(nullptr), rsp_cb_counts_(kMaxLifetimeOperationCount) {
+    : ctx_(ctx),
+      listener_(nullptr),
+      rsp_cb_counts_(kMaxLifetimeOperationCount) {
   // Initialize with greedy scheduling policy by default
 }
 
@@ -929,7 +931,8 @@ torch::Tensor ProxySvrImpl::WaitMatMul(int oid) {
 }
 
 void ProxySvrImpl::WriteResultBlock(int oid, torch::Tensor& block, int64_t row,
-                                    int64_t col, int64_t pivot, int block_size) {
+                                    int64_t col, int64_t pivot,
+                                    int block_size) {
   std::lock_guard<std::mutex> lock(outputs_mutex_);
   IndexPutMatrixBlock(outputs_[oid], block, row, col, pivot, block_size);
 }

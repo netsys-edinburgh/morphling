@@ -29,9 +29,7 @@ class _StubBackend:
     ) -> int:
         oid = self.dispatch_calls
         self.dispatch_calls += 1
-        self._outputs[oid] = torch.matmul(
-            mat_a, mat_b.transpose(-2, -1)
-        )
+        self._outputs[oid] = torch.matmul(mat_a, mat_b.transpose(-2, -1))
         return oid
 
     def wait_matmul(self, oid: int) -> torch.Tensor:

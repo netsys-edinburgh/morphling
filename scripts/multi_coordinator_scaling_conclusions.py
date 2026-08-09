@@ -41,7 +41,6 @@ def build_scaling_conclusion(
             / baseline.throughput_samples_per_second
         ),
         correctness_passed=(
-            baseline.loss_correctness.passed
-            and scaled.loss_correctness.passed
+            baseline.loss_correctness.passed and scaled.loss_correctness.passed
         ),
     )

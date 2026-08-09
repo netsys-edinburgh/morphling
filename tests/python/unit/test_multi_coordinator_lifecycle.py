@@ -56,7 +56,9 @@ def test_rank_error_terminates_all_other_rank_groups() -> None:
     assert all(rank.terminated and rank.killed for rank in ranks)
 
 
-def test_distributed_timeout_flows_to_command_and_config(tmp_path: Path) -> None:
+def test_distributed_timeout_flows_to_command_and_config(
+    tmp_path: Path,
+) -> None:
     # Given
     config = dataclasses.replace(
         run_multi_coordinator.build_scaling_configs("strong")[0],
@@ -67,7 +69,12 @@ def test_distributed_timeout_flows_to_command_and_config(tmp_path: Path) -> None
     launch = run_multi_coordinator.build_rank_launch(config, 0, tmp_path)
 
     # Then
-    assert launch.command[launch.command.index("--distributed-timeout-seconds") + 1] == "37"
+    assert (
+        launch.command[
+            launch.command.index("--distributed-timeout-seconds") + 1
+        ]
+        == "37"
+    )
     assert dataclasses.asdict(config)["distributed_timeout_seconds"] == 37
 
 
@@ -81,8 +88,13 @@ class EvalTrackingModel(torch.nn.Module):
         self.eval_called = True
         return self
 
-    def forward(self, *, input_ids: torch.Tensor, labels: torch.Tensor) -> dict[str, torch.Tensor]:
-        return {"logits": torch.nn.functional.one_hot(input_ids, 4).float() * self.weight}
+    def forward(
+        self, *, input_ids: torch.Tensor, labels: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
+        return {
+            "logits": torch.nn.functional.one_hot(input_ids, 4).float()
+            * self.weight
+        }
 
 
 def test_single_coordinator_full_workload_uses_eval_mode() -> None:
@@ -111,7 +123,9 @@ def test_matching_rising_trajectory_still_passes_equivalence() -> None:
     # When
     result = results.build_rank_result(
         config,
-        results.RankMeasurement(0, {"iteration_total": 1.0}, (1.0, 1.01), (1.0, 1.01)),
+        results.RankMeasurement(
+            0, {"iteration_total": 1.0}, (1.0, 1.01), (1.0, 1.01)
+        ),
     )
 
     # Then
@@ -120,11 +134,15 @@ def test_matching_rising_trajectory_still_passes_equivalence() -> None:
 
 
 @pytest.mark.parametrize("measured", [(float("nan"), 1.0), (1.0, 2.0)])
-def test_nan_or_mismatch_fails_equivalence(measured: tuple[float, float]) -> None:
+def test_nan_or_mismatch_fails_equivalence(
+    measured: tuple[float, float],
+) -> None:
     config = run_multi_coordinator.build_scaling_configs("strong")[0]
     result = results.build_rank_result(
         config,
-        results.RankMeasurement(0, {"iteration_total": 1.0}, measured, (1.0, 1.0)),
+        results.RankMeasurement(
+            0, {"iteration_total": 1.0}, measured, (1.0, 1.0)
+        ),
     )
     assert result.loss_correctness.passed is False
 
@@ -132,4 +150,6 @@ def test_nan_or_mismatch_fails_equivalence(measured: tuple[float, float]) -> Non
 def test_reference_grad_input_uses_supported_matmul_signature() -> None:
     grad = torch.ones((2, 3))
     weight = torch.ones((3, 4))
-    assert torch.equal(autograd._reference_grad_input(grad, weight), torch.matmul(grad, weight))
+    assert torch.equal(
+        autograd._reference_grad_input(grad, weight), torch.matmul(grad, weight)
+    )
