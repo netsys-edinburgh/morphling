@@ -446,6 +446,46 @@ def _baseline_uses_pipeline_overlay(
     return pp_size > 1
 
 
+def _within_batch_multiplier(
+    trace: dict[str, Any] | None,
+    device_id: int,
+    level: int,
+    num_levels: int,
+) -> tuple[float, float, float]:
+    """(flops_mult, ul_bw_mult, dl_bw_mult) for an entry from a within-batch
+    trace, indexed by device and batch progress = level / num_levels. Returns
+    (1, 1, 1) when no trace or the device is absent."""
+    if not trace:
+        return 1.0, 1.0, 1.0
+    dev = trace.get("devices", {}).get(str(device_id))
+    if not dev:
+        return 1.0, 1.0, 1.0
+    num_bins = int(trace.get("num_bins", 1)) or 1
+    frac = 0.0 if num_levels <= 1 else min(0.999999, max(0.0, level / num_levels))
+    b = min(num_bins - 1, int(frac * num_bins))
+
+    def _at(key: str) -> float:
+        arr = dev.get(key)
+        if not arr:
+            return 1.0
+        v = float(arr[b]) if b < len(arr) else float(arr[-1])
+        return v if v > 1e-6 else 1e-6
+
+    return _at("flops_mult"), _at("ul_bw_mult"), _at("dl_bw_mult")
+
+
+def _scale_phase(
+    phase: str, dur_us: float, fm: float, um: float, dm: float
+) -> float:
+    if phase == "COMPUTE":
+        return dur_us / fm
+    if phase == "DOWNLOAD":
+        return dur_us / dm
+    if phase == "UPLOAD":
+        return dur_us / um
+    return dur_us
+
+
 def compute_batch_runtime(
     vtime_events: list[VTimeEvent],
     manifest: dict[str, Any] | list[dict[str, Any]],
@@ -457,6 +497,7 @@ def compute_batch_runtime(
     device_profiles: dict[int, dict[str, float]] | None = None,
     bytes_per_element: float = 2.0,
     allreduce_bandwidth_bps: float | None = None,
+    within_batch_trace: dict[str, Any] | None = None,
 ) -> BatchRuntimeResult:
     device_profiles = device_profiles or {}
     baseline = baseline_type.lower()
@@ -465,6 +506,8 @@ def compute_batch_runtime(
     entries = [_normalize_entry(x) for x in raw_entries]
     if not entries:
         raise ValueError("Manifest has no dispatch entries")
+
+    num_levels = max((e["level"] for e in entries), default=0) + 1
 
     by_device_gemm, by_gemm = _build_entry_lookup(entries)
     collective_groups = _build_collective_groups(entries)
@@ -499,8 +542,13 @@ def compute_batch_runtime(
                 entry["stage_id"],
                 entry["is_local"],
             )
+            fm, um, dm = _within_batch_multiplier(
+                within_batch_trace, entry["device_id"], entry["level"], num_levels
+            )
             for phase, dur_us in phases.items():
-                phase_us_by_key[key][phase] += dur_us
+                phase_us_by_key[key][phase] += _scale_phase(
+                    phase, dur_us, fm, um, dm
+                )
     else:
         for entry in entries:
             key = (
@@ -516,8 +564,13 @@ def compute_batch_runtime(
                 device_profiles,
                 bytes_per_element,
             )
+            fm, um, dm = _within_batch_multiplier(
+                within_batch_trace, entry["device_id"], entry["level"], num_levels
+            )
             for phase, dur_us in synthetic.items():
-                phase_us_by_key[key][phase] += max(dur_us, 0.0)
+                phase_us_by_key[key][phase] += _scale_phase(
+                    phase, max(dur_us, 0.0), fm, um, dm
+                )
 
     per_device_breakdown: dict[int, dict[str, float]] = defaultdict(
         lambda: {"compute_ms": 0.0, "network_ms": 0.0, "total_ms": 0.0}
