@@ -461,7 +461,9 @@ def _within_batch_multiplier(
     if not dev:
         return 1.0, 1.0, 1.0
     num_bins = int(trace.get("num_bins", 1)) or 1
-    frac = 0.0 if num_levels <= 1 else min(0.999999, max(0.0, level / num_levels))
+    frac = (
+        0.0 if num_levels <= 1 else min(0.999999, max(0.0, level / num_levels))
+    )
     b = min(num_bins - 1, int(frac * num_bins))
 
     def _at(key: str) -> float:
@@ -543,7 +545,10 @@ def compute_batch_runtime(
                 entry["is_local"],
             )
             fm, um, dm = _within_batch_multiplier(
-                within_batch_trace, entry["device_id"], entry["level"], num_levels
+                within_batch_trace,
+                entry["device_id"],
+                entry["level"],
+                num_levels,
             )
             for phase, dur_us in phases.items():
                 phase_us_by_key[key][phase] += _scale_phase(
@@ -565,7 +570,10 @@ def compute_batch_runtime(
                 bytes_per_element,
             )
             fm, um, dm = _within_batch_multiplier(
-                within_batch_trace, entry["device_id"], entry["level"], num_levels
+                within_batch_trace,
+                entry["device_id"],
+                entry["level"],
+                num_levels,
             )
             for phase, dur_us in synthetic.items():
                 phase_us_by_key[key][phase] += _scale_phase(

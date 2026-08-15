@@ -14,14 +14,20 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from compute_batch_runtime import compute_batch_runtime, _load_json
+from compute_batch_runtime import _load_json, compute_batch_runtime
 
 BATCH = 128
 SEQ = 1024
 TOKENS = BATCH * SEQ
 A100_BF16_PEAK = 3.12e14
 A100_UTIL = 0.975
-MEDIAN_EDGE = {"flops": 6e12, "ul_bw": 7.5e6, "dl_bw": 55e6, "ul_lat": 0.0, "dl_lat": 0.0}
+MEDIAN_EDGE = {
+    "flops": 6e12,
+    "ul_bw": 7.5e6,
+    "dl_bw": 55e6,
+    "ul_lat": 0.0,
+    "dl_lat": 0.0,
+}
 
 CLOUD_PARAMS = {"opt-13b": 13e9, "llama2-13b": 13e9, "llama2-70b": 70e9}
 CLOUD_EXPECTED = {"opt-13b": 33.6, "llama2-13b": 33.6, "llama2-70b": 180.8}
@@ -38,15 +44,21 @@ def cloud_seconds(num_params: float) -> float:
 def main() -> int:
     ok = True
 
-    print("== Cloud A100 analytical baseline (6*P*tokens / (312 TFLOPS * 0.975)) ==")
+    print(
+        "== Cloud A100 analytical baseline (6*P*tokens / (312 TFLOPS * 0.975)) =="
+    )
     for model, params in CLOUD_PARAMS.items():
         got = cloud_seconds(params)
         exp = CLOUD_EXPECTED[model]
         close = abs(got - exp) <= 0.6
         ok = ok and close
-        print(f"  {model:11s}: {got:6.1f} s  (paper {exp})  {'OK' if close else 'MISMATCH'}")
+        print(
+            f"  {model:11s}: {got:6.1f} s  (paper {exp})  {'OK' if close else 'MISMATCH'}"
+        )
 
-    print("\n== sys (CLEAVE) OPT-13B/256, uniform median-edge fleet, bytes/elem=1 ==")
+    print(
+        "\n== sys (CLEAVE) OPT-13B/256, uniform median-edge fleet, bytes/elem=1 =="
+    )
     manifest = _load_json(f"{OPT13B_256_MANIFESTS}/cleave_manifest.json")
     meta = manifest.get("metadata", {}).get("model", {})
     profiles = {i: dict(MEDIAN_EDGE) for i in range(256)}
@@ -56,13 +68,17 @@ def main() -> int:
     cleave_s = res.total_runtime_ms / 1000.0
     cleave_close = abs(cleave_s - 37.3) <= 2.0
     ok = ok and cleave_close
-    print(f"  cleave: {cleave_s:.1f} s  (paper 37.3)  {'OK' if cleave_close else 'MISMATCH'}")
+    print(
+        f"  cleave: {cleave_s:.1f} s  (paper 37.3)  {'OK' if cleave_close else 'MISMATCH'}"
+    )
 
     print("\n== matched envelope ==")
     seq_ok = int(meta.get("seq_length", 0)) == SEQ
     ok = ok and seq_ok
-    print(f"  OPT-13B/256 manifest: model={meta.get('model_name')} "
-          f"seq={meta.get('seq_length')} (expected {SEQ})  {'OK' if seq_ok else 'MISMATCH'}")
+    print(
+        f"  OPT-13B/256 manifest: model={meta.get('model_name')} "
+        f"seq={meta.get('seq_length')} (expected {SEQ})  {'OK' if seq_ok else 'MISMATCH'}"
+    )
     print(f"  batch={BATCH}, tokens={TOKENS} used for the cloud FLOP count")
 
     print("\nRESULT:", "PASS" if ok else "FAIL")
