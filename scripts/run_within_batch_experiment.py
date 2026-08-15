@@ -33,7 +33,10 @@ def _inputs(root: Path, baseline: str) -> tuple[Path, Path, Path]:
     ]
     vt = next((p for p in vt_candidates if p.exists()), vt_candidates[0])
     mf_candidates = [
-        root / f"{baseline}_results" / "manifests" / f"{baseline}_manifest.json",
+        root
+        / f"{baseline}_results"
+        / "manifests"
+        / f"{baseline}_manifest.json",
         root / "planning" / "manifests" / f"{baseline}_manifest.json",
     ]
     mf = next((p for p in mf_candidates if p.exists()), mf_candidates[0])
@@ -46,7 +49,9 @@ def _inputs(root: Path, baseline: str) -> tuple[Path, Path, Path]:
 
 
 def _useful_flops(manifest: Any) -> float:
-    ents = manifest.get("entries", []) if isinstance(manifest, dict) else manifest
+    ents = (
+        manifest.get("entries", []) if isinstance(manifest, dict) else manifest
+    )
     seen: dict[tuple[int, int], float] = {}
     for e in ents:
         key = (int(e.get("level", 0)), int(e.get("gemm_id", 0)))
@@ -64,8 +69,16 @@ def _num_devices(manifest: Any) -> int:
         nd = int(meta.get("num_devices", 0) or 0)
         if nd > 0:
             return nd
-    ents = manifest.get("entries", []) if isinstance(manifest, dict) else manifest
-    return len({int(e.get("device_id", -1)) for e in ents if int(e.get("device_id", -1)) >= 0})
+    ents = (
+        manifest.get("entries", []) if isinstance(manifest, dict) else manifest
+    )
+    return len(
+        {
+            int(e.get("device_id", -1))
+            for e in ents
+            if int(e.get("device_id", -1)) >= 0
+        }
+    )
 
 
 def _idle_fraction(result: Any, num_devices: int) -> float:
@@ -77,7 +90,9 @@ def _idle_fraction(result: Any, num_devices: int) -> float:
 
 
 def _level_devices(manifest: Any) -> dict[int, list[int]]:
-    ents = manifest.get("entries", []) if isinstance(manifest, dict) else manifest
+    ents = (
+        manifest.get("entries", []) if isinstance(manifest, dict) else manifest
+    )
     out: dict[int, set[int]] = {}
     for e in ents:
         lvl = int(e.get("level", 0))
@@ -125,7 +140,9 @@ def _cleave_reweighted_runtime(
     for lvl in nominal.per_level_breakdown:
         l = int(lvl["level"])
         t = float(lvl["runtime_ms"])
-        mr = _mean_rate(trace, level_devices.get(l, []), l, num_levels, num_bins)
+        mr = _mean_rate(
+            trace, level_devices.get(l, []), l, num_levels, num_bins
+        )
         total += t / mr if mr > 0 else t
     return total + float(nominal.optimizer_tail_ms)
 
@@ -158,7 +175,9 @@ def run(
                 vtime_events=parse_vtime_log(str(vt)),
                 manifest=manifest,
                 baseline_type=b,
-                device_profiles=_load_device_profiles(str(dc)) if dc.exists() else {},
+                device_profiles=_load_device_profiles(str(dc))
+                if dc.exists()
+                else {},
             ),
         }
 
@@ -190,8 +209,11 @@ def run(
                 idle = _idle_fraction(data["nominal"], data["num_devices"])
             elif b == "cleave":
                 rt = _cleave_reweighted_runtime(
-                    data["nominal"], trace, data["level_devices"],
-                    num_bins, data["num_levels"],
+                    data["nominal"],
+                    trace,
+                    data["level_devices"],
+                    num_bins,
+                    data["num_levels"],
                 )
                 idle = None
             else:
@@ -218,7 +240,9 @@ def run(
                 }
             )
 
-    recovered = _recovered_useful_flops(cache, per_baseline, base_runtime, magnitudes)
+    recovered = _recovered_useful_flops(
+        cache, per_baseline, base_runtime, magnitudes
+    )
 
     return {
         "experiment": "within_batch_dynamic_performance",
@@ -263,7 +287,9 @@ def _recovered_useful_flops(
                 cache[b]["useful_flops"]
                 * max(0.0, 1.0 - base_runtime[b] / pt["runtime_ms"])
             )
-        mean_base_lost = sum(base_losses) / len(base_losses) if base_losses else 0.0
+        mean_base_lost = (
+            sum(base_losses) / len(base_losses) if base_losses else 0.0
+        )
         recovered = max(0.0, mean_base_lost - cl_lost)
         out.append(
             {
@@ -271,7 +297,9 @@ def _recovered_useful_flops(
                 "cleave_lost_flops": cl_lost,
                 "mean_baseline_lost_flops": mean_base_lost,
                 "recovered_flops": recovered,
-                "recovered_fraction_of_useful": recovered / useful if useful else 0.0,
+                "recovered_fraction_of_useful": recovered / useful
+                if useful
+                else 0.0,
             }
         )
     return {"per_magnitude": out}
