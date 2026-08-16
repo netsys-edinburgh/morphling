@@ -339,7 +339,7 @@ class GreenCtxGemmPerf : public benchmark::Fixture {
     args_ = MakeNNGemmArgs(dim_, dim_, dim_, h_A_.ptr, h_B_.ptr, h_C_.ptr);
 
     // Warmup GEMM
-    worker_->AddTask("warmup", [this]() { worker_->RunXtGemm(args_); });
+    worker_->AddTask("warmup", [this]() { worker_->RunChunkedGemm(args_); });
     worker_->WaitTaskDone("warmup");
   }
 
@@ -365,7 +365,7 @@ BENCHMARK_DEFINE_F(GreenCtxGemmPerf, GemmPerf)
   int iter = 0;
   for (auto _ : state) {
     std::string tid = "iter_" + std::to_string(iter++);
-    worker_->AddTask(tid, [this]() { worker_->RunXtGemm(args_); });
+    worker_->AddTask(tid, [this]() { worker_->RunChunkedGemm(args_); });
     worker_->WaitTaskDone(tid);
   }
 
@@ -416,7 +416,7 @@ class GreenCtxGemmScaling : public benchmark::Fixture {
     for (int i = 0; i < num_partitions_; i++) {
       data_[i]->worker->AddTask(
           "warmup_" + std::to_string(i),
-          [&d = data_[i]]() { d->worker->RunXtGemm(d->args); });
+          [&d = data_[i]]() { d->worker->RunChunkedGemm(d->args); });
     }
     for (auto& d : data_) {
       d->worker->WaitTaskDone();
@@ -453,7 +453,7 @@ BENCHMARK_DEFINE_F(GreenCtxGemmScaling, GemmScaling)
       std::string tid =
           "iter" + std::to_string(iter) + "_w" + std::to_string(i);
       data_[i]->worker->AddTask(
-          tid, [&d = data_[i]]() { d->worker->RunXtGemm(d->args); });
+          tid, [&d = data_[i]]() { d->worker->RunChunkedGemm(d->args); });
     }
     for (auto& d : data_) {
       d->worker->WaitTaskDone();

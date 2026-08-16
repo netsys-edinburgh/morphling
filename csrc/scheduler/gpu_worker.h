@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cublasXt.h>
 #include <cublas_v2.h>
 #include <cuda.h>  // CUDA driver API (green contexts)
 #include <cuda_runtime_api.h>
@@ -17,6 +16,7 @@
 #include "intercept/interceptor.h"
 #include "memory/caching_allocator.h"
 #include "scheduling_policy.h"
+#include "sm_notify_source.h"
 #include "worker_base.h"
 
 // One entry in an SM switching schedule file.
@@ -38,7 +38,7 @@ struct SmScheduleEntry {
 #define CUDA_TRANS_OP(trans) \
   (trans == 'N' || trans == 'n') ? CUBLAS_OP_N : CUBLAS_OP_T
 
-// RAII wrapper for a green context + stream + cublasXt handle at a
+// RAII wrapper for a green context + stream + cuBLAS handle at a
 // specific SM count.  Movable, not copyable.
 struct ContextSlot {
   int sm_count = 0;
@@ -46,7 +46,7 @@ struct ContextSlot {
   CUgreenCtx green_ctx = nullptr;
   CUcontext cuda_ctx = nullptr;
   cudaStream_t stream = nullptr;
-  cublasXtHandle_t xt_handle = nullptr;
+  cublasHandle_t blas_handle = nullptr;
 
   ContextSlot() = default;
   ~ContextSlot();
@@ -59,7 +59,7 @@ struct ContextSlot {
 // One XtGemmWorker per logical partition on a GPU.
 // Pre-creates green contexts at every valid SM granularity within its
 // partition.  Tasks choose SMs dynamically via SwitchContext(num_sms).
-// Uses cublasXt so callers pass host pointers; H2D/D2H is automatic.
+// Runs GEMMs via RunChunkedGemm (plain cuBLAS on the green-ctx stream).
 class XtGemmWorker : public WorkerBase,
                      public std::enable_shared_from_this<XtGemmWorker> {
  public:
@@ -67,15 +67,34 @@ class XtGemmWorker : public WorkerBase,
   // num_partitions: how many workers share this GPU (for SM partitioning)
   // partition_idx: this worker's partition index [0, num_partitions)
   // buffer_size: CachingAllocator pool size per worker
+  struct DynConfig {
+    bool enabled = false;
+    int chunk_target_us = 500;
+    int min_chunk_cols = 64;
+    int max_chunk_cols = 0;  // 0 => up to remaining columns
+    int64_t min_gemm_chunk_threshold = 0;
+    int min_dwell_chunks = 0;
+    std::string shm_name = "/morphling_sm_ctl";
+    bool require_shm = true;
+  };
+
   XtGemmWorker(int gpu_id, int num_partitions, int partition_idx,
                size_t buffer_size);
+  XtGemmWorker(int gpu_id, int num_partitions, int partition_idx,
+               size_t buffer_size, DynConfig dyn,
+               std::unique_ptr<SmTargetSource> source);
   ~XtGemmWorker();
 
   DELETE_COPY_AND_ASSIGN(XtGemmWorker);
 
-  // cublasXt-style API: host pointers in, host pointers out.
-  // cublasXt handles all H2D/D2H internally.
-  void RunXtGemm(std::shared_ptr<GemmArgs> args);
+  // Plain-cuBLAS executor on the green-ctx stream. Off => one cublasSgemm at
+  // partition max; on => chunk along output columns, re-reading the SM target
+  // per chunk and switching the green context in place (completed columns
+  // kept).
+  void RunChunkedGemm(std::shared_ptr<GemmArgs> args);
+
+  void SetDynConfig(const DynConfig& cfg) { dyn_cfg_ = cfg; }
+  void SetSmTargetSource(std::unique_ptr<SmTargetSource> src);
 
   // Switch to the green context with exactly `num_sms` SMs.
   // Returns false if no such context exists.
@@ -112,6 +131,7 @@ class XtGemmWorker : public WorkerBase,
   void InitPrimaryContextSlot(int sm_count);
   ContextSlot CreateContextSlot(CUdevResource* groups, int num_groups,
                                 int sm_count);
+  int SnapDown(int target) const;
 
   int gpu_id_;
   int num_partitions_;
@@ -133,6 +153,9 @@ class XtGemmWorker : public WorkerBase,
 
   // SM switching schedule (loaded from file)
   std::vector<SmScheduleEntry> sm_schedule_;
+
+  std::unique_ptr<SmTargetSource> source_;
+  DynConfig dyn_cfg_;
 };
 
 // Pool of XtGemmWorkers, potentially multiple per GPU
@@ -142,7 +165,8 @@ class XtGemmWorkerPool : public noncopyable {
   // buffer_size: CachingAllocator pool size per worker
   // policy: scheduling policy for task distribution
   XtGemmWorkerPool(int workers_per_gpu, size_t buffer_size,
-                   WorkerSchedulingPolicy policy);
+                   WorkerSchedulingPolicy policy,
+                   XtGemmWorker::DynConfig dyn = {});
   ~XtGemmWorkerPool();
 
   DELETE_COPY_AND_ASSIGN(XtGemmWorkerPool);

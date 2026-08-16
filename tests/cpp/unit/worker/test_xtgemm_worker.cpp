@@ -163,8 +163,9 @@ class XtGemmWorkerTest : public ::testing::Test {
     auto args = MakeGemmArgs(transa, transb, m, n, k, alpha, h_A, lda, h_B, ldb,
                              beta, h_C, ldc);
     auto args_copy = args;  // prevent capture issues
-    worker.AddTask("verify_gemm",
-                   [&worker, args_copy]() { worker.RunXtGemm(args_copy); });
+    worker.AddTask("verify_gemm", [&worker, args_copy]() {
+      worker.RunChunkedGemm(args_copy);
+    });
     worker.WaitTaskDone("verify_gemm");
 
     // Extract result from h_C (column-major) as [m, n]
@@ -271,8 +272,8 @@ TEST_F(XtGemmWorkerTest, MultiWorker_Concurrent) {
   auto args1 = MakeGemmArgs('N', 'N', m, n, k, 1.0f, h_A1, lda, h_B1, ldb, 0.0f,
                             h_C1, ldc);
 
-  w0->AddTask("gemm0", [&]() { w0->RunXtGemm(args0); });
-  w1->AddTask("gemm1", [&]() { w1->RunXtGemm(args1); });
+  w0->AddTask("gemm0", [&]() { w0->RunChunkedGemm(args0); });
+  w1->AddTask("gemm1", [&]() { w1->RunChunkedGemm(args1); });
 
   w0->WaitTaskDone("gemm0");
   w1->WaitTaskDone("gemm1");

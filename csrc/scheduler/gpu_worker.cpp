@@ -1,6 +1,7 @@
 #include "gpu_worker.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -9,6 +10,7 @@
 
 #include "core/logger.h"
 #include "sliding_window_tracker.h"
+#include "sm_notify_source.h"
 
 namespace {
 constexpr size_t kDefaultPoolBytes = 1024ull * 1024 * 1024;  // 1 GB
@@ -30,9 +32,9 @@ ContextSlot::~ContextSlot() {
   if (cuda_ctx) {
     cuCtxSetCurrent(cuda_ctx);
   }
-  if (xt_handle) {
-    cublasXtDestroy(xt_handle);
-    xt_handle = nullptr;
+  if (blas_handle) {
+    cublasDestroy(blas_handle);
+    blas_handle = nullptr;
   }
   if (stream) {
     cudaStreamDestroy(stream);
@@ -54,13 +56,13 @@ ContextSlot::ContextSlot(ContextSlot&& other) noexcept
       green_ctx(other.green_ctx),
       cuda_ctx(other.cuda_ctx),
       stream(other.stream),
-      xt_handle(other.xt_handle) {
+      blas_handle(other.blas_handle) {
   other.sm_count = 0;
   other.resource_desc = nullptr;
   other.green_ctx = nullptr;
   other.cuda_ctx = nullptr;
   other.stream = nullptr;
-  other.xt_handle = nullptr;
+  other.blas_handle = nullptr;
 }
 
 ContextSlot& ContextSlot::operator=(ContextSlot&& other) noexcept {
@@ -73,14 +75,14 @@ ContextSlot& ContextSlot::operator=(ContextSlot&& other) noexcept {
     green_ctx = other.green_ctx;
     cuda_ctx = other.cuda_ctx;
     stream = other.stream;
-    xt_handle = other.xt_handle;
+    blas_handle = other.blas_handle;
     // Null out other
     other.sm_count = 0;
     other.resource_desc = nullptr;
     other.green_ctx = nullptr;
     other.cuda_ctx = nullptr;
     other.stream = nullptr;
-    other.xt_handle = nullptr;
+    other.blas_handle = nullptr;
   }
   return *this;
 }
@@ -91,10 +93,18 @@ ContextSlot& ContextSlot::operator=(ContextSlot&& other) noexcept {
 
 XtGemmWorker::XtGemmWorker(int gpu_id, int num_partitions, int partition_idx,
                            size_t buffer_size)
+    : XtGemmWorker(gpu_id, num_partitions, partition_idx, buffer_size,
+                   DynConfig{}, nullptr) {}
+
+XtGemmWorker::XtGemmWorker(int gpu_id, int num_partitions, int partition_idx,
+                           size_t buffer_size, DynConfig dyn,
+                           std::unique_ptr<SmTargetSource> source)
     : gpu_id_(gpu_id),
       num_partitions_(num_partitions),
       partition_idx_(partition_idx),
-      buffer_size_(buffer_size) {
+      buffer_size_(buffer_size),
+      source_(std::move(source)),
+      dyn_cfg_(std::move(dyn)) {
   worker_ = std::thread([this] { Run(); });
   LOG_DEBUG << "XtGemmWorker created: gpu=" << gpu_id_
             << " partition=" << partition_idx_ << "/" << num_partitions_;
@@ -207,9 +217,8 @@ void XtGemmWorker::InitPrimaryContextSlot(int sm_count) {
   CHECK_CUDA_ERROR(cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking));
   slot.stream = s;
 
-  CHECK_CUBLAS_ERROR(cublasXtCreate(&slot.xt_handle));
-  int dev = gpu_id_;
-  CHECK_CUBLAS_ERROR(cublasXtDeviceSelect(slot.xt_handle, 1, &dev));
+  CHECK_CUBLAS_ERROR(cublasCreate(&slot.blas_handle));
+  CHECK_CUBLAS_ERROR(cublasSetStream(slot.blas_handle, slot.stream));
 
   sm_step_ = sm_count;
   partition_sm_count_ = sm_count;
@@ -250,10 +259,8 @@ ContextSlot XtGemmWorker::CreateContextSlot(CUdevResource* groups,
                                          CU_STREAM_NON_BLOCKING, 0));
   slot.stream = cu_stream;
 
-  // Create cublasXt handle — manages H2D/D2H internally
-  CHECK_CUBLAS_ERROR(cublasXtCreate(&slot.xt_handle));
-  int device_id = gpu_id_;
-  CHECK_CUBLAS_ERROR(cublasXtDeviceSelect(slot.xt_handle, 1, &device_id));
+  CHECK_CUBLAS_ERROR(cublasCreate(&slot.blas_handle));
+  CHECK_CUBLAS_ERROR(cublasSetStream(slot.blas_handle, slot.stream));
 
   return slot;
 }
@@ -291,24 +298,131 @@ void XtGemmWorker::Run() {
   WorkerBase::Run();
 }
 
-void XtGemmWorker::RunXtGemm(std::shared_ptr<GemmArgs> args) {
-  LOG_DEBUG << "RunXtGemm on gpu=" << gpu_id_ << " partition=" << partition_idx_
-            << " sms=" << (active_slot_ ? active_slot_->sm_count : 0) << " "
-            << args->DebugString();
+int XtGemmWorker::SnapDown(int target) const {
+  if (target <= 0 || target >= partition_sm_count_) return partition_sm_count_;
+  int best = sm_step_;
+  for (const auto& kv : context_slots_) {
+    if (kv.first <= target && kv.first > best) best = kv.first;
+  }
+  return best;
+}
 
-  cublasXtHandle_t handle = active_slot_->xt_handle;
+void XtGemmWorker::SetSmTargetSource(std::unique_ptr<SmTargetSource> src) {
+  source_ = std::move(src);
+}
 
-  cublasOperation_t transa = CUDA_TRANS_OP(args->transa);
-  cublasOperation_t transb = CUDA_TRANS_OP(args->transb);
+void XtGemmWorker::RunChunkedGemm(std::shared_ptr<GemmArgs> args) {
+  const int m = args->m;
+  const int n = args->n;
+  const int k = args->k;
+  const int lda = args->lda;
+  const int ldb = args->ldb;
+  const int ldc = args->ldc;
+  const float alpha = args->alpha;
+  const float beta = args->beta;
+  const cublasOperation_t opa = CUDA_TRANS_OP(args->transa);
+  const cublasOperation_t opb = CUDA_TRANS_OP(args->transb);
+  const bool transb_n = (args->transb == 'N' || args->transb == 'n');
 
-  CHECK_CUBLAS_ERROR(cublasXtSgemm(
-      handle, transa, transb, args->m, args->n, args->k, &args->alpha, args->a,
-      args->lda, args->b, args->ldb, &args->beta, args->c, args->ldc));
+  const size_t a_elems = (args->transa == 'N' || args->transa == 'n')
+                             ? static_cast<size_t>(lda) * k
+                             : static_cast<size_t>(lda) * m;
+  const size_t b_elems =
+      transb_n ? static_cast<size_t>(ldb) * n : static_cast<size_t>(ldb) * k;
+  const size_t c_elems = static_cast<size_t>(ldc) * n;
 
-  CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+  const bool dynamic = dyn_cfg_.enabled && source_ != nullptr;
+  const int64_t work = static_cast<int64_t>(m) * n * k;
+  const bool chunked = dynamic && work >= dyn_cfg_.min_gemm_chunk_threshold;
 
-  LOG_DEBUG << "RunXtGemm completed on gpu=" << gpu_id_
-            << " partition=" << partition_idx_;
+  // Pick the initial context before staging so H2D and compute stay ordered on
+  // one stream (a later switch synchronizes before changing streams).
+  SwitchContext(chunked ? SnapDown(source_->Read()) : partition_sm_count_);
+
+  float* dA =
+      static_cast<float*>(allocator_->Allocate(a_elems * sizeof(float)));
+  float* dB =
+      static_cast<float*>(allocator_->Allocate(b_elems * sizeof(float)));
+  float* dC =
+      static_cast<float*>(allocator_->Allocate(c_elems * sizeof(float)));
+
+  cudaStream_t stg = active_slot_->stream;
+  CHECK_CUDA_ERROR(cudaMemcpyAsync(dA, args->a, a_elems * sizeof(float),
+                                   cudaMemcpyHostToDevice, stg));
+  CHECK_CUDA_ERROR(cudaMemcpyAsync(dB, args->b, b_elems * sizeof(float),
+                                   cudaMemcpyHostToDevice, stg));
+  if (beta != 0.0f) {
+    CHECK_CUDA_ERROR(cudaMemcpyAsync(dC, args->c, c_elems * sizeof(float),
+                                     cudaMemcpyHostToDevice, stg));
+  }
+
+  auto run_chunk = [&](int j, int cw) {
+    // transb=N: op(B) columns [j,j+cw) are contiguous at offset j*ldb.
+    // transb=T: those columns are a row-slice of stored B at element offset j;
+    // cublas transposes either way.
+    const float* bptr =
+        dB + (transb_n ? static_cast<size_t>(j) * ldb : static_cast<size_t>(j));
+    float* cptr = dC + static_cast<size_t>(j) * ldc;
+    CHECK_CUBLAS_ERROR(cublasSgemm(active_slot_->blas_handle, opa, opb, m, cw,
+                                   k, &alpha, dA, lda, bptr, ldb, &beta, cptr,
+                                   ldc));
+    CHECK_CUDA_ERROR(
+        cudaMemcpyAsync(args->c + static_cast<size_t>(j) * ldc, cptr,
+                        static_cast<size_t>(cw) * ldc * sizeof(float),
+                        cudaMemcpyDeviceToHost, active_slot_->stream));
+  };
+
+  if (!chunked) {
+    run_chunk(0, n);
+    CHECK_CUDA_ERROR(cudaStreamSynchronize(active_slot_->stream));
+  } else {
+    cudaEvent_t ev0, ev1;
+    CHECK_CUDA_ERROR(cudaEventCreate(&ev0));
+    CHECK_CUDA_ERROR(cudaEventCreate(&ev1));
+    double cols_per_us = 0.0;
+    int dwell = dyn_cfg_.min_dwell_chunks;
+    int cw = std::max(dyn_cfg_.min_chunk_cols, 1);
+    for (int j = 0; j < n;) {
+      int want = SnapDown(source_->Read());
+      if (want != active_slot_->sm_count &&
+          dwell >= dyn_cfg_.min_dwell_chunks) {
+        CHECK_CUDA_ERROR(cudaStreamSynchronize(active_slot_->stream));
+        SwitchContext(want);
+        dwell = 0;
+      }
+      int this_cw = std::min(cw, n - j);
+      if (this_cw < 1) this_cw = 1;
+
+      CHECK_CUDA_ERROR(cudaEventRecord(ev0, active_slot_->stream));
+      run_chunk(j, this_cw);
+      CHECK_CUDA_ERROR(cudaEventRecord(ev1, active_slot_->stream));
+      CHECK_CUDA_ERROR(cudaEventSynchronize(ev1));
+
+      float ms = 0.0f;
+      CHECK_CUDA_ERROR(cudaEventElapsedTime(&ms, ev0, ev1));
+      double us = std::max(static_cast<double>(ms) * 1000.0, 1.0);
+      double inst = static_cast<double>(this_cw) / us;
+      cols_per_us = cols_per_us > 0.0 ? 0.5 * cols_per_us + 0.5 * inst : inst;
+
+      j += this_cw;
+      ++dwell;
+
+      int next =
+          static_cast<int>(std::lround(cols_per_us * dyn_cfg_.chunk_target_us));
+      next = std::max(next, dyn_cfg_.min_chunk_cols);
+      if (dyn_cfg_.max_chunk_cols > 0) {
+        next = std::min(next, dyn_cfg_.max_chunk_cols);
+      }
+      cw = next;
+    }
+    CHECK_CUDA_ERROR(cudaEventDestroy(ev0));
+    CHECK_CUDA_ERROR(cudaEventDestroy(ev1));
+    CHECK_CUDA_ERROR(cudaStreamSynchronize(active_slot_->stream));
+  }
+
+  allocator_->Free(dA);
+  allocator_->Free(dB);
+  allocator_->Free(dC);
 }
 
 bool XtGemmWorker::LoadSmSchedule(const std::string& path) {
@@ -392,16 +506,32 @@ void XtGemmWorker::RunSmSchedule() {
 // ---------------------------------------------------------------------------
 
 XtGemmWorkerPool::XtGemmWorkerPool(int workers_per_gpu, size_t buffer_size,
-                                   WorkerSchedulingPolicy policy) {
+                                   WorkerSchedulingPolicy policy,
+                                   XtGemmWorker::DynConfig dyn) {
   int device_count = 0;
   CHECK_CUDA_ERROR(cudaGetDeviceCount(&device_count));
 
   int total_workers = workers_per_gpu * device_count;
 
+  // Attach shm sources on this thread first so a require_shm failure aborts
+  // before any worker thread (and its GPU contexts) is spawned.
+  std::vector<std::unique_ptr<SmTargetSource>> sources(total_workers);
+  if (dyn.enabled) {
+    int idx = 0;
+    for (int gpu = 0; gpu < device_count; gpu++) {
+      for (int p = 0; p < workers_per_gpu; p++) {
+        sources[idx++] = std::make_unique<ShmSmTargetSource>(
+            ShmSmTargetSource::Options{dyn.shm_name, gpu, p, dyn.require_shm});
+      }
+    }
+  }
+
+  int widx = 0;
   for (int gpu = 0; gpu < device_count; gpu++) {
     for (int p = 0; p < workers_per_gpu; p++) {
       workers_.emplace_back(
-          std::make_shared<XtGemmWorker>(gpu, workers_per_gpu, p, buffer_size));
+          std::make_shared<XtGemmWorker>(gpu, workers_per_gpu, p, buffer_size,
+                                         dyn, std::move(sources[widx++])));
     }
   }
 
@@ -429,7 +559,8 @@ TaskHandle XtGemmWorkerPool::EnqueueGemm(const std::string& task_id,
                                          std::shared_ptr<GemmArgs> args,
                                          TaskCallback callback) {
   auto [worker_idx, priority] = scheduler_->Schedule(args.get());
-  auto task = std::bind(&XtGemmWorker::RunXtGemm, workers_[worker_idx], args);
+  auto task =
+      std::bind(&XtGemmWorker::RunChunkedGemm, workers_[worker_idx], args);
   return workers_[worker_idx]->AddTask(task_id, std::move(task),
                                        std::move(callback));
 }

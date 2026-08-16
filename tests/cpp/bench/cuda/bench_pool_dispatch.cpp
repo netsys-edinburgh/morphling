@@ -149,13 +149,13 @@ static void BM_GpuPool_Latency(benchmark::State& state) {
   auto args = MakeTNGemmArgs(dim, dim, dim, h_A.ptr, h_B.ptr, h_C.ptr);
 
   // Warmup
-  worker->AddTask("warmup", [&]() { worker->RunXtGemm(args); });
+  worker->AddTask("warmup", [&]() { worker->RunChunkedGemm(args); });
   worker->WaitTaskDone("warmup");
 
   int iter = 0;
   for (auto _ : state) {
     std::string tid = "gpu_lat_" + std::to_string(iter++);
-    worker->AddTask(tid, [&]() { worker->RunXtGemm(args); });
+    worker->AddTask(tid, [&]() { worker->RunChunkedGemm(args); });
     worker->WaitTaskDone(tid);
   }
 
@@ -241,7 +241,7 @@ static void BM_GpuPool_Throughput(benchmark::State& state) {
   auto worker = MakeGpuWorker();
 
   // Warmup
-  worker->AddTask("warmup", [&]() { worker->RunXtGemm(args_vec[0]); });
+  worker->AddTask("warmup", [&]() { worker->RunChunkedGemm(args_vec[0]); });
   worker->WaitTaskDone("warmup");
 
   int iter = 0;
@@ -250,7 +250,7 @@ static void BM_GpuPool_Throughput(benchmark::State& state) {
       std::string tid =
           "gpu_tp_" + std::to_string(iter) + "_" + std::to_string(i);
       auto& a = args_vec[i];
-      worker->AddTask(tid, [&worker, a]() { worker->RunXtGemm(a); });
+      worker->AddTask(tid, [&worker, a]() { worker->RunChunkedGemm(a); });
     }
     worker->WaitTaskDone();
     iter++;
@@ -376,7 +376,7 @@ static void BM_Hybrid_RoundRobin(benchmark::State& state) {
 
   // Warmup both
   gpu_worker->AddTask("warmup_gpu",
-                      [&]() { gpu_worker->RunXtGemm(gpu_args[0]); });
+                      [&]() { gpu_worker->RunChunkedGemm(gpu_args[0]); });
   cpu_pool->EnqueueGemm("warmup_cpu", cpu_args[0]);
   gpu_worker->WaitTaskDone("warmup_gpu");
   cpu_pool->WaitAll();
@@ -392,8 +392,8 @@ static void BM_Hybrid_RoundRobin(benchmark::State& state) {
       if (i % 2 == 0) {
         // Even tasks -> GPU
         auto& a = gpu_args[gpu_idx++];
-        gpu_worker->AddTask(tid,
-                            [&gpu_worker, a]() { gpu_worker->RunXtGemm(a); });
+        gpu_worker->AddTask(
+            tid, [&gpu_worker, a]() { gpu_worker->RunChunkedGemm(a); });
         gpu_task_count++;
       } else {
         // Odd tasks -> CPU
@@ -477,7 +477,7 @@ static void BM_Hybrid_Adaptive(benchmark::State& state) {
   {
     auto t0 = SlidingWindowDurationTracker<64>::Now();
     gpu_worker->AddTask("warmup_gpu",
-                        [&]() { gpu_worker->RunXtGemm(gpu_args[0]); });
+                        [&]() { gpu_worker->RunChunkedGemm(gpu_args[0]); });
     gpu_worker->WaitTaskDone("warmup_gpu");
     gpu_tracker.RecordDuration(SlidingWindowDurationTracker<64>::ElapsedUs(t0));
   }
@@ -513,7 +513,7 @@ static void BM_Hybrid_Adaptive(benchmark::State& state) {
         auto t0 = SlidingWindowDurationTracker<64>::Now();
         auto& a = gpu_args[gpu_idx++];
         gpu_worker->AddTask(
-            tid, [&gpu_worker, a]() { gpu_worker->RunXtGemm(a); },
+            tid, [&gpu_worker, a]() { gpu_worker->RunChunkedGemm(a); },
             [&gpu_tracker, t0](const std::string&) {
               gpu_tracker.RecordDuration(
                   SlidingWindowDurationTracker<64>::ElapsedUs(t0));

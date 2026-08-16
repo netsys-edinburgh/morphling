@@ -37,9 +37,13 @@ edge training without a physical device fleet.
 
 - **Per-GEMM CUDA green-context switching** — trace-driven SM partitioning
   routed through autograd hooks, see [`docs/green-context.md`](docs/green-context.md).
+- **Dynamic green-context SM preemption (proxy)** — off by default; when on, the
+  proxy re-reads a per-worker SM budget from a POSIX shm segment at each GEMM
+  chunk boundary and switches the green context in place, keeping completed
+  columns (resume). See [`docs/dynamic-green-context.md`](docs/dynamic-green-context.md).
 - **Worker pool** with pluggable scheduling policies (round-robin, greedy,
-  load-balanced); GPU path via `XtGemmWorker` (cuBLASXt), CPU path via
-  `CpuWorker` (MKL).
+  load-balanced); GPU path via `XtGemmWorker` (plain cuBLAS on the green-ctx
+  stream), CPU path via `CpuWorker` (MKL).
 - **Zero-copy scatter-gather buffers** for inter-device data transfer over
   libevent (`evbuffer_add_reference` with `shared_ptr` cleanup).
 - **Pool-based memory management** — pinned host pool, aligned buffer pool,
@@ -121,6 +125,8 @@ pre-commit setup, Docker-only test policy, and Angular-style commit format.
 - [`docs/DOCKER.md`](docs/DOCKER.md) — Docker workflow deep-dive.
 - [`docs/green-context.md`](docs/green-context.md) — per-GEMM CUDA green
   context API.
+- [`docs/dynamic-green-context.md`](docs/dynamic-green-context.md) — proxy
+  dynamic SM preemption: shm notification contract, config, and resume model.
 - [`docs/deployment.md`](docs/deployment.md) — virtual + physical device
   deployments.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — common errors and

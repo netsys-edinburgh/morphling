@@ -205,6 +205,43 @@ int ProxyEnvCfg::Initialize(const std::string& cfg_file) {
         env_double_or("MORPHLING_MEASURE_FLOPS_TOL", 1e-3);
   }
 
+  // Dynamic green-context SM preemption. Precedence: INI > env > default.
+  int enable_dyngc_int = 0;
+  PARSE_INT_ENVCFG(parser, "dynamic_greenctx", "enable", false,
+                   env_bool_or("MORPHLING_DYNGC_ENABLE", false) ? 1 : 0,
+                   enable_dyngc_int);
+  enable_dynamic_greenctx = (enable_dyngc_int != 0);
+  {
+    const char* env_shm = std::getenv("MORPHLING_DYNGC_SHM_NAME");
+    std::string shm_default =
+        (env_shm && env_shm[0]) ? std::string(env_shm) : "/morphling_sm_ctl";
+    PARSE_STR_ENVCFG(parser, "dynamic_greenctx", "shm_name", false,
+                     shm_default.c_str(), sm_ctl_shm_name);
+  }
+  PARSE_INT_ENVCFG(
+      parser, "dynamic_greenctx", "chunk_target_us", false,
+      static_cast<int>(env_int_or("MORPHLING_DYNGC_CHUNK_TARGET_US", 500)),
+      chunk_target_us);
+  PARSE_INT_ENVCFG(
+      parser, "dynamic_greenctx", "min_chunk_cols", false,
+      static_cast<int>(env_int_or("MORPHLING_DYNGC_MIN_CHUNK_COLS", 64)),
+      min_chunk_cols);
+  PARSE_INT_ENVCFG(
+      parser, "dynamic_greenctx", "max_chunk_cols", false,
+      static_cast<int>(env_int_or("MORPHLING_DYNGC_MAX_CHUNK_COLS", 0)),
+      max_chunk_cols);
+  PARSE_INT_ENVCFG(parser, "dynamic_greenctx", "min_gemm_chunk_threshold",
+                   false, env_int_or("MORPHLING_DYNGC_MIN_GEMM_THRESHOLD", 0),
+                   min_gemm_chunk_threshold);
+  int require_shm_int = 1;
+  PARSE_INT_ENVCFG(parser, "dynamic_greenctx", "require_shm", false,
+                   env_bool_or("MORPHLING_DYNGC_REQUIRE_SHM", true) ? 1 : 0,
+                   require_shm_int);
+  require_shm = (require_shm_int != 0);
+  PARSE_INT_ENVCFG(parser, "dynamic_greenctx", "min_dwell_chunks", false,
+                   static_cast<int>(env_int_or("MORPHLING_DYNGC_MIN_DWELL", 0)),
+                   min_dwell_chunks);
+
   base::Logger::setLogLevel(log_level);
 
   return 0;
