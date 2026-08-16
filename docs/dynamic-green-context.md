@@ -94,9 +94,30 @@ constant — so reactivity is independent of GEMM shape and active SM count.
   so the default path is numerically equivalent to the old cuBLASXt path.
 - **Shared address space.** The resume design relies on device buffers staying
   valid across `SwitchContext`. This holds for green contexts on the same
-  device and is exercised by `test_chunked_gemm_switch` (mid-GEMM switch with a
-  correct result). If a future device violates it, the fallback is to
-  reallocate + re-stage device operands immediately after a switch.
+  device and is guarded by `test_shared_address_space` (a cuBLAS kernel under
+  one green context reads a buffer allocated under another) and exercised
+  end-to-end by `test_chunked_gemm_switch` (mid-GEMM switch with a correct
+  result). If a future device violates it, the fallback is to reallocate +
+  re-stage device operands immediately after a switch.
 - **Exactly-once response.** Resume is an internal loop within one task, never a
   re-enqueue, so each request produces exactly one response across any number of
   mid-GEMM switches.
+
+## Benchmarking & tuning
+
+`bench_chunked_gemm` compares single-shot plain cuBLAS against the adaptive
+chunked path with a constant SM target (no switch), isolating chunking overhead.
+Chunking adds per-chunk H2D/D2H plus a `cudaEventSynchronize` for adaptive
+timing, so it costs a few percent on large GEMMs and more on small ones
+(~20% at 512³). Tuning guidance:
+
+- Raise `min_gemm_chunk_threshold` so small GEMMs run single-chunk — the
+  preemption granularity those chunks would add is rarely worth the overhead.
+- Larger `chunk_target_us` → fewer, bigger chunks (less overhead, coarser
+  preemption); smaller → more reactive, higher overhead.
+- `min_dwell_chunks` damps switch thrash when a producer flips the target
+  rapidly.
+
+The Python `test_dynamic_greenctx_shm_contract` proves a foreign-language
+producer (writing the shm layout above) is byte-compatible with the C++
+consumer via the `sm_notify_probe` helper.

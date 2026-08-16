@@ -145,6 +145,23 @@ if(ENABLE_XTGEMM_TESTS)
     )
     add_test(NAME test_chunked_gemm_switch COMMAND test_chunked_gemm_switch)
 
+    # Shared-address-space assumption behind RunChunkedGemm resume (unit/worker/)
+    add_executable(test_shared_address_space
+      unit/worker/test_shared_address_space.cpp
+    )
+    target_include_directories(test_shared_address_space PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+    )
+    target_link_libraries(test_shared_address_space PRIVATE
+      GTest::gtest
+      GTest::gtest_main
+      CUDA::cudart
+      CUDA::cuda_driver
+      CUDA::cublas
+      Threads::Threads
+    )
+    add_test(NAME test_shared_address_space COMMAND test_shared_address_space)
+
     # Performance benchmarks (bench/cuda/)
     add_executable(bench_xtgemm_worker
       bench/cuda/bench_xtgemm_worker.cpp
@@ -211,6 +228,21 @@ if(ENABLE_XTGEMM_TESTS)
       benchmark::benchmark_main
       ${XTGEMM_COMMON_LIBS}
       openblas
+    )
+
+    # Chunked vs single-shot plain-cuBLAS benchmark (bench/cuda/)
+    add_executable(bench_chunked_gemm
+      bench/cuda/bench_chunked_gemm.cpp
+      ${XTGEMM_TEST_DEPS}
+    )
+    target_include_directories(bench_chunked_gemm PRIVATE
+      ${XTGEMM_INCLUDE_DIRS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/bench/cuda
+    )
+    target_link_libraries(bench_chunked_gemm PRIVATE
+      benchmark::benchmark
+      benchmark::benchmark_main
+      ${XTGEMM_COMMON_LIBS}
     )
   else()
     message(WARNING "CUDAToolkit or CUDA driver API not found; XtGemm tests skipped.")
@@ -356,6 +388,18 @@ target_link_libraries(test_sm_notify_source PRIVATE
   rt
 )
 add_test(NAME test_sm_notify_source COMMAND test_sm_notify_source)
+
+# ==========================================================================
+# sm_notify_probe (tools/) — CLI helper for the Python shm-contract test
+# ==========================================================================
+add_executable(sm_notify_probe
+  tools/sm_notify_probe.cpp
+  ${PROJECT_ROOT_SMN}/csrc/scheduler/sm_notify_source.cpp
+)
+target_include_directories(sm_notify_probe PRIVATE
+  ${PROJECT_ROOT_SMN}/csrc
+)
+target_link_libraries(sm_notify_probe PRIVATE Threads::Threads rt)
 
 # ==========================================================================
 # GreenContextRuntime tests (unit/worker/) — requires CUDA driver 12.5+
