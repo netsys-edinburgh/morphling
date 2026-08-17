@@ -28,13 +28,13 @@ static void BM_SingleWorker_Gemm(benchmark::State& state) {
   auto args = MakeNNGemmArgs(m, n, k, h_A.ptr, h_B.ptr, h_C.ptr);
 
   // Warmup (enqueue via worker thread where green ctx lives)
-  worker->AddTask("warmup", [&]() { worker->RunXtGemm(args); });
+  worker->AddTask("warmup", [&]() { worker->RunChunkedGemm(args); });
   worker->WaitTaskDone("warmup");
 
   int iter = 0;
   for (auto _ : state) {
     std::string tid = "iter_" + std::to_string(iter++);
-    worker->AddTask(tid, [&]() { worker->RunXtGemm(args); });
+    worker->AddTask(tid, [&]() { worker->RunChunkedGemm(args); });
     worker->WaitTaskDone(tid);
   }
 
@@ -92,7 +92,7 @@ static void BM_MultiWorker_Throughput(benchmark::State& state) {
   // Warmup (via task queue on worker thread)
   for (int i = 0; i < num_workers; i++) {
     data[i]->worker->AddTask("warmup_" + std::to_string(i), [&d = data[i]]() {
-      d->worker->RunXtGemm(d->args);
+      d->worker->RunChunkedGemm(d->args);
     });
   }
   for (auto& d : data) {
@@ -106,7 +106,7 @@ static void BM_MultiWorker_Throughput(benchmark::State& state) {
       std::string tid =
           "iter" + std::to_string(iter) + "_w" + std::to_string(i);
       data[i]->worker->AddTask(
-          tid, [&d = data[i]]() { d->worker->RunXtGemm(d->args); });
+          tid, [&d = data[i]]() { d->worker->RunChunkedGemm(d->args); });
     }
     // Wait for all to complete
     for (auto& d : data) {
@@ -148,13 +148,13 @@ static void BM_StreamSync(benchmark::State& state) {
   auto args = MakeNNGemmArgs(dim, dim, dim, h_A.ptr, h_B.ptr, h_C.ptr);
 
   // Warmup via task queue
-  worker->AddTask("warmup", [&]() { worker->RunXtGemm(args); });
+  worker->AddTask("warmup", [&]() { worker->RunChunkedGemm(args); });
   worker->WaitTaskDone("warmup");
 
   int iter = 0;
   for (auto _ : state) {
     std::string tid = "ss_" + std::to_string(iter++);
-    worker->AddTask(tid, [&]() { worker->RunXtGemm(args); });
+    worker->AddTask(tid, [&]() { worker->RunChunkedGemm(args); });
     worker->WaitTaskDone(tid);
   }
 
@@ -180,14 +180,14 @@ static void BM_DeviceSync(benchmark::State& state) {
   auto args = MakeNNGemmArgs(dim, dim, dim, h_A.ptr, h_B.ptr, h_C.ptr);
 
   // Warmup via task queue
-  worker->AddTask("warmup", [&]() { worker->RunXtGemm(args); });
+  worker->AddTask("warmup", [&]() { worker->RunChunkedGemm(args); });
   worker->WaitTaskDone("warmup");
 
   int iter = 0;
   for (auto _ : state) {
     std::string tid = "ds_" + std::to_string(iter++);
     worker->AddTask(tid, [&]() {
-      worker->RunXtGemm(args);
+      worker->RunChunkedGemm(args);
       cudaDeviceSynchronize();  // Additional device-wide sync
     });
     worker->WaitTaskDone(tid);

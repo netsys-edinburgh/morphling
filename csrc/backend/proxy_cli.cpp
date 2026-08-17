@@ -1055,8 +1055,18 @@ void ProxyCli::Initialize(const std::string& cfg_file, int64_t device_id) {
   if (want_gpu && has_gpu) {
     int workers_per_gpu = 1;  // one green-context partition per GPU
     size_t buffer_size = 1024ull * 1024 * 1024;  // 1 GB per worker
+    XtGemmWorker::DynConfig dyn;
+    dyn.enabled = context_.enable_dynamic_greenctx;
+    dyn.chunk_target_us = context_.chunk_target_us;
+    dyn.min_chunk_cols = context_.min_chunk_cols;
+    dyn.max_chunk_cols = context_.max_chunk_cols;
+    dyn.min_gemm_chunk_threshold = context_.min_gemm_chunk_threshold;
+    dyn.min_dwell_chunks = context_.min_dwell_chunks;
+    dyn.shm_name = context_.sm_ctl_shm_name;
+    dyn.require_shm = context_.require_shm;
     gpu_pool_ = std::make_unique<XtGemmWorkerPool>(
-        workers_per_gpu, buffer_size, WorkerSchedulingPolicy::kRoundRobinGemm);
+        workers_per_gpu, buffer_size, WorkerSchedulingPolicy::kRoundRobinGemm,
+        dyn);
     LOG_INFO << "GPU worker pool created: " << workers_per_gpu
              << " workers/GPU, " << device_count << " GPUs";
   }

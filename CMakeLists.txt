@@ -222,6 +222,7 @@ set(MORPHLING_MSG_SRC
   ${PROTO_SRCS}
   "csrc/scheduler/cpu_worker.cpp"
   "csrc/scheduler/gpu_worker.cpp"
+  "csrc/scheduler/sm_notify_source.cpp"
   "csrc/python/client_py.cpp"
   "csrc/memory/caching_allocator.cpp"
   "csrc/memory/shared_memory.cpp"

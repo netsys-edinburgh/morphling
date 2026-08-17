@@ -76,6 +76,17 @@ struct ProxyEnvCfg {
   double measure_probe_timeout_sec = 5.0;
   double measure_flops_tolerance = 1e-3;
 
+  // Dynamic green-context SM preemption (proxy GPU path).
+  // Precedence: INI > env var (MORPHLING_DYNGC_*) > default.
+  bool enable_dynamic_greenctx = false;
+  std::string sm_ctl_shm_name = "/morphling_sm_ctl";
+  int chunk_target_us = 500;
+  int min_chunk_cols = 64;
+  int max_chunk_cols = 0;  // 0 => up to remaining columns
+  int64_t min_gemm_chunk_threshold = 0;
+  bool require_shm = true;
+  int min_dwell_chunks = 0;
+
   // Get scheduling policy with type-based reinterpretation
   template <typename T>
   T* GetSchedPolicy() {
