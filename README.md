@@ -5,8 +5,8 @@
 **Emulator for Distributed Machine Learning at the Edge**
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Format](https://github.com/drunkcoding/DeviceEmulator/actions/workflows/format.yaml/badge.svg)](https://github.com/drunkcoding/DeviceEmulator/actions/workflows/format.yaml)
-[![Build](https://github.com/drunkcoding/DeviceEmulator/actions/workflows/build.yml/badge.svg)](https://github.com/drunkcoding/DeviceEmulator/actions/workflows/build.yml)
+[![Format](https://github.com/netsys-edinburgh/morphling/actions/workflows/format.yaml/badge.svg)](https://github.com/netsys-edinburgh/morphling/actions/workflows/format.yaml)
+[![Build](https://github.com/netsys-edinburgh/morphling/actions/workflows/build.yml/badge.svg)](https://github.com/netsys-edinburgh/morphling/actions/workflows/build.yml)
 [![EdgeSys '26](https://img.shields.io/badge/EdgeSys-2026-blue)](https://doi.org/10.1145/3812836.3814779)
 
 </div>
@@ -100,7 +100,7 @@ docker run --rm --gpus all --ulimit memlock=-1 device-emulator:latest \
 
 `--ulimit memlock=-1` is required: the proxy server's pinned-buffer pools
 and the #55 4 MiB bandwidth probe exceed the default 8 MiB container
-memlock budget. See [issue #59](https://github.com/drunkcoding/DeviceEmulator/issues/59)
+memlock budget. See [issue #59](https://github.com/netsys-edinburgh/morphling/issues/59)
 and [`docs/deployment.md`](docs/deployment.md#quick-start-with---measurement).
 
 The image builds **all** C++ test categories (unit, CUDA/cuBLAS,

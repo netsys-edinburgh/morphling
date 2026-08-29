@@ -7,3 +7,7 @@ Provides:
 These components enable device and network emulation for distributed
 inference workflows with optional green context (CUDA) support.
 """
+
+from morphling._GreenCtx import GreenContextRuntime
+
+__all__ = [*globals().get("__all__", []), "GreenContextRuntime"]

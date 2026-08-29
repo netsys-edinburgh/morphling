@@ -20,7 +20,7 @@ contributions.
 This project adopts the [Contributor Covenant Code of
 Conduct](CODE_OF_CONDUCT.md). By participating you agree to abide by its
 terms. Report unacceptable behavior privately via GitHub Security
-Advisories: <https://github.com/drunkcoding/DeviceEmulator/security/advisories/new>.
+Advisories: <https://github.com/netsys-edinburgh/morphling/security/advisories/new>.
 
 Security vulnerabilities follow the same private channel. See
 [SECURITY.md](SECURITY.md) for the reporting process and response
@@ -28,7 +28,7 @@ timeline.
 
 ## How to Contribute
 
-1. Check the [issue tracker](https://github.com/drunkcoding/DeviceEmulator/issues)
+1. Check the [issue tracker](https://github.com/netsys-edinburgh/morphling/issues)
    for open issues, or open a new one to discuss your idea before writing code.
 2. Follow the
    [Fork-and-Pull-Request](https://docs.github.com/en/get-started/quickstart/contributing-to-projects)
