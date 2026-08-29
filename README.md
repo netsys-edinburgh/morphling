@@ -23,6 +23,12 @@ decouples memory demand from device count, and uses event-driven virtual time
 to preserve execution semantics. The result is large-scale what-if studies of
 edge training without a physical device fleet.
 
+### Used by
+
+- [Wasp](https://github.com/netsys-edinburgh/wasp) — coordinator-driven runtime
+  for exact synchronous edge foundation-model training, built on Morphling's
+  public integration surface (`morphling.api`).
+
 ## Paper
 
 > **Morphling: Emulator for Distributed Machine Learning at the Edge**

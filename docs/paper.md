@@ -13,6 +13,12 @@ Services (MobiSys Workshop '26)**, Cambridge, United Kingdom, June 21–25, 2026
 - ISBN: `979-8-4007-2712-2/26/06`
 - License: CC BY 4.0
 
+## Used by
+
+- [Wasp](https://github.com/netsys-edinburgh/wasp) — coordinator-driven runtime
+  for exact synchronous edge foundation-model training, built on Morphling via
+  the public `morphling.api` surface.
+
 ## Authors
 
 - Leyang Xue (The University of Edinburgh)
