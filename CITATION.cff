@@ -12,7 +12,7 @@ abstract: >-
   of edge training on a single GPU server.
 type: software
 license: Apache-2.0
-repository-code: 'https://github.com/drunkcoding/DeviceEmulator'
+repository-code: 'https://github.com/netsys-edinburgh/morphling'
 authors:
   - family-names: Xue
     given-names: Leyang
