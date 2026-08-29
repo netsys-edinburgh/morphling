@@ -14,8 +14,11 @@ from morphling.hooks import apply_hooks
 from morphling.hooks.autograd import LinearFunction
 from morphling.runtime import GreenContextRuntime
 from morphling.runtime.coordinator_metrics import (
+    CoordinatorMetricsCollector,
     PhaseRecorder,
     add_metrics_arguments,
+    metrics_config_from_args,
+    start_metrics_collector,
     track_phase,
 )
 
@@ -27,6 +30,9 @@ __all__ = [
     "DeviceConfigArguments",
     "ModelConfigArguments",
     "add_metrics_arguments",
+    "metrics_config_from_args",
+    "start_metrics_collector",
+    "CoordinatorMetricsCollector",
     "PhaseRecorder",
     "track_phase",
     "GreenContextRuntime",
