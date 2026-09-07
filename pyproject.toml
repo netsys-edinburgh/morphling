@@ -1,7 +1,7 @@
 [build-system]
 requires = [
     "setuptools",
-    "setuptools-scm>=10.2.1",
+    "setuptools-scm>=10.2.3",
     "wheel",
     "cmake>=4.4.2",
     "ninja",
